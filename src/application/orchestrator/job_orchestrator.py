@@ -1,0 +1,847 @@
+import json
+import os
+import sys
+import time
+from src.domain.entities.video_job import VideoJob
+from src.domain.entities.job_status import JobStatus
+from src.application.orchestrator.job_state_machine import JobStateMachine
+from src.application.ports.artifact_provider import ArtifactProvider
+from src.application.use_cases.extract_audio import ExtractAudioUseCase
+from src.application.use_cases.filter_ocr_segments import FilterOCRSegmentsUseCase
+from src.application.use_cases.group_segments import GroupSegmentsUseCase
+from src.application.use_cases.transcribe_speech import TranscribeSpeechUseCase
+from src.application.use_cases.extract_frames import ExtractFramesUseCase
+from src.application.use_cases.detect_onscreen_text import DetectOnscreenTextUseCase
+from src.application.use_cases.merge_segments import MergeSegmentsUseCase
+from src.application.use_cases.normalize_segments import NormalizeSegmentsUseCase
+from src.application.use_cases.subtitle_segmentation import SubtitleSegmentationUseCase
+from src.application.use_cases.detect_subtitle_region import DetectSubtitleRegionUseCase
+from src.application.use_cases.calculate_subtitle_placement import CalculateSubtitlePlacementUseCase
+from src.application.use_cases.translate_segments import TranslateSegmentsUseCase
+from src.application.use_cases.generate_subtitle import GenerateSubtitleUseCase
+from src.application.use_cases.render_video import RenderVideoUseCase
+from src.application.orchestrator.orchestrator_dependencies import OrchestratorDependencies
+from src.shared.logging import FeatureLogger
+from src.shared.exceptions import ValidationError
+from src.domain.entities.subtitle_style import SubtitleStyle
+from src.application.services.source_text_leakage_detector import SourceTextLeakageDetector
+from src.application.services.content_quality_auditor import ContentQualityAuditor
+from src.application.services.speech_quality_auditor import SpeechQualityAuditor
+from src.application.services.vietnamese_text_quality_auditor import (
+    VietnameseTextQualityAuditor,
+)
+from src.application.services.final_timeline_builder import FinalTimelineBuilder
+from src.application.services.final_render_manifest_service import FinalRenderManifestService
+from src.domain.entities.segment import Segment
+from src.domain.entities.subtitle_region import SubtitleRegion
+from src.application.services.artifact_cache_validator import ArtifactCacheValidator
+
+class JobOrchestrator:
+    def __init__(self, dependencies: OrchestratorDependencies):
+        self.extract_audio_uc = dependencies.extract_audio_uc
+        self.filter_ocr_segments_uc = dependencies.filter_ocr_segments_uc
+        self.group_segments_uc = dependencies.group_segments_uc
+        self.get_video_duration_uc = dependencies.get_video_duration_uc
+        self.transcribe_speech_uc = dependencies.transcribe_speech_uc
+        self.detect_onscreen_text_uc = dependencies.detect_onscreen_text_uc
+        self.translate_segments_uc = dependencies.translate_segments_uc
+        self.generate_subtitle_uc = dependencies.generate_subtitle_uc
+        self.render_video_uc = dependencies.render_video_uc
+        self.extract_frames_uc = dependencies.extract_frames_uc
+        self.merge_segments_uc = dependencies.merge_segments_uc
+        self.normalize_segments_uc = dependencies.normalize_segments_uc
+        self.subtitle_segmentation_uc = dependencies.subtitle_segmentation_uc
+        self.detect_subtitle_region_uc = dependencies.detect_subtitle_region_uc
+        self.calculate_subtitle_placement_uc = dependencies.calculate_subtitle_placement_uc
+        self.generate_subtitle_placement_debug_uc = (
+            dependencies.generate_subtitle_placement_debug_uc
+        )
+        self.generate_dubbed_audio_uc = dependencies.generate_dubbed_audio_uc
+        self.mux_dubbed_video_uc = dependencies.mux_dubbed_video_uc
+        self.final_timeline_builder = (
+            dependencies.final_timeline_builder or FinalTimelineBuilder()
+        )
+        self.final_render_manifest_service = (
+            dependencies.final_render_manifest_service or FinalRenderManifestService()
+        )
+        self.artifact_provider = dependencies.artifact_provider
+        self.keep_audio = dependencies.keep_audio
+        self.frame_interval = dependencies.frame_interval
+        self.subtitle_format = dependencies.subtitle_format
+        self.subtitle_style = dependencies.subtitle_style if dependencies.subtitle_style else SubtitleStyle()
+        self.state_machine = JobStateMachine()
+
+    def execute(self, job: VideoJob) -> VideoJob:
+        self.state_machine.transition(job, JobStatus.RUNNING)
+        speech_segments = []
+        ocr_segments = []
+        frames = []
+        regions = []
+        placements = []
+        quality_metrics = {
+            "ocr_segments_before": 0,
+            "ocr_segments_after": 0,
+            "dropped_by_confidence": 0,
+            "dropped_by_length": 0,
+            "dropped_by_abnormal_characters": 0,
+            "dropped_by_repetition": 0,
+            "source_text_leakage_count": 0,
+            "source_text_leakage_examples": [],
+            "quality_gate_status": "PASS",
+        }
+        ocr_metrics = {
+            "dropped_by_confidence": 0,
+            "dropped_by_length": 0,
+            "dropped_by_abnormal_characters": 0,
+            "dropped_by_repetition": 0,
+            "dropped_by_garbage": 0,
+            "filtered_tokens": [],
+            "dropped_tokens": [],
+        }
+        controls = job.stage_controls
+        timings = {}
+        cached_narration_segments = None
+        video_duration = self.get_video_duration_uc.execute(job.input_video)
+        video_width, video_height = self.get_video_duration_uc.video_provider.get_dimensions(
+            job.input_video
+        )
+        placement_config = self.calculate_subtitle_placement_uc.placement_service.config
+        placement_config.video_width = video_width
+        placement_config.video_height = video_height
+        cache_validator = ArtifactCacheValidator()
+        if (
+            job.features.ocr
+            and job.features.subtitle_placement
+            and controls.run_ocr
+            and controls.run_subtitle_region_detection
+            and self.detect_onscreen_text_uc.ocr_provider.__class__.__name__.startswith("Paddle")
+            and self.detect_subtitle_region_uc.provider.__class__.__name__.startswith("Paddle")
+            and not getattr(self.detect_onscreen_text_uc.ocr_provider, "use_gpu", False)
+        ):
+            print(
+                "Warning: CPU PaddleOCR will run twice and may take a long time. Use cache or GPU."
+            )
+        try:
+            if job.features.speech_to_text and controls.run_asr:
+                started = time.monotonic()
+                self.state_machine.transition(job, JobStatus.EXTRACTING_AUDIO)
+                logger = FeatureLogger("ExtractAudio")
+                logger.start()
+                extracted_path = self.extract_audio_uc.execute(job.input_video)
+                final_audio = self.artifact_provider.audio_path(job.job_id)
+                if os.path.exists(extracted_path) and extracted_path != final_audio:
+                    import shutil
+                    shutil.copy2(extracted_path, final_audio)
+                    if not self.keep_audio:
+                        try:
+                            os.remove(extracted_path)
+                        except OSError:
+                            pass
+                job.audio_path = final_audio
+                logger.done()
+                timings["asr"] = round(time.monotonic() - started, 3)
+
+                self.state_machine.transition(job, JobStatus.TRANSCRIBING)
+                logger = FeatureLogger("Speech")
+                logger.start()
+                transcript_path = self.artifact_provider.transcript_path(job.job_id)
+                if os.path.exists(transcript_path):
+                    speech_segments = [
+                        Segment(**self._segment_fields(item))
+                        for item in self.artifact_provider.read_json(transcript_path)
+                    ]
+                else:
+                    speech_segments = self.transcribe_speech_uc.execute(
+                        job.audio_path, job.speech_language
+                    )
+                    self.artifact_provider.write_json(
+                        transcript_path, [s.to_dict() for s in speech_segments]
+                    )
+                logger.done()
+
+            if (job.features.ocr and controls.run_ocr) or (
+                job.features.subtitle_placement and job.features.subtitle
+                and controls.run_subtitle_region_detection
+            ):
+                frames = self.extract_frames_uc.execute(
+                    job.input_video,
+                    self.frame_interval,
+                    self.artifact_provider.frames_dir(job.job_id),
+                )
+
+            if job.features.ocr and controls.run_ocr and not controls.reuse_ocr_cache:
+                started = time.monotonic()
+                self.state_machine.transition(job, JobStatus.DETECTING_TEXT)
+                logger = FeatureLogger("OCR")
+                logger.start()
+                ocr_segments = self.detect_onscreen_text_uc.execute(frames)
+                raw_ocr = [s.to_dict() for s in ocr_segments]
+                self.artifact_provider.write_json(
+                    os.path.join(
+                        self.artifact_provider.debug_dir(job.job_id),
+                        "raw_ocr.json",
+                    ),
+                    {"segments": raw_ocr},
+                )
+                ocr_segments, ocr_metrics = self.filter_ocr_segments_uc.execute(ocr_segments, job.source_language)
+                filtered_ids = {s.id for s in ocr_segments}
+                raw_ocr_records = [
+                    {
+                        **segment,
+                        "frame_id": segment["id"].rsplit("_", 1)[0],
+                        "frame_timestamp": segment["start"],
+                        "dropped_tokens": (
+                            [segment["text"]] if segment["id"] not in filtered_ids else []
+                        ),
+                        "drop_reasons": (
+                            ["ocr_quality_filter"]
+                            if segment["id"] not in filtered_ids
+                            else []
+                        ),
+                        "group_id": None,
+                        "source_segment_ids": [segment["id"]],
+                        "filtered_tokens": [],
+                    }
+                    for segment in raw_ocr
+                ]
+                self.artifact_provider.write_json(
+                    os.path.join(
+                        self.artifact_provider.debug_dir(job.job_id),
+                        "raw_ocr.json",
+                    ),
+                    {
+                        "segments": raw_ocr_records,
+                        "dropped_tokens": ocr_metrics.get("dropped_tokens", []),
+                        "drop_reasons": {
+                            "confidence": ocr_metrics.get("dropped_by_confidence", 0),
+                            "length": ocr_metrics.get("dropped_by_length", 0),
+                            "abnormal_characters": ocr_metrics.get(
+                                "dropped_by_abnormal_characters", 0
+                            ),
+                            "repetition": ocr_metrics.get("dropped_by_repetition", 0),
+                            "garbage": ocr_metrics.get("dropped_by_garbage", 0),
+                        },
+                        "filtered_tokens": ocr_metrics.get("filtered_tokens", []),
+                    },
+                )
+                self.artifact_provider.write_json(
+                    os.path.join(
+                        self.artifact_provider.debug_dir(job.job_id),
+                        "filtered_ocr.json",
+                    ),
+                    {
+                        "segments": [
+                            {
+                                **segment.to_dict(),
+                                "frame_id": segment.id.rsplit("_", 1)[0],
+                                "frame_timestamp": segment.start,
+                                "dropped_tokens": [],
+                                "drop_reasons": [],
+                                "group_id": None,
+                                "source_segment_ids": [segment.id],
+                                "filtered_tokens": ocr_metrics.get(
+                                    "filtered_tokens", []
+                                ),
+                            }
+                            for segment in ocr_segments
+                        ],
+                        "dropped_tokens": ocr_metrics.get("dropped_tokens", []),
+                        "drop_reasons": {
+                            "confidence": ocr_metrics.get("dropped_by_confidence", 0),
+                            "length": ocr_metrics.get("dropped_by_length", 0),
+                            "abnormal_characters": ocr_metrics.get(
+                                "dropped_by_abnormal_characters", 0
+                            ),
+                            "repetition": ocr_metrics.get("dropped_by_repetition", 0),
+                            "garbage": ocr_metrics.get("dropped_by_garbage", 0),
+                        },
+                        "filtered_tokens": ocr_metrics.get("filtered_tokens", []),
+                    },
+                )
+                quality_metrics.update(ocr_metrics)
+                self.artifact_provider.write_json(
+                    os.path.join(self.artifact_provider.debug_dir(job.job_id), "ocr_cache_metadata.json"),
+                    cache_validator.signature(
+                        job.input_video, self.frame_interval,
+                        self.detect_onscreen_text_uc.ocr_provider.__class__.__name__,
+                        "unknown",
+                        getattr(self.detect_onscreen_text_uc.ocr_provider, "language", ""),
+                        "gpu" if getattr(self.detect_onscreen_text_uc.ocr_provider, "use_gpu", False) else "cpu",
+                        video_duration,
+                        f"{self.calculate_subtitle_placement_uc.placement_service.config.video_width}x{self.calculate_subtitle_placement_uc.placement_service.config.video_height}",
+                    ),
+                )
+                logger.done()
+                timings["ocr_content"] = round(time.monotonic() - started, 3)
+            elif job.features.ocr and controls.reuse_ocr_cache:
+                cache_root = controls.debug_from_artifacts or self.artifact_provider.debug_dir(job.job_id)
+                metadata = self.artifact_provider.read_json(
+                    os.path.join(cache_root, "debug", "ocr_cache_metadata.json")
+                    if controls.debug_from_artifacts
+                    else os.path.join(cache_root, "ocr_cache_metadata.json")
+                )
+                current = cache_validator.signature(
+                    job.input_video, self.frame_interval,
+                    self.detect_onscreen_text_uc.ocr_provider.__class__.__name__,
+                    "unknown",
+                    getattr(self.detect_onscreen_text_uc.ocr_provider, "language", ""),
+                    "gpu" if getattr(self.detect_onscreen_text_uc.ocr_provider, "use_gpu", False) else "cpu",
+                    video_duration,
+                    f"{self.calculate_subtitle_placement_uc.placement_service.config.video_width}x{self.calculate_subtitle_placement_uc.placement_service.config.video_height}",
+                )
+                if controls.debug_from_artifacts:
+                    current["video_resolution"] = metadata.get("video_resolution")
+                if not cache_validator.is_valid(metadata, current):
+                    raise ValidationError("OCR cache is missing or invalid for this input/configuration.")
+                cached = self.artifact_provider.read_json(
+                    os.path.join(cache_root, "debug", "filtered_ocr.json")
+                    if controls.debug_from_artifacts
+                    else os.path.join(cache_root, "filtered_ocr.json")
+                )
+                ocr_segments = [Segment(**self._segment_fields(item)) for item in cached["segments"]]
+
+            if (
+                job.features.subtitle_placement
+                and job.features.subtitle
+                and frames
+                and controls.run_subtitle_region_detection
+                and not controls.reuse_subtitle_region_cache
+            ):
+                started = time.monotonic()
+                regions = self.detect_subtitle_region_uc.execute(frames)
+                self.artifact_provider.write_json(
+                    os.path.join(
+                        self.artifact_provider.debug_dir(job.job_id),
+                        "subtitle_regions.json",
+                    ),
+                    [region.to_dict() for region in regions],
+                )
+                self.artifact_provider.write_json(
+                    os.path.join(self.artifact_provider.debug_dir(job.job_id), "subtitle_region_cache_metadata.json"),
+                    cache_validator.signature(
+                        job.input_video, self.frame_interval,
+                        self.detect_subtitle_region_uc.provider.__class__.__name__,
+                        "unknown",
+                        getattr(self.detect_subtitle_region_uc.provider, "language", ""),
+                        "gpu" if getattr(self.detect_subtitle_region_uc.provider, "use_gpu", False) else "cpu",
+                        video_duration,
+                        f"{self.calculate_subtitle_placement_uc.placement_service.config.video_width}x{self.calculate_subtitle_placement_uc.placement_service.config.video_height}",
+                    ),
+                )
+                timings["subtitle_region_ocr"] = round(time.monotonic() - started, 3)
+            elif job.features.subtitle_placement and controls.reuse_subtitle_region_cache:
+                cache_root = controls.debug_from_artifacts or self.artifact_provider.debug_dir(job.job_id)
+                metadata = self.artifact_provider.read_json(
+                    os.path.join(cache_root, "debug", "subtitle_region_cache_metadata.json")
+                    if controls.debug_from_artifacts
+                    else os.path.join(cache_root, "subtitle_region_cache_metadata.json")
+                )
+                current = cache_validator.signature(
+                    job.input_video, self.frame_interval,
+                    self.detect_subtitle_region_uc.provider.__class__.__name__,
+                    "unknown",
+                    getattr(self.detect_subtitle_region_uc.provider, "language", ""),
+                    "gpu" if getattr(self.detect_subtitle_region_uc.provider, "use_gpu", False) else "cpu",
+                    video_duration,
+                    f"{self.calculate_subtitle_placement_uc.placement_service.config.video_width}x{self.calculate_subtitle_placement_uc.placement_service.config.video_height}",
+                )
+                if controls.debug_from_artifacts:
+                    current["video_resolution"] = metadata.get("video_resolution")
+                if not cache_validator.is_valid(metadata, current):
+                    raise ValidationError("Subtitle-region cache is missing or invalid for this input/configuration.")
+                aggregate_path = (
+                    os.path.join(cache_root, "debug", "subtitle_regions.json")
+                    if controls.debug_from_artifacts
+                    else os.path.join(cache_root, "subtitle_regions.json")
+                )
+                if os.path.exists(aggregate_path):
+                    cached = self.artifact_provider.read_json(aggregate_path)
+                else:
+                    frame_dir = (
+                        os.path.join(cache_root, "debug", "subtitle_region_frames")
+                        if controls.debug_from_artifacts
+                        else os.path.join(cache_root, "subtitle_region_frames")
+                    )
+                    cached = []
+                    for filename in sorted(os.listdir(frame_dir)):
+                        if filename.endswith(".json"):
+                            checkpoint = self.artifact_provider.read_json(
+                                os.path.join(frame_dir, filename)
+                            )
+                            cached.extend(checkpoint.get("regions", []))
+                regions = [SubtitleRegion(**item) for item in cached]
+
+            if controls.debug_from_artifacts or not (
+                controls.run_asr or controls.run_ocr
+            ):
+                root = controls.debug_from_artifacts or self.artifact_provider.job_dir(job.job_id)
+                path = os.path.join(
+                    root,
+                    "transcripts",
+                    "normalized.json" if controls.run_segmentation else "segmented.json",
+                )
+                cached = self.artifact_provider.read_json(path)
+                segments = [Segment(**self._segment_fields(item)) for item in cached]
+                normalized_path = os.path.join(root, "transcripts", "normalized.json")
+                if os.path.exists(normalized_path):
+                    normalized = self.artifact_provider.read_json(normalized_path)
+                    cached_narration_segments = [
+                        Segment(**self._segment_fields(item))
+                        for item in normalized
+                        if item.get("source") == "speech"
+                    ]
+            else:
+                segments = self.merge_segments_uc.execute(speech_segments, ocr_segments)
+
+            # Translation Grouping
+            segments = self.group_segments_uc.execute(segments, job.source_language)
+            after_group_examples = [s.to_dict() for s in segments]
+            self.artifact_provider.write_json(
+                os.path.join(
+                    self.artifact_provider.debug_dir(job.job_id),
+                    "grouping_provenance.json",
+                ),
+                {
+                    "groups": [
+                        {
+                            **segment,
+                            "group_id": segment["id"],
+                            "source_segment_ids": self.group_segments_uc.provenance_map.get(
+                                segment["id"], [segment["id"]]
+                            ),
+                            "dropped_tokens": ocr_metrics.get("dropped_tokens", []),
+                            "drop_reasons": [],
+                            "filtered_tokens": ocr_metrics.get(
+                                "filtered_tokens", []
+                            ),
+                        }
+                        for segment in after_group_examples
+                    ],
+                    "dropped_tokens": ocr_metrics.get("dropped_tokens", []),
+                    "filtered_tokens": ocr_metrics.get("filtered_tokens", []),
+                },
+            )
+
+            grouping_examples = []
+            for a in after_group_examples:
+                source_ids = self.group_segments_uc.provenance_map.get(
+                    a["id"], [a["id"]]
+                )
+                if len(source_ids) > 1:
+                    grouping_examples.append({
+                        "source_segment_ids": source_ids,
+                        "after": a["text"],
+                        "source_type": a["source"],
+                        "start": a["start"],
+                        "end": a["end"],
+                    })
+
+            if job.features.translate and controls.run_translation:
+                started = time.monotonic()
+                translation_input = list(segments)
+                self.state_machine.transition(job, JobStatus.TRANSLATING)
+                logger = FeatureLogger("Translate")
+                logger.start()
+                segments = self.translate_segments_uc.execute(segments, job.target_language)
+                self.artifact_provider.write_json(
+                    self.artifact_provider.translated_path(job.job_id),
+                    [s.to_dict() for s in segments]
+                )
+                logger.done()
+                timings["translation"] = round(time.monotonic() - started, 3)
+                normalize_translated = True
+            else:
+                translation_input = list(segments)
+                normalize_translated = any(
+                    bool(segment.translated_text) for segment in segments
+                )
+
+            speech_quality_report = SpeechQualityAuditor.report(
+                speech_segments,
+                translation_input,
+                segments,
+                job.speech_language,
+            )
+            quality_metrics.update({
+                key: value
+                for key, value in speech_quality_report.items()
+                if key not in ("asr_segments", "translated_speech_segments", "warnings")
+            })
+            quality_metrics["speech_quality_warnings"] = speech_quality_report["warnings"]
+            self.artifact_provider.write_json(
+                os.path.join(
+                    self.artifact_provider.debug_dir(job.job_id),
+                    "speech_quality_report.json",
+                ),
+                speech_quality_report,
+            )
+
+            source_counts_before = {
+                source: sum(segment.source == source for segment in segments)
+                for source in ("speech", "ocr")
+            }
+            if controls.run_normalization:
+                started = time.monotonic()
+                segments = self.normalize_segments_uc.execute(
+                    segments,
+                    is_translated=normalize_translated,
+                    video_duration=video_duration,
+                )
+                timings["normalization"] = round(time.monotonic() - started, 3)
+            quality_metrics.update(self.normalize_segments_uc.metrics)
+            self.artifact_provider.write_json(
+                self.artifact_provider.normalized_path(job.job_id),
+                [s.to_dict() for s in segments]
+            )
+            narration_segments = cached_narration_segments or list(segments)
+
+            # Subtitle Segmentation Stage
+            if controls.run_segmentation:
+                started = time.monotonic()
+                segments = self.subtitle_segmentation_uc.execute(
+                    segments, is_translated=normalize_translated
+                )
+                timings["segmentation"] = round(time.monotonic() - started, 3)
+            content_config = self.normalize_segments_uc.config
+            if content_config.enable_content_quality_audit:
+                report = []
+                kept_segments = []
+                for index, segment in enumerate(segments, start=1):
+                    text = (
+                        segment.translated_text
+                        if normalize_translated
+                        else segment.text
+                    )
+                    score, findings = ContentQualityAuditor.audit(text, segment.source)
+                    recommended = "drop" if findings or score < content_config.min_caption_quality_score else "keep"
+                    actual = "keep"
+                    reason = "report-only audit"
+                    if content_config.enable_content_quality_filtering:
+                        should_drop = score < content_config.min_caption_quality_score
+                        should_drop = should_drop or (
+                            content_config.drop_placeholder_captions
+                            and "placeholder_only" in findings
+                        )
+                        should_drop = should_drop or (
+                            content_config.drop_malformed_ocr_captions
+                            and "malformed_ocr_spelling" in findings
+                        )
+                        should_drop = should_drop or (
+                            content_config.drop_incomplete_fragments
+                            and "incomplete_vietnamese_fragment" in findings
+                        )
+                        if should_drop:
+                            actual = "drop"
+                            reason = "content quality filtering policy"
+                    report.append({
+                        "caption_index": index,
+                        "timestamp": f"{segment.start:.3f} --> {segment.end:.3f}",
+                        "original_text": text,
+                        "score": score,
+                        "findings": findings,
+                        "recommended_action": recommended,
+                        "actual_action": actual,
+                        "reason": reason,
+                    })
+                    if actual == "keep":
+                        kept_segments.append(segment)
+                segments = kept_segments
+                self.artifact_provider.write_json(
+                    os.path.join(self.artifact_provider.debug_dir(job.job_id), "content_quality_report.json"),
+                    {"captions": report},
+                )
+            vietnamese_report = []
+            corrections_applied = 0
+            for index, segment in enumerate(segments, start=1):
+                text = segment.translated_text if normalize_translated else segment.text
+                audit = VietnameseTextQualityAuditor.apply(
+                    text, content_config.enable_vietnamese_text_correction
+                )
+                if audit["actual_action"] == "correct":
+                    if normalize_translated:
+                        segment.translated_text = audit["corrected_text"]
+                    else:
+                        segment.text = audit["corrected_text"]
+                    corrections_applied += len(audit["corrections"])
+                vietnamese_report.append({
+                    "caption_index": index,
+                    "timestamp": f"{segment.start:.3f} --> {segment.end:.3f}",
+                    **audit,
+                })
+            for segment in narration_segments:
+                text = segment.translated_text if normalize_translated else segment.text
+                audit = VietnameseTextQualityAuditor.apply(
+                    text, content_config.enable_vietnamese_text_correction
+                )
+                if audit["actual_action"] == "correct":
+                    if normalize_translated:
+                        segment.translated_text = audit["corrected_text"]
+                    else:
+                        segment.text = audit["corrected_text"]
+            self.artifact_provider.write_json(
+                os.path.join(
+                    self.artifact_provider.debug_dir(job.job_id),
+                    "vietnamese_text_quality_report.json",
+                ),
+                {
+                    "captions": vietnamese_report,
+                    "warnings_count": sum(
+                        bool(item["corrections"]) for item in vietnamese_report
+                    ),
+                    "corrections_applied": corrections_applied,
+                    "mode": (
+                        "correction-enabled"
+                        if content_config.enable_vietnamese_text_correction
+                        else "report-first"
+                    ),
+                },
+            )
+            self.artifact_provider.write_json(
+                self.artifact_provider.segmented_path(job.job_id),
+                [s.to_dict() for s in segments]
+            )
+
+            job.segments = segments
+
+            # Calculate metrics
+            final_segments_count = len(segments)
+            total_caption_duration = sum(s.end - s.start for s in segments)
+            coverage_ratio = total_caption_duration / video_duration if video_duration > 0 else 0.0
+            avg_caption_duration = total_caption_duration / final_segments_count if final_segments_count > 0 else 0.0
+            
+            gaps = []
+            if final_segments_count > 0:
+                gaps.append(segments[0].start)
+                for i in range(1, final_segments_count):
+                    gap = segments[i].start - segments[i-1].end
+                    gaps.append(max(gap, 0.0))
+                gaps.append(max(video_duration - segments[-1].end, 0.0))
+            else:
+                gaps.append(video_duration)
+            longest_gap = max(gaps) if gaps else 0.0
+
+            dropped_count = (len(speech_segments) + len(ocr_segments)) - final_segments_count
+
+            quality_metrics.update({
+                "video_duration": video_duration,
+                "total_caption_duration": total_caption_duration,
+                "caption_coverage_ratio": coverage_ratio,
+                "number_of_final_captions": final_segments_count,
+                "average_caption_duration": avg_caption_duration,
+                "longest_gap_without_captions": longest_gap,
+                "dropped_ocr_stt_segment_count": dropped_count,
+                "grouping_examples": grouping_examples,
+            })
+
+            quality_config = self.normalize_segments_uc.config
+            gate_failed = False
+            gate_reasons = []
+
+            if coverage_ratio < quality_config.min_coverage_ratio:
+                gate_failed = True
+                gate_reasons.append(f"Coverage ratio {coverage_ratio:.3f} below threshold {quality_config.min_coverage_ratio}")
+            if longest_gap > quality_config.max_longest_gap:
+                gate_failed = True
+                gate_reasons.append(f"Longest gap {longest_gap:.3f} exceeds threshold {quality_config.max_longest_gap}")
+            if final_segments_count < quality_config.min_caption_count:
+                gate_failed = True
+                gate_reasons.append(f"Caption count {final_segments_count} below threshold {quality_config.min_caption_count}")
+
+            if normalize_translated:
+                leak_examples = SourceTextLeakageDetector.detect(segments, job.source_language)
+                quality_metrics["source_text_leakage_count"] = len(leak_examples)
+                quality_metrics["source_text_leakage_examples"] = leak_examples
+                
+                max_leakage_allowed = quality_config.ocr_max_source_leakage
+                if len(leak_examples) > max_leakage_allowed:
+                    gate_failed = True
+                    gate_reasons.append(f"Source leakage count {len(leak_examples)} exceeds threshold {max_leakage_allowed}")
+
+            if gate_failed:
+                quality_metrics["quality_gate_status"] = "FAIL"
+                quality_metrics["gate_failure_reasons"] = gate_reasons
+            else:
+                quality_metrics["quality_gate_status"] = "PASS"
+
+            if job.features.subtitle:
+                started = time.monotonic()
+                self.state_machine.transition(job, JobStatus.GENERATING_SUBTITLE)
+                logger = FeatureLogger("Subtitle")
+                logger.start()
+                placements = self.calculate_subtitle_placement_uc.execute(
+                    regions, segments, self.subtitle_style
+                )
+                placement_report = self.calculate_subtitle_placement_uc.quality_report(
+                    regions, segments, placements, self.subtitle_style
+                )
+                self.artifact_provider.write_json(
+                    self.artifact_provider.placement_quality_report_path(job.job_id),
+                    placement_report,
+                )
+                if not os.path.exists(
+                    self.artifact_provider.placement_quality_report_path(job.job_id)
+                ):
+                    raise ValidationError("placement_quality_report.json is missing.")
+                replacement_required = (
+                    self.calculate_subtitle_placement_uc.placement_service.config.placement_mode
+                    == "replace_source_subtitle"
+                )
+                final_timeline = self.final_timeline_builder.build(
+                    narration_segments,
+                    segments,
+                    regions,
+                    placements,
+                    replacement_required,
+                )
+                job.final_timeline_id = final_timeline.timeline_id
+                self.artifact_provider.write_json(
+                    self.artifact_provider.final_timeline_path(job.job_id),
+                    final_timeline.to_dict(),
+                )
+                srt_content = self.generate_subtitle_uc.execute(segments)
+                job.subtitle_content = srt_content
+                job.subtitle_path = self.artifact_provider.subtitle_path(job.job_id)
+                self.artifact_provider.write_text(job.subtitle_path, srt_content)
+                ass_content = self.generate_subtitle_uc.execute(
+                    segments,
+                    subtitle_format="ass",
+                    style=self.subtitle_style,
+                    placements=(
+                        placements if job.features.subtitle_placement and regions else None
+                    ),
+                    play_res_x=video_width,
+                    play_res_y=video_height,
+                )
+                self.artifact_provider.write_text(
+                    self.artifact_provider.subtitle_ass_path(job.job_id), ass_content
+                )
+                logger.done()
+                timings["placement"] = round(time.monotonic() - started, 3)
+
+            if controls.run_render and (job.features.render_video or job.features.dubbing):
+                started = time.monotonic()
+                if not job.features.subtitle:
+                    raise ValidationError("Cannot render video without subtitles enabled.")
+                ass_path = self.artifact_provider.subtitle_ass_path(job.job_id)
+                if not os.path.exists(ass_path):
+                    raise ValidationError("Subtitle ASS file does not exist. Cannot render video.")
+                self.state_machine.transition(job, JobStatus.RENDERING_VIDEO)
+                logger = FeatureLogger("RenderVideo")
+                logger.start()
+                job.output_video_path = self.render_video_uc.execute(
+                    video_path=job.input_video,
+                    subtitle_path=ass_path,
+                    output_path=self.artifact_provider.video_output_path(job.job_id),
+                )
+                logger.done()
+                timings["render"] = round(time.monotonic() - started, 3)
+
+            if job.features.dubbing and controls.run_tts and controls.run_mux:
+                if self.generate_dubbed_audio_uc is None or self.mux_dubbed_video_uc is None:
+                    raise ValidationError("Dubbing feature is not configured.")
+                self.state_machine.transition(job, JobStatus.GENERATING_DUBBED_AUDIO)
+                started = time.monotonic()
+                job.dubbed_audio_path = self.generate_dubbed_audio_uc.execute(
+                    job.job_id,
+                    final_timeline.narration,
+                    video_duration,
+                    job.tts_config,
+                    timeline_id=final_timeline.timeline_id,
+                )
+                timings["tts"] = round(time.monotonic() - started, 3)
+                self.state_machine.transition(job, JobStatus.MUXING_DUBBED_VIDEO)
+                started = time.monotonic()
+                job.dubbed_video_path = self.mux_dubbed_video_uc.execute(
+                    job.job_id,
+                    job.output_video_path,
+                    job.dubbed_audio_path,
+                    job.tts_config,
+                )
+                timings["mux"] = round(time.monotonic() - started, 3)
+                final_manifest = self.final_render_manifest_service.build(
+                    job.job_id,
+                    final_timeline.timeline_id,
+                    {
+                        "subtitle_srt": job.subtitle_path,
+                        "subtitle_ass": self.artifact_provider.subtitle_ass_path(job.job_id),
+                        "placement_quality_report": self.artifact_provider.placement_quality_report_path(job.job_id),
+                        "rendered_video": job.output_video_path,
+                        "tts_manifest": self.artifact_provider.tts_manifest_path(job.job_id),
+                        "dubbed_audio": job.dubbed_audio_path,
+                        "dubbed_video": job.dubbed_video_path,
+                    },
+                )
+                self.final_render_manifest_service.validate(
+                    final_manifest, final_timeline.timeline_id
+                )
+                job.final_render_manifest_path = (
+                    self.artifact_provider.final_render_manifest_path(job.job_id)
+                )
+                self.artifact_provider.write_json(
+                    job.final_render_manifest_path, final_manifest
+                )
+
+            if (
+                job.features.subtitle_placement_debug
+                and self.generate_subtitle_placement_debug_uc is not None
+                and frames
+            ):
+                self.generate_subtitle_placement_debug_uc.execute(
+                    frames=frames,
+                    regions=regions,
+                    placements=placements,
+                    before_path=self.artifact_provider.debug_before_path(job.job_id),
+                    overlay_path=self.artifact_provider.debug_overlay_path(job.job_id),
+                    after_path=self.artifact_provider.debug_after_path(job.job_id),
+                    regions_path=self.artifact_provider.debug_regions_json_path(job.job_id),
+                    placements_path=self.artifact_provider.debug_placements_json_path(
+                        job.job_id
+                    ),
+                    rendered_video_path=job.output_video_path or None,
+                )
+            quality_metrics["stage_timings_seconds"] = timings
+            for stage, elapsed in timings.items():
+                print(
+                    f"[Timing] Stage {stage} completed in {elapsed:.3f}s",
+                    file=sys.stderr,
+                )
+            self._write_quality_metrics(job.job_id, quality_metrics)
+
+            if quality_metrics["quality_gate_status"] == "FAIL":
+                raise ValidationError(
+                    f"Quality Gate Failed: {', '.join(gate_reasons)}"
+                )
+
+            self.state_machine.complete(job)
+        except Exception as e:
+            self.state_machine.fail(job, str(e))
+            raise
+        return job
+
+    def _write_quality_metrics(self, job_id: str, quality_metrics: dict) -> None:
+        path = self.artifact_provider.debug_metadata_json_path(job_id)
+        metadata = {}
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as file:
+                try:
+                    metadata = json.load(file)
+                except Exception:
+                    metadata = {}
+        metadata["quality_metrics"] = quality_metrics
+        self.artifact_provider.write_json(path, metadata)
+
+    @staticmethod
+    def _segment_fields(item: dict) -> dict:
+        return {
+            key: item[key]
+            for key in (
+                "id",
+                "start",
+                "end",
+                "text",
+                "translated_text",
+                "source",
+                "confidence",
+            )
+            if key in item
+        }

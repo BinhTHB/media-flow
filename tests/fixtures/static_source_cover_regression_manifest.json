@@ -1,0 +1,47 @@
+{
+  "sample2": {
+    "stable_region_found": true,
+    "min_rendered_count": 22,
+    "max_skipped_count": 0,
+    "duplicate_risk": "low",
+    "visual_verdict": "PASS",
+    "expected_output_files": [
+      "videos/static_source_cover.mp4",
+      "videos/static_subtitle_burn.mp4",
+      "subtitles/output.ass",
+      "subtitles/output.srt",
+      "debug/static_source_cover_report.json",
+      "debug/artifact_provenance_report.json"
+    ]
+  },
+  "sample4": {
+    "stable_region_found": true,
+    "min_rendered_count": 25,
+    "max_skipped_count": 0,
+    "duplicate_risk": "low",
+    "visual_verdict": "PASS",
+    "expected_output_files": [
+      "videos/static_source_cover.mp4",
+      "videos/static_subtitle_burn.mp4",
+      "subtitles/output.ass",
+      "subtitles/output.srt",
+      "debug/static_source_cover_report.json",
+      "debug/artifact_provenance_report.json"
+    ]
+  },
+  "sample5": {
+    "stable_region_found": true,
+    "min_rendered_count": 24,
+    "max_skipped_count": 1,
+    "duplicate_risk": "low",
+    "visual_verdict": "PASS",
+    "expected_output_files": [
+      "videos/static_source_cover.mp4",
+      "videos/static_subtitle_burn.mp4",
+      "subtitles/output.ass",
+      "subtitles/output.srt",
+      "debug/static_source_cover_report.json",
+      "debug/artifact_provenance_report.json"
+    ]
+  }
+}
