@@ -598,9 +598,14 @@ src/infrastructure/gemini/
 - [x] Chạy shadow mode.
 
 ### Phase E — Benchmark
-- PaddleOCR vs Gemini full-frame vs Gemini full-frame + crop retry
-- Faster-Whisper small vs Gemini full-audio
-- Báo cáo benchmark tại `docs/GEMINI_BENCHMARK_REPORT.md`.
+**Status: IMPLEMENTED, offline comparative framework only.** Live qualification
+remains blocked/incomplete and production readiness remains NO. See
+[GEMINI_PHASE_E_COMPARATIVE_BENCHMARK.md](GEMINI_PHASE_E_COMPARATIVE_BENCHMARK.md).
+
+- [x] Implement offline PaddleOCR versus Gemini full-frame and crop-retry comparison framework.
+- [x] Implement offline Faster-Whisper small versus Gemini full-audio comparison framework.
+- [x] Preserve `sample5 interval_6` hard safety regression check.
+- [x] Write offline benchmark artifacts without provider calls.
 
 ### Phase F — Hybrid escalation
 - Chỉ retry các frame/audio không đạt validation.
