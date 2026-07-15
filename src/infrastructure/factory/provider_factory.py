@@ -37,7 +37,10 @@ class ProviderFactory:
         return self.create_provider("video", name, overrides)
 
     def create_speech_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
-        return self.create_provider("speech", name, overrides)
+        provider_name, options = self._merged_options("speech", name, overrides)
+        if provider_name == "gemini_audio":
+            options["runtime"] = self._get_gemini_runtime(options)
+        return self.registry.create("speech", provider_name, options)
 
     def create_translation_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         provider_name, options = self._merged_options("translation", name, overrides)

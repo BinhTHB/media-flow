@@ -49,6 +49,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
     from src.infrastructure.providers.ocr.gemini_vision_ocr_provider import GeminiVisionOCRProvider
     from src.infrastructure.providers.speech.faster_whisper_speech_provider import FasterWhisperSpeechProvider
+    from src.infrastructure.providers.speech.gemini_audio_speech_provider import GeminiAudioSpeechProvider
     from src.infrastructure.providers.speech.mock_speech_provider import MockSpeechProvider
     from src.infrastructure.providers.storage.mock_storage_provider import MockStorageProvider
     from src.infrastructure.providers.subtitle.mock_subtitle_provider import MockSubtitleProvider
@@ -85,6 +86,21 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         model_size=opt.get("model_size", "base"),
         device=opt.get("device", "cpu"),
         compute_type=opt.get("compute_type", "int8"),
+    ))
+    registry.register("speech", "gemini_audio", lambda opt: GeminiAudioSpeechProvider(
+        runtime=opt.get("runtime"),
+        model=opt.get("model", "gemini-3.1-flash-lite"),
+        escalation_model=opt.get("escalation_model", "gemini-3.5-flash"),
+        api_key=opt.get("api_key"),
+        prompt_version=opt.get("prompt_version", "gemini_asr_v1"),
+        schema_version=opt.get("schema_version", "gemini_asr_segments_v1"),
+        full_audio_max_seconds=float(opt.get("full_audio_max_seconds", 300.0)),
+        chunk_fallback_enabled=bool(opt.get("chunk_fallback_enabled", True)),
+        chunk_duration_seconds=float(opt.get("chunk_duration_seconds", 60.0)),
+        chunk_overlap_seconds=float(opt.get("chunk_overlap_seconds", 2.0)),
+        escalation_enabled=bool(opt.get("escalation_enabled", False)),
+        max_escalation_requests=int(opt.get("max_escalation_requests", 2)),
+        inline_payload_safety_limit_bytes=int(opt.get("inline_payload_safety_limit_bytes", 19_000_000)),
     ))
 
     # translation

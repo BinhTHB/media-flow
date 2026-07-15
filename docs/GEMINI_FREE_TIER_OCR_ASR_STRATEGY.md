@@ -590,9 +590,12 @@ src/infrastructure/gemini/
 
 ### Phase D — Gemini ASR provider
 
-- Implement `SpeechProvider` port.
-- Mặc định full-audio request cho video dưới 5 phút.
-- Chạy shadow mode.
+**Status: COMPLETED, qualification/shadow-only mode.** See
+[GEMINI_AUDIO_ASR_PHASE_D_REPORT.md](GEMINI_AUDIO_ASR_PHASE_D_REPORT.md).
+
+- [x] Implement `SpeechProvider` port.
+- [x] Mặc định full-audio request cho video dưới 5 phút.
+- [x] Chạy shadow mode.
 
 ### Phase E — Benchmark
 - PaddleOCR vs Gemini full-frame vs Gemini full-frame + crop retry
