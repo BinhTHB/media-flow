@@ -79,7 +79,10 @@ class ProviderFactory:
         return self.create_provider("subtitle_placement_debug", name, overrides)
 
     def create_ocr_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
-        return self.create_provider("ocr", name, overrides)
+        provider_name, options = self._merged_options("ocr", name, overrides)
+        if provider_name == "gemini_vision":
+            options["runtime"] = self._get_gemini_runtime(options)
+        return self.registry.create("ocr", provider_name, options)
 
     def create_storage_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         return self.create_provider("storage", name, overrides)

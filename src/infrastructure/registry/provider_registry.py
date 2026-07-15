@@ -47,6 +47,7 @@ class ProviderRegistry:
 def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.ocr.mock_ocr_provider import MockOCRProvider
     from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
+    from src.infrastructure.providers.ocr.gemini_vision_ocr_provider import GeminiVisionOCRProvider
     from src.infrastructure.providers.speech.faster_whisper_speech_provider import FasterWhisperSpeechProvider
     from src.infrastructure.providers.speech.mock_speech_provider import MockSpeechProvider
     from src.infrastructure.providers.storage.mock_storage_provider import MockStorageProvider
@@ -133,6 +134,20 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     registry.register("ocr", "paddle", lambda opt: PaddleOCRProvider(
         language=opt.get("language", "ch"),
         use_gpu=opt.get("use_gpu", True),
+    ))
+    registry.register("ocr", "gemini_vision", lambda opt: GeminiVisionOCRProvider(
+        runtime=opt.get("runtime"),
+        model=opt.get("model", "gemini-3.1-flash-lite"),
+        escalation_model=opt.get("escalation_model", "gemini-3.5-flash"),
+        api_key=opt.get("api_key"),
+        batch_size=int(opt.get("batch_size", 4)),
+        prompt_version=opt.get("prompt_version", "gemini_ocr_v1"),
+        schema_version=opt.get("schema_version", "ocr_detection_v1"),
+        max_escalation_requests=int(opt.get("max_escalation_requests", 2)),
+        escalation_enabled=bool(opt.get("escalation_enabled", False)),
+        crop_retry_enabled=bool(opt.get("crop_retry_enabled", True)),
+        crop_padding_ratio=float(opt.get("crop_padding_ratio", 0.05)),
+        crop_upscale_factor=float(opt.get("crop_upscale_factor", 2.0)),
     ))
 
     # storage

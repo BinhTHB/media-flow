@@ -582,9 +582,11 @@ src/infrastructure/gemini/
 
 ### Phase C — Gemini OCR provider
 
-- Implement `OCRProvider` port.
-- Chạy shadow mode đầu tiên (ghi log so sánh với PaddleOCR, không ảnh hưởng output).
-- Chưa đổi default provider.
+**Status: IMPLEMENTED, qualification/shadow mode only.** See [GEMINI_VISION_OCR_PHASE_C_REPORT.md](GEMINI_VISION_OCR_PHASE_C_REPORT.md).
+
+- [x] Implement OCRProvider port (GeminiVisionOCRProvider).
+- [x] Chạy được shadow/qualification mode và ghi artifact riêng, không ảnh hưởng output.
+- [x] Giữ nguyên default provider.
 
 ### Phase D — Gemini ASR provider
 
