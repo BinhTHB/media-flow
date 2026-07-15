@@ -84,8 +84,27 @@ class ConfigLoader:
         }
         placement_values.update(placement_overrides)
         placement = PlacementConfig(**placement_values)
+        primary_model = os.environ.get(
+            "GEMINI_PRIMARY_MODEL",
+            os.environ.get("GEMINI_MODEL", gemini_overrides.get("model", gemini_raw.get("model", GeminiConfig.model))),
+        )
         gemini = GeminiConfig(
-            model=os.environ.get("GEMINI_MODEL", gemini_raw.get("model", GeminiConfig.model)),
+            model=primary_model,
+            escalation_model=os.environ.get(
+                "GEMINI_ESCALATION_MODEL",
+                gemini_overrides.get("escalation_model", gemini_raw.get("escalation_model", GeminiConfig.escalation_model)),
+            ),
+            escalation_enabled=self._env_bool(
+                "GEMINI_ESCALATION_ENABLED",
+                gemini_overrides.get("escalation_enabled", gemini_raw.get("escalation_enabled", False)),
+            ),
+            rpm_cap=self._env_int("GEMINI_RPM_CAP", gemini_overrides.get("rpm_cap", gemini_raw.get("rpm_cap", 60))),
+            tpm_cap=self._env_optional_int("GEMINI_TPM_CAP", gemini_overrides.get("tpm_cap", gemini_raw.get("tpm_cap"))),
+            rpd_cap=self._env_optional_int("GEMINI_RPD_CAP", gemini_overrides.get("rpd_cap", gemini_raw.get("rpd_cap"))),
+            max_concurrency=self._env_int(
+                "GEMINI_MAX_CONCURRENCY",
+                gemini_overrides.get("max_concurrency", gemini_raw.get("max_concurrency", 1)),
+            ),
             max_retries=self._env_int(
                 "GEMINI_MAX_RETRIES",
                 gemini_overrides.get("max_retries", gemini_raw.get("max_retries", 3)),
@@ -94,29 +113,15 @@ class ConfigLoader:
                 "GEMINI_CACHE_DIR",
                 gemini_overrides.get("cache_dir", gemini_raw.get("cache_dir")),
             ),
-            cache_namespace=os.environ.get(
-                "GEMINI_CACHE_NAMESPACE",
-                gemini_overrides.get(
-                    "cache_namespace", gemini_raw.get("cache_namespace", "shared")
-                ),
-            ),
             cache_enabled=self._env_bool(
                 "GEMINI_CACHE_ENABLED",
                 gemini_overrides.get(
                     "cache_enabled", gemini_raw.get("cache_enabled", True)
                 ),
             ),
-            scheduler=dict(
-                gemini_overrides.get(
-                    "scheduler", gemini_raw.get("scheduler", {})
-                )
-            ),
-            file_manager_enabled=self._env_bool(
-                "GEMINI_FILE_MANAGER_ENABLED",
-                gemini_overrides.get(
-                    "file_manager_enabled",
-                    gemini_raw.get("file_manager_enabled", False),
-                ),
+            validate_models=self._env_bool(
+                "GEMINI_VALIDATE_MODELS",
+                gemini_overrides.get("validate_models", gemini_raw.get("validate_models", False)),
             ),
         )
 
@@ -153,6 +158,18 @@ class ConfigLoader:
             raise ValueError(f"{name} must be an integer.") from exc
 
     @staticmethod
+    def _env_int_optional(name: str, default: Any) -> Optional[int]:
+        value = os.environ.get(name)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name} must be an integer.") from exc
+        if isinstance(default, int):
+            return default
+        return None
+
+    @staticmethod
     def _env_bool(name: str, default: Any) -> bool:
         value = os.environ.get(name)
         if value is None:
@@ -163,6 +180,13 @@ class ConfigLoader:
         if normalized in {"0", "false", "no", "off"}:
             return False
         raise ValueError(f"{name} must be a boolean.")
+
+    @staticmethod
+    def _env_optional_int(name: str, default: Any) -> Optional[int]:
+        value = os.environ.get(name)
+        if value is None:
+            return None if default is None else ConfigLoader._env_int(name, default)
+        return ConfigLoader._env_int(name, value)
 
     @staticmethod
     def _validate_subtitle_config_ownership(

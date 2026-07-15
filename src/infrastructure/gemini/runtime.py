@@ -16,10 +16,16 @@ class RuntimeConfig:
     api_key: Optional[str] = None
     default_model: str = DEFAULT_MODEL
     cache_dir: Optional[str] = None
-    cache_namespace: str = "shared"
     cache_enabled: bool = True
+    cache_namespace: str = "shared"
     scheduler: Dict[str, Any] = field(default_factory=dict)
     file_manager_enabled: bool = False
+    rpm_cap: int = 60
+    tpm_cap: Optional[int] = None
+    rpd_cap: Optional[int] = None
+    max_concurrency: int = 1
+    max_retries: int = 3
+    validate_models: bool = False
 
 
 class GeminiRuntime:
@@ -32,14 +38,24 @@ class GeminiRuntime:
 
     def __init__(self, config: Optional[RuntimeConfig] = None) -> None:
         self._config = config or RuntimeConfig()
-        self._scheduler = RequestScheduler(**self._config.scheduler)
+        scheduler_options = dict(self._config.scheduler)
+        scheduler_options.update(
+            {
+                "rpm_cap": self._config.rpm_cap,
+                "tpm_cap": self._config.tpm_cap,
+                "rpd_cap": self._config.rpd_cap,
+                "max_concurrency": self._config.max_concurrency,
+                "max_retries": self._config.max_retries,
+            }
+        )
+        self._scheduler = RequestScheduler(**scheduler_options)
         self._cache = ResponseCache(
             cache_dir=self._config.cache_dir,
             namespace=self._config.cache_namespace,
             enabled=self._config.cache_enabled,
         )
         self._usage = UsageRecorder()
-        self._files = FileManager(enabled=self._config.file_manager_enabled)
+        self._files = FileManager()
         self._clients: Dict[str, GeminiClient] = {}
 
     @classmethod
@@ -76,6 +92,7 @@ class GeminiRuntime:
                 usage_recorder=self._usage,
                 file_manager=self._files,
                 role=role,
+                validate_models=self._config.validate_models,
             )
             self._clients[cache_key] = client
         return client

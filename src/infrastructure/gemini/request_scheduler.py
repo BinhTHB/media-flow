@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from typing import Callable, Deque, Optional, Tuple
+from datetime import datetime
+from typing import Callable, Deque, Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
-from src.infrastructure.gemini.exceptions import GeminiSchedulerError
+from src.infrastructure.gemini.exceptions import GeminiSchedulerError, ProviderRateLimitError
 
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
 RandomSource = Callable[[], float]
+DayKey = Callable[[], str]
 
 WINDOW_SECONDS = 60.0
 
@@ -22,17 +25,22 @@ class RequestScheduler:
     """
 
     def __init__(self, *, rpm_cap: int = 60, tpm_cap: Optional[int] = None,
+                 rpd_cap: Optional[int] = None,
                  max_concurrency: int = 1, max_retries: int = 5,
                  backoff_initial_seconds: float = 2.0, backoff_max_seconds: float = 60.0,
                  respect_retry_after: bool = True,
                  clock: Optional[Clock] = None, sleeper: Optional[Sleeper] = None,
-                 random_source: Optional[RandomSource] = None) -> None:
+                 random_source: Optional[RandomSource] = None,
+                 day_key: Optional[DayKey] = None) -> None:
         if rpm_cap < 1:
             raise GeminiSchedulerError("rpm_cap must be >= 1")
         if max_retries < 0:
             raise GeminiSchedulerError("max_retries must be >= 0")
+        if rpd_cap is not None and rpd_cap < 1:
+            raise GeminiSchedulerError("rpd_cap must be >= 1")
         self.rpm_cap = rpm_cap
         self.tpm_cap = tpm_cap
+        self.rpd_cap = rpd_cap
         self.max_concurrency = max(1, int(max_concurrency))
         self.max_retries = max_retries
         self.backoff_initial_seconds = backoff_initial_seconds
@@ -41,6 +49,7 @@ class RequestScheduler:
         self._clock = clock or _default_clock
         self._sleeper = sleeper or _default_sleeper
         self._random = random_source or _default_random
+        self._day_key = day_key or _pacific_day_key
         self._lock = threading.RLock()
         self._request_times: Deque[float] = deque()
         self._token_events: Deque[Tuple[float, int]] = deque()
@@ -48,11 +57,19 @@ class RequestScheduler:
         self.retry_count = 0
         self.rate_limit_count = 0
         self.request_count = 0
+        self.rpd_count = 0
+        self._rpd_day = self._day_key()
+        self.request_count_by_model: Dict[str, int] = {}
+        self.escalation_count = 0
 
-    def acquire(self, tokens: int = 0) -> None:
+    def acquire(self, tokens: int = 0, *, model: Optional[str] = None,
+                is_escalation: bool = False) -> None:
         while True:
             with self._lock:
                 now = self._clock()
+                self._reset_rpd_if_needed()
+                if self.rpd_cap is not None and self.rpd_count >= self.rpd_cap:
+                    raise ProviderRateLimitError("Gemini daily request cap reached.")
                 self._purge(now)
                 wait = self._compute_wait(now, tokens)
                 if wait <= 0:
@@ -61,6 +78,11 @@ class RequestScheduler:
                         self._token_events.append((now, tokens))
                     self._active += 1
                     self.request_count += 1
+                    self.rpd_count += 1
+                    if model:
+                        self.request_count_by_model[model] = self.request_count_by_model.get(model, 0) + 1
+                    if is_escalation:
+                        self.escalation_count += 1
                     return
                 sleep_for = wait
             self._sleeper(sleep_for)
@@ -117,6 +139,14 @@ class RequestScheduler:
         while self._token_events and self._token_events[0][0] <= cutoff:
             self._token_events.popleft()
 
+    def _reset_rpd_if_needed(self) -> None:
+        day = self._day_key()
+        if day != self._rpd_day:
+            self._rpd_day = day
+            self.rpd_count = 0
+            self.request_count_by_model.clear()
+            self.escalation_count = 0
+
 
 def _default_clock() -> float:
     import time
@@ -131,3 +161,6 @@ def _default_sleeper(seconds: float) -> None:
 def _default_random() -> float:
     import random
     return random.random()
+
+def _pacific_day_key() -> str:
+    return datetime.now(ZoneInfo("America/Los_Angeles")).date().isoformat()

@@ -27,15 +27,23 @@ class FileManager:
     """
 
     def __init__(self, client: Optional[GeminiFileClient] = None, *, enabled: bool = False) -> None:
-        self._client = client
-        self._enabled = bool(enabled and client is not None)
+        self._client = None
+        self._enabled = False
+
+    @property
+    def supports_inline(self) -> bool:
+        return True
+
+    @property
+    def supports_remote_upload(self) -> bool:
+        return False
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
     def upload_file(self, local_path: str, *, mime_type: Optional[str] = None) -> GeminiFileHandle:
-        if not self._enabled:
+        if not self.supports_remote_upload:
             return GeminiFileHandle(
                 name=os.path.basename(local_path),
                 uri="",
@@ -57,7 +65,7 @@ class FileManager:
         )
 
     def delete_file(self, file_name: str) -> None:
-        if not self._enabled:
+        if not self.supports_remote_upload:
             return
         try:
             self._client.delete_file(file_name)

@@ -13,3 +13,10 @@ class ValidationError(VideoTranslatorException):
 class UseCaseError(VideoTranslatorException):
     """Raised when a use case execution fails."""
     pass
+
+
+class ProviderConfigurationError(ProviderError):
+    pass
+
+class ProviderRateLimitError(ProviderError):
+    pass

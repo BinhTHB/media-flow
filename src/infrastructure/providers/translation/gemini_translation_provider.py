@@ -1,4 +1,3 @@
-import time
 from typing import List, Optional
 
 from src.application.ports.translation_provider import TranslationProvider
@@ -27,19 +26,11 @@ class GeminiTranslationProvider(TranslationProvider):
 
         chunk_size = 15
         translated_texts: List[str] = []
-        start_time = time.monotonic()
         for i in range(0, len(segments), chunk_size):
             chunk = segments[i : i + chunk_size]
             chunk_texts = [seg.text for seg in chunk]
             chunk_translations = self._translate_chunk(chunk_texts, target_language)
             translated_texts.extend(chunk_translations)
-            if i + chunk_size < len(segments):
-                # Minimum 3s gap between chunks (max 20 RPM)
-                elapsed = time.monotonic() - start_time
-                gap = 3.0 - elapsed
-                if gap > 0:
-                    time.sleep(gap)
-                start_time = time.monotonic()
 
         for segment, translated_text in zip(segments, translated_texts):
             segment.translated_text = translated_text
@@ -54,28 +45,19 @@ class GeminiTranslationProvider(TranslationProvider):
             f"{numbered_lines}"
         )
 
-        for attempt in range(self.max_retries):
-            try:
-                client = self._runtime.get_client(model=self.model)
-                response = client.generate_content(
-                    GeminiRequest(
-                        contents=[{"parts": [{"text": prompt}]}],
-                        generation_config={"temperature": 0.3},
-                    )
+        try:
+            client = self._runtime.get_client(model=self.model)
+            response = client.generate_content(
+                GeminiRequest(
+                    contents=[{"parts": [{"text": prompt}]}],
+                    generation_config={"temperature": 0.3},
                 )
-                return self._parse_numbered_lines(response.text.strip(), texts)
-            except GeminiAuthError as exc:
-                raise ProviderError(
-                    "GEMINI_API_KEY environment variable is not set."
-                ) from exc
-            except GeminiError as exc:
-                if attempt == self.max_retries - 1:
-                    raise ProviderError(
-                        f"Gemini translation failed after {self.max_retries} retries: {exc}"
-                    ) from exc
-                time.sleep(2 ** attempt)
-
-        return texts
+            )
+            return self._parse_numbered_lines(response.text.strip(), texts)
+        except GeminiAuthError as exc:
+            raise ProviderError("GEMINI_API_KEY environment variable is not set.") from exc
+        except GeminiError as exc:
+            raise ProviderError(f"Gemini translation failed: {exc}") from exc
 
     @staticmethod
     def _parse_numbered_lines(content: str, original_texts: List[str]) -> List[str]:

@@ -70,3 +70,15 @@ class GeminiUsageError(GeminiError):
 
 class GeminiFileError(GeminiError):
     """File upload/management failure."""
+
+class ProviderConfigurationError(GeminiError):
+    """Configured Gemini infrastructure cannot be used safely."""
+
+class ProviderRateLimitError(GeminiRateLimitError):
+    """A locally enforced provider quota has been exhausted."""
+
+
+class GeminiConfigurationError(ProviderConfigurationError):
+    """Model configuration is invalid for use (legacy/deprecated/retired/unknown)."""
+    def __init__(self, message: str, *args: Any) -> None:
+        super().__init__(_redact(message), *args)

@@ -5,6 +5,8 @@ import os
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
+import logging
+
 
 from src.infrastructure.gemini.contracts import (
     GeminiRequest,
@@ -26,11 +28,15 @@ from src.infrastructure.gemini.exceptions import (
     GeminiRateLimitError,
     GeminiAuthError,
     GeminiValidationError,
+    ProviderConfigurationError,
 )
 from src.infrastructure.gemini.request_scheduler import RequestScheduler
 from src.infrastructure.gemini.response_cache import ResponseCache
 from src.infrastructure.gemini.usage_recorder import UsageRecorder, UsageRecord
 from src.infrastructure.gemini.file_manager import FileManager
+from src.infrastructure.gemini.model_validator import GeminiModelValidator
+from src.infrastructure.gemini.contracts import MODEL_STAGE_FAIL, MODEL_STAGE_PREVIEW
+import warnings
 
 
 class GeminiClient:
@@ -43,7 +49,8 @@ class GeminiClient:
                  cache: Optional[ResponseCache] = None,
                  usage_recorder: Optional[UsageRecorder] = None,
                  file_manager: Optional[FileManager] = None,
-                 role: str = MODE_ROLE_PRIMARY, timeout: float = 60.0) -> None:
+                 role: str = MODE_ROLE_PRIMARY, timeout: float = 60.0,
+                 validate_models: bool = False) -> None:
         self._model = model
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -54,6 +61,10 @@ class GeminiClient:
         self._files = file_manager
         self._role = role
         self._timeout = timeout
+        self._validate_models = validate_models
+        self._validated = False
+        self._validate_models = validate_models
+        self._models_checked = False
 
     # --- lazy key resolution ---
     def _resolve_api_key(self) -> str:
@@ -69,12 +80,14 @@ class GeminiClient:
     def _models_url(self, model: Optional[str] = None) -> str:
         key = self._resolve_api_key()
         if model:
-            return f"{self._base_url}/models/{model}?key={key}"
+            model_path = model if model.startswith("models/") else f"models/{model}"
+            return f"{self._base_url}/{model_path}?key={key}"
         return f"{self._base_url}/models?key={key}"
 
     # --- generate content ---
     def generate_content(self, request: GeminiRequest, *, use_cache: bool = True) -> GeminiResponse:
         request.model = request.model or self._model
+        self._check_configured_models()
         cache_key = None
         if use_cache and self._cache is not None:
             cache_key = self._cache.make_key(
@@ -102,7 +115,10 @@ class GeminiClient:
 
         attempt = 0
         if self._scheduler is not None:
-            self._scheduler.acquire(tokens=self._estimate_tokens(data))
+            self._scheduler.acquire(
+                tokens=self._estimate_tokens(data), model=request.model,
+                is_escalation=self._role == MODE_ROLE_ESCALATION,
+            )
         try:
             while True:
                 try:
@@ -115,9 +131,13 @@ class GeminiClient:
                         self._cache.set(cache_key, resp.to_dict())
                     self._record_usage(request, resp, cache_hit=False, retry_count=attempt)
                     return resp
-                except GeminiRateLimitError as exc:
-                    if self._scheduler is not None and self._scheduler.should_retry(attempt):
-                        self._scheduler.on_rate_limited(exc.retry_after)
+                except (GeminiRateLimitError, GeminiNetworkError, GeminiAPIError) as exc:
+                    retryable = (
+                        isinstance(exc, (GeminiRateLimitError, GeminiNetworkError))
+                        or (exc.status_code is not None and exc.status_code >= 500)
+                    )
+                    if retryable and self._scheduler is not None and self._scheduler.should_retry(attempt):
+                        self._scheduler.on_rate_limited(getattr(exc, "retry_after", None))
                         if self._usage is not None:
                             self._usage.record_rate_limit(request.model or self._model)
                         attempt += 1
@@ -155,6 +175,14 @@ class GeminiClient:
         finish_reason = first.get("finishReason")
         safety = first.get("safetyRatings", [])
         usage = GeminiUsage.from_api(raw.get("usageMetadata"))
+        status = raw.get("modelStatus")
+        stage = status.get("modelStage") if isinstance(status, dict) else "unknown"
+        stage = stage or "unknown"
+        usage.model_stage = stage
+        if stage in MODEL_STAGE_FAIL:
+            raise ProviderConfigurationError(f"Gemini model stage '{stage}' is not usable.")
+        if stage == MODEL_STAGE_PREVIEW:
+            warnings.warn(f"Gemini model '{request.model or self._model}' is PREVIEW.", RuntimeWarning)
         return GeminiResponse(
             text=text,
             model=self._model,
@@ -163,7 +191,14 @@ class GeminiClient:
             usage=usage,
             request_id=request.request_id,
             raw=raw,
+            model_stage=stage,
         )
+
+    def _check_configured_models(self) -> None:
+        if not self._validate_models or self._models_checked:
+            return
+        GeminiModelValidator.check_configured_models(self, [self._model])
+        self._models_checked = True
 
     # --- model client protocol (for validator) ---
     def get_model(self, model: str) -> GeminiModelInfo:

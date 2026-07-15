@@ -35,18 +35,32 @@ class ProviderConfig:
 @dataclass
 class GeminiConfig:
     model: str = "gemini-3.1-flash-lite"
+    primary_model: str = "gemini-3.1-flash-lite"
+    escalation_model: str = "gemini-3.5-flash"
+    escalation_enabled: bool = False
+    rpm_cap: int = 60
+    tpm_cap: Optional[int] = None
+    rpd_cap: Optional[int] = None
+    max_concurrency: int = 1
     max_retries: int = 3
     cache_dir: Optional[str] = None
-    cache_namespace: str = "shared"
     cache_enabled: bool = True
+    cache_namespace: str = "shared"
+    validate_models: bool = False
     scheduler: Dict[str, Any] = field(default_factory=dict)
-    file_manager_enabled: bool = False
 
     def __post_init__(self) -> None:
-        if not self.model.strip():
-            raise ValueError("Gemini model must not be empty.")
+        if self.model != "gemini-3.1-flash-lite" and self.primary_model == "gemini-3.1-flash-lite":
+            self.primary_model = self.model
+        elif self.primary_model != "gemini-3.1-flash-lite":
+            self.model = self.primary_model
+
+        if not self.primary_model.strip():
+            raise ValueError("Gemini primary model must not be empty.")
         if self.max_retries < 1:
             raise ValueError("Gemini max_retries must be at least 1.")
+        if self.rpm_cap < 1 or self.max_concurrency < 1:
+            raise ValueError("Gemini scheduler caps must be positive.")
         if not self.cache_namespace.strip():
             raise ValueError("Gemini cache_namespace must not be empty.")
 

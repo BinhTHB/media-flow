@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 from src.infrastructure.gemini.contracts import (
     GeminiModelClient,
     GENERATE_CONTENT_METHOD,
     MODEL_STAGE_FAIL,
 )
-from src.infrastructure.gemini.exceptions import GeminiModelValidationError
+from src.infrastructure.gemini.exceptions import GeminiModelValidationError, GeminiConfigurationError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -68,3 +71,29 @@ class ModelValidator:
 
     def require_available(self, model: str) -> ModelValidationResult:
         return self.validate(model).require_valid()
+
+    def check_configured_models(self, models: Iterable[str]) -> None:
+        for model in models:
+            self.require_available(model)
+
+
+class GeminiModelValidator:
+    """Validates configured models at startup/lazy before first query."""
+
+    @staticmethod
+    def check_configured_models(client: GeminiModelClient, models: list[str]) -> None:
+        validator = ModelValidator(client)
+        for model in models:
+            if not model:
+                continue
+            res = validator.validate(model)
+            if not res.available:
+                if res.stage in MODEL_STAGE_FAIL:
+                    raise GeminiConfigurationError(
+                        f"Model '{model}' is not usable: stage is '{res.stage}'"
+                    )
+                raise GeminiConfigurationError(
+                    f"Model '{model}' is not available: {res.error or 'unknown reason'}"
+                )
+            if res.stage == "PREVIEW":
+                logger.warning(f"Model '{model}' is in PREVIEW stage. Use with caution.")

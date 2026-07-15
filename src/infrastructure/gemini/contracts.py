@@ -30,18 +30,20 @@ MODEL_STAGE_FAIL = {
 MODE_ROLE_PRIMARY = "primary"
 MODE_ROLE_ESCALATION = "escalation"
 
-
 @dataclass
 class GeminiUsage:
+
     prompt_token_count: int = 0
     candidates_token_count: int = 0
     total_token_count: int = 0
+    model_stage: str = "unknown"
 
     def to_dict(self) -> Dict[str, int]:
         return {
             "prompt_token_count": self.prompt_token_count,
             "candidates_token_count": self.candidates_token_count,
             "total_token_count": self.total_token_count,
+            "model_stage": self.model_stage,
         }
 
     @classmethod
@@ -50,6 +52,7 @@ class GeminiUsage:
             prompt_token_count=int(data.get("prompt_token_count", 0) or 0),
             candidates_token_count=int(data.get("candidates_token_count", 0) or 0),
             total_token_count=int(data.get("total_token_count", 0) or 0),
+            model_stage=str(data.get("model_stage", "unknown") or "unknown"),
         )
 
     @classmethod
@@ -60,6 +63,27 @@ class GeminiUsage:
 
 
 @dataclass
+
+
+@dataclass
+class GeminiProvenance:
+    model: str
+    model_stage: str = "unknown"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "model": self.model,
+            "model_stage": self.model_stage,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GeminiProvenance":
+        return cls(
+            model=data.get("model", ""),
+            model_stage=data.get("model_stage", "unknown"),
+        )
+
+@dataclass
 class GeminiResponse:
     text: str
     model: Optional[str] = None
@@ -68,7 +92,9 @@ class GeminiResponse:
     usage: GeminiUsage = field(default_factory=GeminiUsage)
     request_id: Optional[str] = None
     cache_hit: bool = False
+    provenance: Optional[GeminiProvenance] = None
     raw: Dict[str, Any] = field(default_factory=dict)
+    model_stage: str = "unknown"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -79,6 +105,8 @@ class GeminiResponse:
             "usage": self.usage.to_dict(),
             "request_id": self.request_id,
             "cache_hit": self.cache_hit,
+            "model_stage": self.model_stage,
+            "provenance": self.provenance.to_dict() if self.provenance else None,
         }
 
     @classmethod
@@ -91,6 +119,11 @@ class GeminiResponse:
             usage=GeminiUsage.from_dict(data.get("usage", {}) or {}),
             request_id=data.get("request_id"),
             cache_hit=bool(data.get("cache_hit", False)),
+            model_stage=str(data.get("model_stage", "unknown") or "unknown"),
+            provenance=(
+                GeminiProvenance.from_dict(data["provenance"])
+                if data.get("provenance") else None
+            ),
         )
 
 
