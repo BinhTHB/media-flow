@@ -93,9 +93,9 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         max_retries=int(opt.get("max_retries", 3)),
     ))
     registry.register("translation", "gemini", lambda opt: GeminiTranslationProvider(
+        runtime=opt.get("runtime"),
         model=opt.get("model", "gemini-3.1-flash-lite"),
         max_retries=int(opt.get("max_retries", 3)),
-        api_key=opt.get("api_key"),
     ))
 
     # subtitle

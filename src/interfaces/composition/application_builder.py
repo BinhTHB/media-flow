@@ -203,7 +203,12 @@ class ApplicationBuilder:
             "defaults": app_config.defaults,
             "providers": app_config.providers,
         }
-        factory = ProviderFactory(config=config_dict, registry=registry)
+        factory = ProviderFactory(
+            config=config_dict,
+            registry=registry,
+            gemini_config=app_config.gemini,
+            gemini_api_key=loader.gemini_api_key,
+        )
         artifact_manager = ArtifactManager(base_dir=self.output_dir)
         context = ApplicationContext(
             config=app_config,
@@ -233,6 +238,7 @@ class ApplicationBuilder:
             name=self.translation_provider,
             overrides={"target_language": self.target_language},
         )
+        context.gemini_runtime = factory.gemini_runtime
         subtitle_provider = factory.create_subtitle_provider(name=self.subtitle_provider)
         ocr_provider = factory.create_ocr_provider(
             name=self.ocr_provider,

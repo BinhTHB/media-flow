@@ -6,7 +6,7 @@ from typing import Any, Optional
 from src.shared.exceptions import ProviderError
 
 _API_KEY_PATTERN = re.compile(r"AIzaSy[A-Za-z0-9_-]{33}")
-_QUERY_KEY_PATTERN = re.compile(r"(?:[\?&]key=)[^&\s\"\']+")
+_QUERY_KEY_PATTERN = re.compile(r"([\?&]key=)[^&\s\"\']+")
 
 
 def _redact(value: str) -> str:

@@ -1,7 +1,10 @@
 import json
+import urllib.request
 import pytest
 
 from src.domain.entities.segment import Segment
+from src.infrastructure.factory.provider_factory import ProviderFactory
+from src.infrastructure.gemini.runtime import GeminiRuntime
 from src.infrastructure.providers.translation.gemini_translation_provider import GeminiTranslationProvider
 from src.shared.exceptions import ProviderError
 
@@ -29,7 +32,8 @@ def test_gemini_translation_response(monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(
-        "src.infrastructure.providers.translation.gemini_translation_provider.request.urlopen",
+        urllib.request,
+        "urlopen",
         lambda *args, **kwargs: FakeResponse(),
     )
 
@@ -37,3 +41,25 @@ def test_gemini_translation_response(monkeypatch):
     segments = [Segment(id="1", start=0, end=1, text="Hello", source="speech")]
     result = provider.translate(segments, "vi")
     assert result[0].translated_text == "Xin chào"
+
+def test_gemini_factory_injects_one_runtime():
+    factory = ProviderFactory(
+        config={
+            "defaults": {"translation": "gemini"},
+            "providers": {
+                "translation": {
+                    "gemini": {
+                        "model": "gemini-3.1-flash-lite",
+                        "max_retries": 5,
+                    }
+                }
+            },
+        },
+        gemini_api_key="test-key",
+    )
+
+    first = factory.create_translation_provider()
+    second = factory.create_translation_provider()
+
+    assert isinstance(first._runtime, GeminiRuntime)
+    assert first._runtime is second._runtime

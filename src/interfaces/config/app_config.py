@@ -33,6 +33,24 @@ class ProviderConfig:
     options: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
+class GeminiConfig:
+    model: str = "gemini-3.1-flash-lite"
+    max_retries: int = 3
+    cache_dir: Optional[str] = None
+    cache_namespace: str = "shared"
+    cache_enabled: bool = True
+    scheduler: Dict[str, Any] = field(default_factory=dict)
+    file_manager_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.model.strip():
+            raise ValueError("Gemini model must not be empty.")
+        if self.max_retries < 1:
+            raise ValueError("Gemini max_retries must be at least 1.")
+        if not self.cache_namespace.strip():
+            raise ValueError("Gemini cache_namespace must not be empty.")
+
+@dataclass
 class AppConfig:
     defaults: Dict[str, str] = field(default_factory=dict)
     providers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -51,6 +69,7 @@ class AppConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
     resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
     ffmpeg: FFmpegConfig = field(default_factory=FFmpegConfig)
+    gemini: GeminiConfig = field(default_factory=GeminiConfig)
 
     def get_provider_config(self, category: str, override_name: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> ProviderConfig:
         name = override_name or self.defaults.get(category, "mock")

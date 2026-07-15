@@ -135,6 +135,36 @@ def test_config_loader_loads_defaults():
     assert app_config.defaults.get("video") == "mock"
     assert app_config.providers.get("speech", {}).get("faster-whisper", {}).get("model_size") == "base"
 
+def test_config_loader_applies_gemini_env_overrides_without_storing_api_key(
+    tmp_path, monkeypatch
+):
+    from src.interfaces.config.config_loader import ConfigLoader
+
+    providers_path = tmp_path / "providers.yaml"
+    styles_path = tmp_path / "styles.yaml"
+    providers_path.write_text(
+        "providers:\n"
+        "  translation:\n"
+        "    gemini:\n"
+        "      model: configured-model\n"
+        "      max_retries: 2\n",
+        encoding="utf-8",
+    )
+    styles_path.write_text("styles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_MODEL", "env-model")
+    monkeypatch.setenv("GEMINI_MAX_RETRIES", "4")
+    monkeypatch.setenv("GEMINI_CACHE_ENABLED", "false")
+
+    loader = ConfigLoader(str(providers_path), str(styles_path))
+    config = loader.load()
+
+    assert config.gemini.model == "env-model"
+    assert config.gemini.max_retries == 4
+    assert config.gemini.cache_enabled is False
+    assert config.providers["translation"]["gemini"].get("api_key") is None
+    assert loader.gemini_api_key == "test-key"
+
 def test_config_loader_missing_sections(tmp_path):
     from src.interfaces.config.config_loader import ConfigLoader
 

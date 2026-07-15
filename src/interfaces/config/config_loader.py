@@ -6,7 +6,12 @@ from src.domain.entities.placement_config import PlacementConfig
 from src.domain.entities.resource_policy import FFmpegConfig, ResourcePolicy
 from src.domain.entities.subtitle_quality_config import SubtitleQualityConfig
 from src.domain.entities.subtitle_style import SubtitleStyle
-from src.interfaces.config.app_config import AppConfig, OutputConfig, RuntimeConfig
+from src.interfaces.config.app_config import (
+    AppConfig,
+    GeminiConfig,
+    OutputConfig,
+    RuntimeConfig,
+)
 
 
 class ConfigLoader:
@@ -19,6 +24,7 @@ class ConfigLoader:
         self.providers_path = providers_path or os.path.join(base_dir, "config", "providers.yaml")
         self.subtitle_styles_path = subtitle_styles_path or os.path.join(base_dir, "config", "subtitle_styles.yaml")
         self.secrets_path = os.path.join(base_dir, "config", "config.yml")
+        self.gemini_api_key: Optional[str] = None
 
     def load(self, overrides: Optional[Dict[str, Any]] = None) -> AppConfig:
         providers_raw = self._load_yaml(self.providers_path)
@@ -26,10 +32,21 @@ class ConfigLoader:
         secrets_raw = self._load_yaml(self.secrets_path)
 
         defaults = providers_raw.get("defaults", {})
-        providers = providers_raw.get("providers", {})
-        gemini_api_key = secrets_raw.get("gemini", {}).get("api_key")
-        if gemini_api_key:
-            providers.setdefault("translation", {}).setdefault("gemini", {})["api_key"] = gemini_api_key
+        providers = {
+            category: {
+                name: {
+                    key: value
+                    for key, value in options.items()
+                    if not (category == "translation" and name == "gemini" and key == "api_key")
+                }
+                for name, options in configured.items()
+            }
+            for category, configured in providers_raw.get("providers", {}).items()
+        }
+        self.gemini_api_key = os.environ.get("GEMINI_API_KEY") or secrets_raw.get(
+            "gemini", {}
+        ).get("api_key")
+        gemini_raw = providers.get("translation", {}).get("gemini", {})
         quality_raw = providers_raw.get("subtitle_quality", {})
         placement_raw = providers_raw.get("subtitle_placement", {})
         styles = styles_raw.get("styles", {})
@@ -42,6 +59,7 @@ class ConfigLoader:
         output_overrides = overrides.get("output", {})
         resource_overrides = overrides.get("resource_policy", {})
         ffmpeg_overrides = overrides.get("ffmpeg", {})
+        gemini_overrides = overrides.get("gemini", {})
 
         default_quality = SubtitleQualityConfig()
         quality_values = {
@@ -66,6 +84,41 @@ class ConfigLoader:
         }
         placement_values.update(placement_overrides)
         placement = PlacementConfig(**placement_values)
+        gemini = GeminiConfig(
+            model=os.environ.get("GEMINI_MODEL", gemini_raw.get("model", GeminiConfig.model)),
+            max_retries=self._env_int(
+                "GEMINI_MAX_RETRIES",
+                gemini_overrides.get("max_retries", gemini_raw.get("max_retries", 3)),
+            ),
+            cache_dir=os.environ.get(
+                "GEMINI_CACHE_DIR",
+                gemini_overrides.get("cache_dir", gemini_raw.get("cache_dir")),
+            ),
+            cache_namespace=os.environ.get(
+                "GEMINI_CACHE_NAMESPACE",
+                gemini_overrides.get(
+                    "cache_namespace", gemini_raw.get("cache_namespace", "shared")
+                ),
+            ),
+            cache_enabled=self._env_bool(
+                "GEMINI_CACHE_ENABLED",
+                gemini_overrides.get(
+                    "cache_enabled", gemini_raw.get("cache_enabled", True)
+                ),
+            ),
+            scheduler=dict(
+                gemini_overrides.get(
+                    "scheduler", gemini_raw.get("scheduler", {})
+                )
+            ),
+            file_manager_enabled=self._env_bool(
+                "GEMINI_FILE_MANAGER_ENABLED",
+                gemini_overrides.get(
+                    "file_manager_enabled",
+                    gemini_raw.get("file_manager_enabled", False),
+                ),
+            ),
+        )
 
         return AppConfig(
             defaults=defaults,
@@ -81,6 +134,7 @@ class ConfigLoader:
             ffmpeg=FFmpegConfig(
                 **{**providers_raw.get("ffmpeg", {}), **ffmpeg_overrides}
             ),
+            gemini=gemini,
         )
 
     @staticmethod
@@ -89,6 +143,26 @@ class ConfigLoader:
             with open(path, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {}
+
+    @staticmethod
+    def _env_int(name: str, default: Any) -> int:
+        value = os.environ.get(name)
+        try:
+            return int(value) if value is not None else int(default)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be an integer.") from exc
+
+    @staticmethod
+    def _env_bool(name: str, default: Any) -> bool:
+        value = os.environ.get(name)
+        if value is None:
+            return bool(default)
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{name} must be a boolean.")
 
     @staticmethod
     def _validate_subtitle_config_ownership(

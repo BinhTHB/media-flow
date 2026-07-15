@@ -559,16 +559,25 @@ Với video dưới 5 phút, happy path:
 
 ### Phase B — Shared Gemini infrastructure
 
-Tạo tại `src/infrastructure/gemini/`:
+**Status: IMPLEMENTED, qualification infrastructure only.** OCR/ASR providers,
+benchmarks, default-provider changes, and production readiness remain out of
+scope. See [GEMINI_SHARED_INFRASTRUCTURE_PHASE_B_REPORT.md](GEMINI_SHARED_INFRASTRUCTURE_PHASE_B_REPORT.md).
+
+Implemented at `src/infrastructure/gemini/`:
 
 ```text
 src/infrastructure/gemini/
 ├── __init__.py
-├── gemini_client.py          # Gemini API client wrapper (lazy init, API key mgmt)
+├── client.py                 # Lazy Standard generateContent REST client
+├── contracts.py              # Internal request/response/provenance contracts
+├── runtime.py                # Application-scoped shared runtime
 ├── request_scheduler.py      # Shared RPM/TPM scheduler với token tracking
 ├── response_cache.py         # Disk-based response cache
+├── structured_output.py      # Structured JSON parsing
+├── model_validator.py        # Models API validation policy
 ├── file_manager.py           # Upload/cleanup temporary files
-└── exceptions.py             # Proposed provider error subclasses
+├── usage_recorder.py         # Redaction-safe usage/provenance recording
+└── exceptions.py             # ProviderError-compatible Gemini error taxonomy
 ```
 
 ### Phase C — Gemini OCR provider
