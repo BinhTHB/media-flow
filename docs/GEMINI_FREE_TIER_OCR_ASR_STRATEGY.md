@@ -3,7 +3,7 @@
 **Tài liệu kiến trúc — chiến lược triển khai và qualification**
 
 > **Path**: `docs/GEMINI_FREE_TIER_OCR_ASR_STRATEGY.md`
-> **Trạng thái**: DRAFT — chưa triển khai provider
+> **Trạng thái**: ACCEPTED STRATEGY — implementation pending
 > **Production Ready**: NO
 
 ---
@@ -390,7 +390,12 @@ Mỗi output phải lưu:
 ```json
 {
   "provider": "gemini",
-  "model": "gemini-2.0-flash-lite",
+  "model": "gemini-3.1-flash-lite",
+  "model_role": "primary",
+  "model_validation_status": "available",
+  "api_surface": "configured_api_surface",
+  "request_id": "",
+  "cache_hit": false,
   "prompt_version": "gemini_ocr_v1",
   "schema_version": "ocr_detection_v1",
   "source_kind": "image",
@@ -401,6 +406,8 @@ Mỗi output phải lưu:
 }
 ```
 
+> **Lưu ý**: `api_surface` là field đề xuất — kiến trúc chưa quyết định dùng `GenerateContent` hay `Interactions` API. Giá trị sẽ là `"generate_content"` hoặc `"interactions"` tùy vào implementation cuối cùng.
+
 ---
 
 ## 9. Model routing
@@ -410,36 +417,62 @@ Mỗi output phải lưu:
 - **Không khóa cứng tên model** trong code.
 - Model nằm trong config, cho phép override qua environment variables.
 
-### Cấu hình đề xuất
+### Cấu hình đề xuất (conceptual)
+
+> **Cảnh báo**: `ConfigLoader` hiện tại (trong `src/interfaces/config/config_loader.py`) không hỗ trợ cú pháp `${VAR:-default}`. Nó đọc YAML trực tiếp và không mở rộng biến môi trường. Cấu hình dưới đây là **conceptual configuration example** — không thể dùng trực tiếp làm providers.yaml cho đến khi `ConfigLoader` được nâng cấp.
 
 ```yaml
 providers:
   ocr:
     gemini_vision:
-      model: ${GEMINI_OCR_MODEL:-gemini-2.0-flash-lite}
-      escalation_model: ${GEMINI_OCR_ESCALATION_MODEL:-gemini-2.5-flash}
+      model: gemini-3.1-flash-lite
+      escalation_model: gemini-3.5-flash
 
   speech:
     gemini_audio:
-      model: ${GEMINI_ASR_MODEL:-gemini-2.0-flash-lite}
-      escalation_model: ${GEMINI_ASR_ESCALATION_MODEL:-gemini-2.5-flash}
+      model: gemini-3.1-flash-lite
+      escalation_model: gemini-3.5-flash
 
   translation:
     gemini:
-      model: ${GEMINI_TRANSLATION_MODEL:-gemini-2.0-flash-lite}
+      model: gemini-3.1-flash-lite
+      escalation_model: gemini-3.5-flash
 ```
 
-### Chiến lược
+### Chiến lược định tuyến
 
 ```text
-Flash-Lite hoặc model rẻ làm pass chính
+Primary model:    gemini-3.1-flash-lite (stable, Free Tier eligible)
+Escalation model: gemini-3.5-flash      (stable, Free Tier eligible)
+
+Primary model làm pass chính
 → validation pass: accept
-→ ambiguous: retry bằng model mạnh hơn (escalation_model)
+→ ambiguous: retry bằng escalation model
 → vẫn khác biệt: REVIEW_REQUIRED
 ```
 
-- Không tự động retry mọi request bằng model mạnh.
+**Lý do chọn `gemini-3.1-flash-lite` làm primary:**
+- Stable model (GA, production-ready).
+- Hỗ trợ text, image, video, audio & PDF input.
+- Hỗ trợ structured output (JSON Schema) cho cả OCR schema và ASR schema.
+- Có Free Tier theo pricing hiện hành (tính đến 2026-07-15).
+- Tối ưu cho workload tần suất cao, chi phí thấp.
+
+> **Khẳng định từ tài liệu chính thức Google**: Theo `ai.google.dev/gemini-api/docs/pricing` cập nhật ngày 2026-07-09, cả `gemini-3.1-flash-lite` và `gemini-3.5-flash` đều có Free Tier (free of charge cho input và output tokens). Tuy nhiên, `gemini-3.5-flash` không hỗ trợ Batch API trên Free Tier. Xem [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) để biết giới hạn rate limit cụ thể của từng project.
+
+**Escalation model** chỉ sử dụng khi:
+- Model tồn tại trong project (xác minh qua Models API runtime).
+- Hỗ trợ input modality cần dùng.
+- Tier/quota hiện tại cho phép.
+- Request chính không đạt validation.
+- Retry policy cho phép.
+
+> `gemini-3.5-flash` làm escalation model không được coi là Free Tier mặc định cho mọi dự án. Escalation model availability và Free Tier eligibility phải được xác minh tại thời điểm triển khai cụ thể.
+
+**Quy tắc bổ sung:**
+- Không tự động retry mọi request bằng escalation model.
 - Không dùng model preview làm mặc định nếu có stable model phù hợp.
+- Trước khi release: kiểm tra toàn bộ grant/quota cho escalation model.
 
 ---
 
@@ -469,14 +502,17 @@ SHA256(
 **Không gọi lại API nếu input và contract không đổi.**
 Cache phải lưu provenance và usage metadata.
 **Không log API key trong cache.**
+**Model ID là thành phần bắt buộc của cache key** — mọi thay đổi model đều làm invalid cache tự động.
 
 ---
 
-## 11. Error handling
+## 11. Proposed provider error taxonomy
 
-### Mapping lỗi
+> **Lưu ý**: Các exception subclass dưới đây là **proposed contracts cho Phase B**. Hiện tại, chỉ có `ProviderError` trong `src/shared/exceptions.py`. Cho đến khi các subclass này được implement, Gemini infrastructure phải map lỗi vào `ProviderError` hiện có — không được tuyên bố các subclass này tồn tại trong code.
 
-| Lỗi Gemini | ProviderError type | Ghi chú |
+### Mapping lỗi đề xuất
+
+| Lỗi Gemini | ProviderError type (proposed) | Ghi chú |
 |---|---|---|
 | 429 | `ProviderRateLimitError` | Retry với backoff |
 | Timeout | `ProviderTimeoutError` | Retry |
@@ -488,6 +524,9 @@ Cache phải lưu provenance và usage metadata.
 | Invalid timestamps | `ProviderValidationError` | Fail closed |
 | Invalid bbox | `ProviderValidationError` | Fail closed |
 | Model unavailable | `ProviderUnavailableError` | Retry với escalation model |
+| Model lifecycle (shutdown/not found) | `ProviderConfigurationError` | Fail fast |
+
+**Kế hoạch implement:** Phase B sẽ tạo `src/infrastructure/gemini/exceptions.py` với các subclass này. Cho đến khi đó, tất cả lỗi được map vào `ProviderError` duy nhất.
 
 ### Quy tắc xử lý
 
@@ -522,7 +561,78 @@ Cần review data processing agreement trước khi dùng Free Tier cho dữ li�
 
 ---
 
-## 13. Lộ trình triển khai
+## 13. Model lifecycle and availability validation
+
+### Quy tắc
+
+1. **Không tin model ID trong tài liệu là tồn tại mãi mãi.** Model có thể bị shutdown bất kỳ lúc nào theo chính sách của Google.
+2. **Không hardcode model ID trong provider implementation.** Model phải lấy từ typed config với validation runtime.
+3. **Model lấy từ typed config** — không cho phép model ID lạ không qua validation.
+4. **Khi application khởi động hoặc chạy qualification:**
+   - Gọi [Models API](https://ai.google.dev/api/models) `models.get` hoặc `models.list` (với filter `supportedGenerationMethods` / `supported_actions` chứa `generateContent`).
+   - Xác minh primary model tồn tại và đang `STABLE` hoặc `PREVIEW` (không phải `LEGACY`).
+   - Xác minh escalation model tồn tại nếu được cấu hình.
+   - Xác minh model hỗ trợ API operation cần dùng (`generateContent`).
+   - Fail fast nếu model đã shutdown hoặc không khả dụng.
+5. **Không tự động đổi sang model khác** mà không ghi provenance.
+6. **Model fallback phải được cấu hình rõ** — không fallback ngầm định.
+7. **Mọi thay đổi model phải làm invalid cache key** (model ID là thành phần của cache key).
+8. **Benchmark report phải ghi model ID chính xác** — không chỉ ghi "Flash-Lite".
+
+### Pseudo-flow validation
+
+```text
+load configured model (from typed config)
+→ query Models API (models.get or models.list)
+→ available and supports generateContent?
+   ├── yes → check modelStatus.modelStage at generation time
+   │         ├── STABLE → continue
+   │         ├── PREVIEW → warn, continue
+   │         ├── LEGACY → fail fast with ProviderConfigurationError
+   │         └── UNSTABLE_EXPERIMENTAL → fail fast with ProviderConfigurationError
+   └── no  → fail fast with ProviderConfigurationError
+```
+
+> **Lưu ý**: `Model` resource từ `models.get`/`models.list` không chứa lifecycle stage. Stage chỉ được trả về trong `GenerateContentResponse.modelStatus.modelStage` tại thời điểm generation. Validation gồm hai bước: (1) kiểm tra model tồn tại trong `models.list`, (2) kiểm tra `modelStage` là `STABLE` tại runtime.
+
+> `ProviderConfigurationError` là proposed contract — chưa tồn tại trong `src/shared/exceptions.py`. Nếu chưa implement, dùng `ProviderError` với message mô tả.
+
+### Model lifecycle table (verified 2026-07-15)
+
+| Model | Vai trò | Trạng thái tại ngày kiểm tra | Ngày shutdown | Hành động |
+|---|---|---|---|---|
+| `gemini-2.0-flash-lite` | Legacy (historical) | Shut down | 2026-06-01 | Không dùng |
+| `gemini-3.1-flash-lite` | Primary | Stable (GA) | 2027-05-07 (dự kiến sớm nhất) | Qualification default |
+| `gemini-3.5-flash` | Escalation | Stable (GA) | Chưa công bố | Chỉ retry trường hợp khó |
+| `gemini-3.1-flash-lite-preview` | Preview (historical) | Shut down | 2026-05-25 | Không dùng; đã thay bằng stable `gemini-3.1-flash-lite` |
+| Model preview khác | Experimental | Có thể thay đổi hoặc shutdown nhanh | Không cố định | Không dùng làm default |
+
+> **Nguồn kiểm tra**: https://ai.google.dev/gemini-api/docs/deprecations, https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite, https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash (truy cập 2026-07-15).
+
+### Chính sách chống stale model
+
+```text
+No model name may be copied from documentation into runtime
+without deployment-time availability validation.
+```
+
+**Checklist trước release:**
+
+```
+[ ] Primary model exists (models.list)
+[ ] Escalation model exists (models.list)
+[ ] Required input modality supported (models.get)
+[ ] Structured output supported (models.get)
+[ ] Free Tier/pricing checked
+[ ] Active project quota checked
+[ ] Deprecation page checked
+[ ] Cache namespace includes model ID
+[ ] Benchmark records exact model ID
+```
+
+---
+
+## 14. Lộ trình triển khai
 
 ### Phase A — Documentation và contracts (hiện tại)
 
@@ -540,7 +650,8 @@ src/infrastructure/gemini/
 ├── gemini_client.py          # Gemini API client wrapper (lazy init, API key mgmt)
 ├── request_scheduler.py      # Shared RPM/TPM scheduler với token tracking
 ├── response_cache.py         # Disk-based response cache
-└── file_manager.py           # Upload/cleanup temporary files
+├── file_manager.py           # Upload/cleanup temporary files
+└── exceptions.py             # Proposed provider error subclasses
 ```
 
 ### Phase C — Gemini OCR provider
@@ -588,7 +699,7 @@ Faster-Whisper small vs Gemini full-audio
 
 ---
 
-## 14. Acceptance criteria
+## 15. Acceptance criteria
 
 ### OCR
 
@@ -627,7 +738,7 @@ Faster-Whisper small vs Gemini full-audio
 
 ---
 
-## 15. Kết luận chiến lược
+## 16. Kết luận chiến lược
 
 > Với video dưới 5 phút, chiến lược mặc định là **một Gemini ASR request cho toàn bộ audio**, **một hoặc vài Gemini OCR batch request trên full frames**, **crop retry chỉ cho trường hợp mơ hồ**, và **một Gemini translation batch request**. OCR không cần OCR local để tạo crop; crop được xác định từ bbox Gemini và chỉ là thao tác xử lý pixel cục bộ. RPM và concurrency phải cấu hình được và dùng chung một scheduler, không hardcode quota thật của Google.
 
@@ -644,4 +755,38 @@ Faster-Whisper small vs Gemini full-audio
 
 ---
 
-*Tài liệu tham khảo: `PROJECT_OPERATING_SPECIFICATION.md`, `FRAMEWORK_V1_SIGNOFF.md`, `ROADMAP_AFTER_V1.md`, `ASR_BENCHMARK_REPORT.md`, `REAL_OUTPUT_QUALITY_REPORT.md`, `static_source_cover_mvp_baseline.md`, `static_source_cover_mvp_v2_visual_qa.md`, `phase9_v5_replay_audit.md`, `phase9b_same_source_baseline.md`, `phase9g_local_safety_audit.md`, `project_reassessment_phase8.md`, `resource_policy.md`*
+## 17. Decision record
+
+- **Strategy accepted**: 2026-07-15.
+- **Model correction**:
+  - Removed `gemini-2.0-flash-lite` as active default (shut down 2026-06-01).
+  - Removed `gemini-2.5-flash` as escalation model (không phải model ID hợp lệ).
+  - Selected `gemini-3.1-flash-lite` (stable, GA) as primary qualification model.
+  - Selected `gemini-3.5-flash` (stable, GA) as configurable escalation candidate.
+  - Added runtime model availability validation requirement.
+  - Added cache invalidation policy on model change.
+- **Implementation status**:
+  - Provider code not yet implemented.
+  - Scheduler not yet implemented.
+  - Exception subclasses not yet implemented (only `ProviderError` exists).
+  - Benchmark not yet executed.
+  - Production readiness remains **NO**.
+
+---
+
+## 18. Official Gemini sources
+
+Tài liệu được xác minh từ các nguồn chính thức của Google AI for Developers (truy cập 2026-07-15):
+
+| Source | URL | Nội dung xác minh |
+|---|---|---|
+| Gemini API model deprecations | https://ai.google.dev/gemini-api/docs/deprecations | Danh sách model đã/gần shutdown |
+| Gemini 3.1 Flash-Lite model page | https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite | Modality, limits, capabilities |
+| Gemini 3.5 Flash model page | https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash | Modality, limits, capabilities |
+| Gemini API pricing | https://ai.google.dev/gemini-api/docs/pricing | Free Tier, rate limits, pay-as-you-go |
+| Models API reference | https://ai.google.dev/api/models | `models.get`, `models.list`, Model resource |
+| Generate Content API (ModelStatus) | https://ai.google.dev/api/generate-content | `modelStage`, `retirementTime` |
+
+---
+
+*Tài liệu tham khảo nội bộ: `PROJECT_OPERATING_SPECIFICATION.md`, `FRAMEWORK_V1_SIGNOFF.md`, `ROADMAP_AFTER_V1.md`, `ASR_BENCHMARK_REPORT.md`, `REAL_OUTPUT_QUALITY_REPORT.md`, `static_source_cover_mvp_baseline.md`, `static_source_cover_mvp_v2_visual_qa.md`, `phase9_v5_replay_audit.md`, `phase9b_same_source_baseline.md`, `phase9g_local_safety_audit.md`, `project_reassessment_phase8.md`, `resource_policy.md`*
