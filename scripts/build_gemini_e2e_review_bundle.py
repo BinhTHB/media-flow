@@ -65,8 +65,13 @@ def write_json(path: Path, value) -> None:
 
 
 def extract_frame(video: Path, timestamp: float, destination: Path) -> None:
+    duration, _, _, _ = video_details(ffprobe(video))
+    timestamp = min(max(timestamp, 0.0), max(duration - 0.1, 0.0))
     subprocess.run(
-        ["ffmpeg", "-y", "-ss", f"{timestamp:.3f}", "-i", str(video), "-frames:v", "1", "-q:v", "2", str(destination)],
+        [
+            "ffmpeg", "-y", "-ss", f"{timestamp:.3f}", "-i", str(video),
+            "-strict", "-2", "-frames:v", "1", "-q:v", "2", str(destination),
+        ],
         check=True,
         capture_output=True,
     )
