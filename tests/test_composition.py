@@ -173,7 +173,7 @@ def test_config_loader_missing_sections(tmp_path):
         subtitle_styles_path=str(tmp_path / "missing_styles.yaml"),
     )
     app_config = loader.load()
-    assert app_config.defaults == {}
+    assert app_config.defaults == {"ocr": "gemini_vision", "speech": "gemini_audio"}
     assert app_config.styles == {}
     assert app_config.subtitle_quality.deduplicate is True
 
@@ -224,7 +224,8 @@ def test_gemini_model_is_selected_from_provider_config():
                     }
                 }
             },
-        }
+        },
+        gemini_api_key="test-key",
     )
 
     provider = factory.create_translation_provider()

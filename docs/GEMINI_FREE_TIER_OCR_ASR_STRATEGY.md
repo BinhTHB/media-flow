@@ -3,7 +3,15 @@
 **Tài liệu kiến trúc — chiến lược triển khai và qualification**
 
 > **Path**: `docs/GEMINI_FREE_TIER_OCR_ASR_STRATEGY.md`
-> **Trạng thái**: ACCEPTED STRATEGY — implementation pending
+> **Trạng thái**: ACCEPTED STRATEGY, Phase F cutover implemented
+>
+> Gemini Vision OCR: **DEFAULT**
+>
+> Gemini Audio ASR: **DEFAULT**
+>
+> PaddleOCR: **FALLBACK**
+>
+> Faster-Whisper: **FALLBACK**
 > **Production Ready**: NO
 
 ---

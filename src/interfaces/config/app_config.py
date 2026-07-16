@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from src.domain.entities.placement_config import PlacementConfig
 from src.domain.entities.resource_policy import FFmpegConfig, ResourcePolicy
@@ -65,8 +66,20 @@ class GeminiConfig:
             raise ValueError("Gemini cache_namespace must not be empty.")
 
 @dataclass
+class ProviderFallbackConfig:
+    ocr_fallback_provider: str = "paddle"
+    speech_fallback_provider: str = "faster-whisper"
+    ocr_fallback_enabled: bool = True
+    speech_fallback_enabled: bool = True
+
+@dataclass
 class AppConfig:
-    defaults: Dict[str, str] = field(default_factory=dict)
+    defaults: Dict[str, str] = field(
+        default_factory=lambda: {
+            "ocr": "gemini_vision",
+            "speech": "gemini_audio",
+        }
+    )
     providers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     subtitle_quality: SubtitleQualityConfig = field(default_factory=SubtitleQualityConfig)
     subtitle_placement: PlacementConfig = field(default_factory=lambda: PlacementConfig(
@@ -84,6 +97,9 @@ class AppConfig:
     resource_policy: ResourcePolicy = field(default_factory=ResourcePolicy)
     ffmpeg: FFmpegConfig = field(default_factory=FFmpegConfig)
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
+    provider_fallback: ProviderFallbackConfig = field(
+        default_factory=ProviderFallbackConfig
+    )
 
     def get_provider_config(self, category: str, override_name: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> ProviderConfig:
         name = override_name or self.defaults.get(category, "mock")

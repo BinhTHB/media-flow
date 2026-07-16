@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import time
+from typing import Any
 from src.domain.entities.video_job import VideoJob
 from src.domain.entities.job_status import JobStatus
 from src.application.orchestrator.job_state_machine import JobStateMachine
@@ -608,7 +609,7 @@ class JobOrchestrator:
             total_caption_duration = sum(s.end - s.start for s in segments)
             coverage_ratio = total_caption_duration / video_duration if video_duration > 0 else 0.0
             avg_caption_duration = total_caption_duration / final_segments_count if final_segments_count > 0 else 0.0
-            
+
             gaps = []
             if final_segments_count > 0:
                 gaps.append(segments[0].start)
@@ -651,7 +652,7 @@ class JobOrchestrator:
                 leak_examples = SourceTextLeakageDetector.detect(segments, job.source_language)
                 quality_metrics["source_text_leakage_count"] = len(leak_examples)
                 quality_metrics["source_text_leakage_examples"] = leak_examples
-                
+
                 max_leakage_allowed = quality_config.ocr_max_source_leakage
                 if len(leak_examples) > max_leakage_allowed:
                     gate_failed = True
@@ -806,6 +807,7 @@ class JobOrchestrator:
                     file=sys.stderr,
                 )
             self._write_quality_metrics(job.job_id, quality_metrics)
+            self._write_provider_provenance(job.job_id)
 
             if quality_metrics["quality_gate_status"] == "FAIL":
                 raise ValidationError(
@@ -828,7 +830,94 @@ class JobOrchestrator:
                 except Exception:
                     metadata = {}
         metadata["quality_metrics"] = quality_metrics
+
+        # Gather provider provenance
+        from typing import Any
+        provenance_data = {}
+        for category, uc_name in [("ocr", "detect_onscreen_text_uc"), ("speech", "transcribe_speech_uc")]:
+            uc = getattr(self, uc_name, None)
+            if uc is not None:
+                provider = getattr(uc, "ocr_provider" if category == "ocr" else "speech_provider", None)
+                if provider is not None:
+                    provenance_data[category] = self._extract_provider_provenance(provider)
+        metadata["provenance"] = provenance_data
+
         self.artifact_provider.write_json(path, metadata)
+
+    def _extract_provider_provenance(self, provider: object) -> dict:
+        info = {
+            "configured_provider": provider.__class__.__name__,
+            "effective_provider": provider.__class__.__name__,
+            "fallback_used": False,
+        }
+
+        is_fallback_wrapper = provider.__class__.__name__ in ("FallbackOCRProvider", "FallbackSpeechProvider")
+        if is_fallback_wrapper:
+            info.update(getattr(provider, "provenance", {}))
+            primary_provider = getattr(provider, "primary", None)
+        else:
+            primary_provider = provider
+
+        if primary_provider is not None:
+            class_name = primary_provider.__class__.__name__
+            if class_name in ("GeminiVisionOCRProvider", "GeminiAudioSpeechProvider"):
+                gemini_prov = getattr(primary_provider, "provenance", [])
+                validation_records = getattr(primary_provider, "validation", [])
+
+                runtime = getattr(primary_provider, "runtime", None)
+                totals = {}
+                if runtime is not None and getattr(runtime, "usage_recorder", None) is not None:
+                    totals = runtime.usage_recorder.totals()
+
+                request_count = len(gemini_prov)
+                escalation_count = getattr(primary_provider, "_escalation_requests", 0)
+
+                cache_hits = sum(1 for req in gemini_prov if req.get("cache_hit") is True)
+                cache_misses = request_count - cache_hits
+
+                model_ids = list(set(req.get("model") for req in gemini_prov if req.get("model")))
+
+                chunk_count = sum(1 for req in gemini_prov if "chunk_start" in req)
+
+                info.update({
+                    "exact_model_id": model_ids[0] if model_ids else getattr(primary_provider, "model", None),
+                    "model_role": "primary",
+                    "request_count": request_count,
+                    "retry_count": len(validation_records),
+                    "cache_hit_count": cache_hits,
+                    "cache_miss_count": cache_misses,
+                    "chunk_count": chunk_count,
+                    "escalation_count": escalation_count,
+                    "token_usage": totals,
+                })
+        return info
+
+    def _write_provider_provenance(self, job_id: str) -> None:
+        path = self.artifact_provider.debug_metadata_json_path(job_id)
+        metadata = self.artifact_provider.read_json(path) if os.path.exists(path) else {}
+        metadata["provider_provenance"] = {
+            "ocr": self._provider_provenance(self.detect_onscreen_text_uc.ocr_provider),
+            "speech": self._provider_provenance(self.transcribe_speech_uc.speech_provider),
+        }
+        self.artifact_provider.write_json(path, metadata)
+
+    @staticmethod
+    def _provider_provenance(provider: object) -> dict:
+        record = dict(getattr(provider, "provenance", {}) or {})
+        primary = getattr(provider, "primary", provider)
+        requests = getattr(primary, "provenance", [])
+        if isinstance(requests, list):
+            record.setdefault("configured_provider", primary.__class__.__name__)
+            record.setdefault("effective_provider", primary.__class__.__name__)
+            record.setdefault("fallback_used", False)
+            record["request_count"] = len(requests)
+            record["retry_count"] = len(getattr(primary, "validation", []))
+            record["cache_hit_count"] = sum(bool(item.get("cache_hit")) for item in requests)
+            record["cache_miss_count"] = record["request_count"] - record["cache_hit_count"]
+            record["chunk_count"] = sum("chunk_start" in item for item in requests)
+            record["escalation_count"] = getattr(primary, "_escalation_requests", 0)
+            record["exact_model_id"] = getattr(primary, "model", None)
+        return record
 
     @staticmethod
     def _segment_fields(item: dict) -> dict:

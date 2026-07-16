@@ -1,0 +1,28 @@
+defaults:
+  ocr: gemini_vision
+  speech: gemini_audio
+  translation: gemini
+
+provider_fallback:
+  ocr_fallback_provider: paddle
+  speech_fallback_provider: faster-whisper
+  ocr_fallback_enabled: true
+  speech_fallback_enabled: true
+
+providers:
+  ocr:
+    gemini_vision:
+      model: gemini-3.1-flash-lite
+    paddle:
+      language: ch
+      use_gpu: true
+  speech:
+    gemini_audio:
+      model: gemini-3.1-flash-lite
+    faster-whisper:
+      model_size: base
+      device: cpu
+      compute_type: int8
+  translation:
+    gemini:
+      model: gemini-3.1-flash-lite

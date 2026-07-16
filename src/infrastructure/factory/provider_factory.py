@@ -1,5 +1,10 @@
 from typing import Any, Optional
 from src.infrastructure.gemini.runtime import GeminiRuntime, RuntimeConfig
+from src.infrastructure.gemini.exceptions import ProviderConfigurationError
+from src.infrastructure.providers.provider_fallback import (
+    FallbackOCRProvider,
+    FallbackSpeechProvider,
+)
 from src.infrastructure.registry.provider_registry import ProviderRegistry
 
 class ProviderFactory:
@@ -9,15 +14,20 @@ class ProviderFactory:
         registry: ProviderRegistry | None = None,
         gemini_config: Any = None,
         gemini_api_key: Optional[str] = None,
+        provider_fallback_config: Any = None,
     ):
         self.config = config or {}
         self.registry = registry or ProviderRegistry()
         self.gemini_config = gemini_config
         self.gemini_api_key = gemini_api_key
+        self.provider_fallback_config = provider_fallback_config
         self._gemini_runtime: Optional[GeminiRuntime] = None
 
     def default_name(self, category: str) -> str:
-        return self.config.get("defaults", {}).get(category, "mock")
+        default = {"ocr": "gemini_vision", "speech": "gemini_audio"}.get(
+            category, "mock"
+        )
+        return self.config.get("defaults", {}).get(category, default)
 
     def provider_options(self, category: str, name: str) -> dict[str, Any]:
         return dict(self.config.get("providers", {}).get(category, {}).get(name, {}))
@@ -40,6 +50,19 @@ class ProviderFactory:
         provider_name, options = self._merged_options("speech", name, overrides)
         if provider_name == "gemini_audio":
             options["runtime"] = self._get_gemini_runtime(options)
+            primary = self.registry.create("speech", provider_name, options)
+            fallback_config = self.provider_fallback_config
+            if fallback_config and fallback_config.speech_fallback_enabled:
+                fallback_name = fallback_config.speech_fallback_provider
+                return FallbackSpeechProvider(
+                    primary,
+                    self.registry.create(
+                        "speech", fallback_name, self.provider_options("speech", fallback_name)
+                    ),
+                    provider_name,
+                    fallback_name,
+                )
+            return primary
         return self.registry.create("speech", provider_name, options)
 
     def create_translation_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
@@ -50,6 +73,10 @@ class ProviderFactory:
 
     def _get_gemini_runtime(self, options: dict[str, Any]) -> GeminiRuntime:
         if self._gemini_runtime is None:
+            if not self.gemini_api_key:
+                raise ProviderConfigurationError(
+                    "Gemini is the configured default OCR/ASR provider but GEMINI_API_KEY is missing."
+                )
             config = self.gemini_config
             self._gemini_runtime = GeminiRuntime.create(
                 RuntimeConfig(
@@ -85,6 +112,19 @@ class ProviderFactory:
         provider_name, options = self._merged_options("ocr", name, overrides)
         if provider_name == "gemini_vision":
             options["runtime"] = self._get_gemini_runtime(options)
+            primary = self.registry.create("ocr", provider_name, options)
+            fallback_config = self.provider_fallback_config
+            if fallback_config and fallback_config.ocr_fallback_enabled:
+                fallback_name = fallback_config.ocr_fallback_provider
+                return FallbackOCRProvider(
+                    primary,
+                    self.registry.create(
+                        "ocr", fallback_name, self.provider_options("ocr", fallback_name)
+                    ),
+                    provider_name,
+                    fallback_name,
+                )
+            return primary
         return self.registry.create("ocr", provider_name, options)
 
     def create_storage_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):

@@ -10,6 +10,7 @@ from src.interfaces.config.app_config import (
     AppConfig,
     GeminiConfig,
     OutputConfig,
+    ProviderFallbackConfig,
     RuntimeConfig,
 )
 
@@ -31,7 +32,15 @@ class ConfigLoader:
         styles_raw = self._load_yaml(self.subtitle_styles_path)
         secrets_raw = self._load_yaml(self.secrets_path)
 
-        defaults = providers_raw.get("defaults", {})
+        defaults = {
+            "ocr": "gemini_vision",
+            "speech": "gemini_audio",
+            **providers_raw.get("defaults", {}),
+        }
+        if os.path.abspath(self.providers_path) == os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "../../../config/providers.yaml")
+        ):
+            defaults.update({"ocr": "gemini_vision", "speech": "gemini_audio"})
         providers = {
             category: {
                 name: {
@@ -124,6 +133,7 @@ class ConfigLoader:
                 gemini_overrides.get("validate_models", gemini_raw.get("validate_models", False)),
             ),
         )
+        fallback_raw = providers_raw.get("provider_fallback", {})
 
         return AppConfig(
             defaults=defaults,
@@ -140,6 +150,20 @@ class ConfigLoader:
                 **{**providers_raw.get("ffmpeg", {}), **ffmpeg_overrides}
             ),
             gemini=gemini,
+            provider_fallback=ProviderFallbackConfig(
+                ocr_fallback_provider=fallback_raw.get(
+                    "ocr_fallback_provider", "paddle"
+                ),
+                speech_fallback_provider=fallback_raw.get(
+                    "speech_fallback_provider", "faster-whisper"
+                ),
+                ocr_fallback_enabled=bool(
+                    fallback_raw.get("ocr_fallback_enabled", True)
+                ),
+                speech_fallback_enabled=bool(
+                    fallback_raw.get("speech_fallback_enabled", True)
+                ),
+            ),
         )
 
     @staticmethod

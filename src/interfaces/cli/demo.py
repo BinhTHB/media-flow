@@ -66,10 +66,10 @@ def main():
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing rendered video")
 
     parser.add_argument("--video-provider", type=str, help="Video provider (mock|ffmpeg)")
-    parser.add_argument("--speech-provider", type=str, help="Speech provider (mock|faster-whisper)")
+    parser.add_argument("--speech-provider", type=str, help="Speech provider (gemini_audio|faster-whisper|mock)")
     parser.add_argument("--translation-provider", type=str, help="Translation provider (mock|openai)")
     parser.add_argument("--subtitle-provider", type=str, help="Subtitle provider (mock|ass)")
-    parser.add_argument("--ocr-provider", type=str, help="OCR provider (mock|paddle)")
+    parser.add_argument("--ocr-provider", type=str, help="OCR provider (gemini_vision|paddle|mock)")
     parser.add_argument("--subtitle-region-detector", type=str, help="Region detector provider (mock|paddle)")
     parser.add_argument("--frame-provider", type=str, help="Frame extraction provider (mock|ffmpeg)")
     parser.add_argument("--frame-interval", type=float, default=1.0, help="Interval (seconds) for frame extraction")

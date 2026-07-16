@@ -208,6 +208,7 @@ class ApplicationBuilder:
             registry=registry,
             gemini_config=app_config.gemini,
             gemini_api_key=loader.gemini_api_key,
+            provider_fallback_config=app_config.provider_fallback,
         )
         artifact_manager = ArtifactManager(base_dir=self.output_dir)
         context = ApplicationContext(
