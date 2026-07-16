@@ -111,9 +111,19 @@ class ProviderFactory:
     def create_ocr_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         provider_name, options = self._merged_options("ocr", name, overrides)
         if provider_name in {"gemini_vision", "gemini_vision_multistage"}:
+            if provider_name == "gemini_vision_multistage" and self.gemini_config:
+                config = self.gemini_config
+                options.setdefault("stage_a_model", config.region_detection_model)
+                options.setdefault("stage_b_model", config.region_classification_model)
+                options.setdefault("stage_c_model", config.crop_recognition_model)
+                options.setdefault("stage_d_model", config.verification_model)
+                options.setdefault("window_size", config.region_window_frame_count)
+                options.setdefault("window_overlap", config.region_window_frame_count - config.region_window_stride)
             options["runtime"] = self._get_gemini_runtime(options)
             primary = self.registry.create("ocr", provider_name, options)
             fallback_config = self.provider_fallback_config
+            if provider_name == "gemini_vision_multistage":
+                return primary
             if fallback_config and fallback_config.ocr_fallback_enabled:
                 fallback_name = fallback_config.ocr_fallback_provider
                 return FallbackOCRProvider(

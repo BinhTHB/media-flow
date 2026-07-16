@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import statistics
 from typing import Any, Dict, List, Optional, Sequence
 
 from PIL import Image
@@ -16,8 +17,10 @@ from src.infrastructure.gemini.runtime import GeminiRuntime
 from src.infrastructure.gemini.structured_output import parse_structured
 from src.shared.exceptions import ProviderError
 
-_TEXT_TYPES = {"subtitle", "caption", "title", "scene_text", "other"}
-_OUTPUT_TYPES = {"subtitle", "caption"}
+_TEXT_TYPES = {
+    "subtitle", "watermark", "logo", "user_interface", "scene_text",
+    "warning_overlay", "other",
+}
 
 class GeminiMultiStageOCRProvider(OCRProvider):
     """Gemini-only OCR adapter with detection, tracking, classification and transcription stages."""
@@ -26,10 +29,20 @@ class GeminiMultiStageOCRProvider(OCRProvider):
         self,
         runtime: Optional[GeminiRuntime] = None,
         model: str = "gemini-3.1-flash-lite",
+        stage_a_model: Optional[str] = None,
+        stage_b_model: Optional[str] = None,
+        stage_c_model: Optional[str] = None,
+        stage_d_model: Optional[str] = None,
+        stage_a_options: Optional[Dict[str, Any]] = None,
+        stage_b_options: Optional[Dict[str, Any]] = None,
+        stage_c_options: Optional[Dict[str, Any]] = None,
+        stage_d_options: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
-        verification_enabled: bool = False,
+        verification_enabled: bool = True,
         tracking_iou_threshold: float = 0.3,
         crop_padding_ratio: float = 0.05,
+        window_size: int = 3,
+        window_overlap: int = 1,
         prompt_version: str = "gemini_ocr_multistage_v1",
         schema_version: str = "ocr_multistage_v1",
         api_surface: str = "generate_content",
@@ -39,11 +52,23 @@ class GeminiMultiStageOCRProvider(OCRProvider):
         if not 0.0 <= crop_padding_ratio < 0.5:
             raise ValueError("crop_padding_ratio must be in [0.0, 0.5).")
         self.runtime = runtime or GeminiRuntime.create()
+        if window_size < 2 or not 0 <= window_overlap < window_size:
+            raise ValueError("window_size must be at least 2 and overlap must be smaller.")
         self.model = model
+        self.stage_models = {
+            "A": stage_a_model or model, "B": stage_b_model or model,
+            "C": stage_c_model or model, "D": stage_d_model or model,
+        }
+        self.stage_options = {
+            "A": dict(stage_a_options or {}), "B": dict(stage_b_options or {}),
+            "C": dict(stage_c_options or {}), "D": dict(stage_d_options or {}),
+        }
         self.api_key = api_key
         self.verification_enabled = verification_enabled
         self.tracking_iou_threshold = tracking_iou_threshold
         self.crop_padding_ratio = crop_padding_ratio
+        self.window_size = window_size
+        self.window_overlap = window_overlap
         self.prompt_version = prompt_version
         self.schema_version = schema_version
         self.api_surface = api_surface
@@ -51,22 +76,53 @@ class GeminiMultiStageOCRProvider(OCRProvider):
         self.provenance: List[Dict[str, Any]] = []
         self.rejected_regions: List[Dict[str, Any]] = []
         self.review_regions: List[Dict[str, Any]] = []
+        self.region_windows: List[Dict[str, Any]] = []
+        self.tracks: List[List[Dict[str, Any]]] = []
+        self.classifications: List[Dict[str, Any]] = []
+        self.crop_ocr_results: List[Dict[str, Any]] = []
+        self.verification_results: List[Dict[str, Any]] = []
 
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
         self.observations = []
         self.provenance = []
         self.rejected_regions = []
         self.review_regions = []
+        self.region_windows = []
+        self.tracks = []
+        self.classifications = []
+        self.crop_ocr_results = []
+        self.verification_results = []
         regions = self._detect_regions(frames)
         tracks = self._track_regions(regions)
-        return self._process_tracks(tracks)
+        self.tracks = tracks
+        return self._process_tracks(tracks, frames)
+
+    def debug_artifacts(self) -> Dict[str, Any]:
+        """Return JSON-safe stage artifacts for the orchestrator debug directory."""
+        return {
+            "region_windows": list(self.region_windows),
+            "tracks": [
+                {
+                    "track_id": track[0].get("track_id") if track else None,
+                    "regions": [self._artifact(region, "tracked") for region in track],
+                }
+                for track in self.tracks
+            ],
+            "classifications": list(self.classifications),
+            "crop_ocr_results": list(self.crop_ocr_results),
+            "verification_results": list(self.verification_results),
+            "accepted_intervals": list(self.observations),
+            "review_regions": list(self.review_regions),
+            "rejected_regions": list(self.rejected_regions),
+        }
 
     @staticmethod
     def _detection_prompt() -> str:
         return (
-            "Detect visible text regions only. Do not read, transcribe, translate, or "
-            "classify the text. Return only JSON: "
-            '{"regions":[{"box_2d":[ymin,xmin,ymax,xmax]}]}. '
+            "For each supplied frame, detect visible text regions only. Do not read, "
+            "transcribe, translate, or classify. Return only JSON: "
+            '{"frames":[{"frame_id":"string","regions":[{"local_id":"string",'
+            '"box_2d":[ymin,xmin,ymax,xmax]}]}]}. '
             "box_2d uses the inclusive 0..1000 scale."
         )
 
@@ -74,7 +130,8 @@ class GeminiMultiStageOCRProvider(OCRProvider):
     def _classification_prompt() -> str:
         return (
             "Classify this cropped video text region. Return only JSON: "
-            '{"text_type":"subtitle|caption|title|scene_text|other"}. '
+            '{"text_type":"subtitle|watermark|logo|user_interface|scene_text|'
+            'warning_overlay|other","evidence":"string"}. '
             "Do not transcribe or translate."
         )
 
@@ -96,124 +153,152 @@ class GeminiMultiStageOCRProvider(OCRProvider):
 
     def _detect_regions(self, frames: Sequence[Frame]) -> List[Dict[str, Any]]:
         regions: List[Dict[str, Any]] = []
-        for frame_index, frame in enumerate(frames):
-            image_bytes = self._read_bytes(frame.image_path)
-            response = self._send(
-                self._detection_prompt(),
-                image_bytes,
-                "stage_a_region_detection",
-                f"frame_{frame_index}",
-            )
+        step = self.window_size - self.window_overlap
+        seen: set[tuple[int, tuple[float, ...]]] = set()
+        for offset in range(0, len(frames), step):
+            window = frames[offset:offset + self.window_size]
+            if not window:
+                continue
+            response = self._send_window(window, offset)
             payload = self._parse(response.text, "stage A")
-            entries = payload.get("regions") if isinstance(payload, dict) else None
+            entries = payload.get("frames") if isinstance(payload, dict) else None
             if not isinstance(entries, list):
-                raise ProviderError("Gemini OCR stage A response requires a regions list.")
-            width, height = self._image_size(frame.image_path)
-            for region_index, entry in enumerate(entries):
-                box = self._validate_box(entry.get("box_2d") if isinstance(entry, dict) else None)
-                regions.append(
-                    {
-                        "region_id": f"frame_{frame_index}_region_{region_index}",
-                        "frame_id": f"frame_{frame_index}",
-                        "frame": frame,
-                        "frame_index": frame_index,
-                        "box_2d": box,
-                        "pixel_box": self._to_pixel_box(box, width, height),
-                        "stages": ["A"],
-                    }
-                )
+                raise ProviderError("Gemini OCR stage A response requires a frames list.")
+            self.region_windows.append(
+                {
+                    "window_id": f"window_{offset}",
+                    "frames": [
+                        {
+                            "frame_id": f"frame_{index}",
+                            "timestamp": frame.timestamp,
+                            "image_path": frame.image_path,
+                        }
+                        for index, frame in enumerate(window, start=offset)
+                    ],
+                    "detections": entries,
+                }
+            )
+            expected = {f"frame_{offset + index}": (offset + index, frame) for index, frame in enumerate(window)}
+            for output in entries:
+                if not isinstance(output, dict) or output.get("frame_id") not in expected:
+                    raise ProviderError("Gemini OCR stage A returned an unknown frame_id.")
+                frame_index, frame = expected[output["frame_id"]]
+                detections = output.get("regions")
+                if not isinstance(detections, list):
+                    raise ProviderError("Gemini OCR stage A frame requires a regions list.")
+                width, height = self._image_size(frame.image_path)
+                for region_index, entry in enumerate(detections):
+                    if not isinstance(entry, dict) or not isinstance(entry.get("local_id"), str) or not entry["local_id"]:
+                        raise ProviderError("Gemini OCR stage A region requires a local_id.")
+                    box = self._validate_box(entry.get("box_2d"))
+                    key = (frame_index, tuple(box))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    regions.append({"region_id": f"{output['frame_id']}:{entry['local_id']}", "local_id": entry["local_id"],
+                        "frame_id": output["frame_id"], "frame": frame, "frame_index": frame_index,
+                        "box_2d": box, "pixel_box": self._to_pixel_box(box, width, height), "stages": ["A"]})
         return regions
 
     def _track_regions(self, regions: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
         tracks: List[List[Dict[str, Any]]] = []
-        for region in regions:
-            matched: Optional[List[Dict[str, Any]]] = None
-            for track in reversed(tracks):
-                prior = track[-1]
-                if region["frame_index"] - prior["frame_index"] > 1:
-                    break
-                if self._iou(region["box_2d"], prior["box_2d"]) >= self.tracking_iou_threshold:
-                    matched = track
-                    break
+        for region in sorted(regions, key=lambda item: (item["frame_index"], item["region_id"])):
+            candidates = [(self._track_score(region, track[-1]), index, track) for index, track in enumerate(tracks)
+                          if region["frame_index"] - track[-1]["frame_index"] <= 1]
+            matched = max(candidates, default=(0.0, -1, None), key=lambda item: (item[0], -item[1]))[2]
+            if matched is not None and self._track_score(region, matched[-1]) < self.tracking_iou_threshold:
+                matched = None
             if matched is None:
                 tracks.append([region])
             else:
                 matched.append(region)
         return tracks
 
-    def _process_tracks(self, tracks: Sequence[List[Dict[str, Any]]]) -> List[Segment]:
+    def _process_tracks(self, tracks: Sequence[List[Dict[str, Any]]], frames: Sequence[Frame]) -> List[Segment]:
         segments: List[Segment] = []
         for track_index, track in enumerate(tracks):
-            representative = track[0]
-            crop = self._make_crop(representative["frame"].image_path, representative["pixel_box"])
-            classification = self._classify(crop, representative["region_id"])
+            track_id = f"track_{track_index}"
+            consensus = self._median_box([item["box_2d"] for item in track])
+            representative = track[len(track) // 2]
+            crop = self._make_crop(representative["frame"].image_path, self._to_pixel_box(consensus, *self._image_size(representative["frame"].image_path)))
+            classification = self._classify(crop, track_id)
             for item in track:
-                item["track_id"] = f"track_{track_index}"
+                item["track_id"] = track_id
                 item["stages"].extend(["tracking", "B"])
-                item["text_type"] = classification
-            if classification not in _OUTPUT_TYPES:
+                item["text_type"] = classification["text_type"]
+                item["classification_evidence"] = classification["evidence"]
+            if classification["text_type"] != "subtitle":
                 self.rejected_regions.extend(self._artifact(item, "not_output_text_type") for item in track)
                 continue
-            transcription = self._transcribe(crop, representative["region_id"], "stage_c_crop_transcription")
-            if transcription is None:
+            readings = self._transcribe_track(track, consensus, track_id)
+            readable = [text for text in readings if text is not None]
+            if not readable:
                 self.review_regions.extend(self._artifact(item, "ambiguous_transcription") for item in track)
                 continue
             for item in track:
                 item["stages"].append("C")
-            if self.verification_enabled:
-                verified = self._transcribe(crop, representative["region_id"], "stage_d_verification")
-                if verified is None or verified != transcription:
+            unique = set(readable)
+            transcription = readable[0] if len(unique) == 1 and len(readable) == len(readings) else None
+            stage_d_used = False
+            if transcription is None and self.verification_enabled:
+                stage_d_used = True
+                verified = self._transcribe(crop, track_id, "stage_d_verification")
+                if verified is None or (unique and verified not in unique):
                     self.review_regions.extend(self._artifact(item, "verification_failed") for item in track)
                     continue
+                transcription = verified
                 for item in track:
                     item["stages"].append("D")
-            for region_index, item in enumerate(track):
-                observation = self._artifact(item, "accepted")
-                observation["text_verbatim"] = transcription
-                self.observations.append(observation)
-                left, top, right, bottom = item["pixel_box"]
-                segments.append(
-                    Segment(
-                        id=f"ocr_{item['frame_index']}_{region_index}",
-                        start=item["frame"].timestamp,
-                        end=item["frame"].timestamp + 2.0,
-                        text=transcription,
-                        source="ocr",
-                        confidence=0.0,
-                        confidence_available=False,
-                        bbox={"left": left, "top": top, "right": right, "bottom": bottom},
-                        metadata={
-                            "provider": self.__class__.__name__,
-                            "model": self.model,
-                            "confidence_kind": "unknown",
-                            "text_type": classification,
-                            "frame_id": item["frame_id"],
-                            "track_id": item["track_id"],
-                            "stage_provenance": list(item["stages"]),
-                            "validation_evidence": {
-                                "stage_a_bbox_valid": True,
-                                "stage_b_output_type": True,
-                                "stage_c_readable": True,
-                                "stage_d_verified": self.verification_enabled,
-                            },
-                        },
-                    )
-                )
+            if transcription is None:
+                self.review_regions.extend(self._artifact(item, "verification_disabled") for item in track)
+                continue
+            start, end = self._interval(track, frames)
+            pixel_box = self._to_pixel_box(consensus, *self._image_size(representative["frame"].image_path))
+            observation = self._artifact(representative, "accepted")
+            observation.update({"text_verbatim": transcription, "consensus_box_2d": consensus, "interval": [start, end]})
+            self.observations.append(observation)
+            segments.append(Segment(id=f"ocr_{track_id}", start=start, end=end, text=transcription, source="ocr",
+                confidence=0.0, confidence_available=False,
+                bbox={"left": pixel_box[0], "top": pixel_box[1], "right": pixel_box[2], "bottom": pixel_box[3]},
+                metadata={"provider": self.__class__.__name__, "model": self.stage_models["C"],
+                    "confidence_kind": "unknown", "text_type": "subtitle", "track_id": track_id,
+                    "stage_provenance": list(representative["stages"]),
+                    "validation_evidence": {"stage_a_bbox_valid": True, "stage_b_evidence": classification["evidence"],
+                    "stage_c_readings": len(readings), "stage_d_verified": stage_d_used, "consensus_box_2d": consensus}}))
         return segments
 
-    def _classify(self, crop: bytes, region_id: str) -> str:
+    def _classify(self, crop: bytes, region_id: str) -> Dict[str, str]:
         payload = self._parse(
             self._send(self._classification_prompt(), crop, "stage_b_classification", region_id).text,
             "stage B",
         )
         text_type = payload.get("text_type") if isinstance(payload, dict) else None
-        if text_type not in _TEXT_TYPES:
+        evidence = payload.get("evidence") if isinstance(payload, dict) else None
+        if text_type not in _TEXT_TYPES or not isinstance(evidence, str) or not evidence.strip():
             raise ProviderError("Gemini OCR stage B response has an invalid text_type.")
-        return text_type
+        self.classifications.append(
+            {
+                "track_id": region_id,
+                "text_type": text_type,
+                "evidence": evidence,
+            }
+        )
+        return {"text_type": text_type, "evidence": evidence}
 
     def _transcribe(self, crop: bytes, region_id: str, source_kind: str) -> Optional[str]:
         prompt = self._verification_prompt() if source_kind == "stage_d_verification" else self._transcription_prompt()
         payload = self._parse(self._send(prompt, crop, source_kind, region_id).text, source_kind)
+        result = {
+            "region_id": region_id,
+            "transcription_status": (
+                payload.get("transcription_status") if isinstance(payload, dict) else None
+            ),
+            "text_verbatim": payload.get("text_verbatim") if isinstance(payload, dict) else None,
+        }
+        if source_kind == "stage_d_verification":
+            self.verification_results.append(result)
+        else:
+            self.crop_ocr_results.append(result)
         if not isinstance(payload, dict) or payload.get("transcription_status") != "readable":
             return None
         text = payload.get("text_verbatim")
@@ -221,13 +306,39 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             return None
         return text
 
+    def _send_window(self, frames: Sequence[Frame], offset: int):
+        parts: List[Dict[str, Any]] = [{"text": self._detection_prompt()}]
+        blobs: List[bytes] = []
+        for index, frame in enumerate(frames, start=offset):
+            blob = self._read_bytes(frame.image_path)
+            blobs.append(blob)
+            parts.extend([
+                {"text": f"frame_id=frame_{index}; timestamp={frame.timestamp}"},
+                {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(blob).decode("ascii")}},
+            ])
+        return self._send_with_contents(
+            self._detection_prompt(), b"".join(blobs), "stage_a_region_detection",
+            f"window_{offset}", contents=[{"parts": parts}],
+        )
+
     def _send(self, prompt: str, image_bytes: bytes, source_kind: str, region_id: str):
+        return self._send_with_contents(
+            prompt, image_bytes, source_kind, region_id,
+            [{"parts": [{"text": f"{prompt} source_id={region_id}"},
+                         {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_bytes).decode("ascii")}}]}],
+        )
+
+    def _send_with_contents(
+        self, prompt: str, image_bytes: bytes, source_kind: str, region_id: str,
+        contents: List[Dict[str, Any]],
+    ):
+        stage = {"stage_a_region_detection": "A", "stage_b_classification": "B",
+                 "stage_c_crop_transcription": "C", "stage_d_verification": "D"}[source_kind]
+        model = self.stage_models[stage]
         request = GeminiRequest(
-            contents=[{"parts": [
-                {"text": f"{prompt} source_id={region_id}"},
-                {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_bytes).decode("ascii")}},
-            ]}],
-            model=self.model,
+            contents=contents,
+            model=model,
+            generation_config=self.stage_options[stage],
             system_instruction=prompt,
             prompt_version=self.prompt_version,
             schema_version=self.schema_version,
@@ -238,14 +349,14 @@ class GeminiMultiStageOCRProvider(OCRProvider):
         )
         try:
             response = self.runtime.get_client(
-                model=self.model, role=MODE_ROLE_PRIMARY, api_key=self.api_key
+                model=model, role=MODE_ROLE_PRIMARY, api_key=self.api_key
             ).generate_content(request)
         except GeminiError as exc:
             raise ProviderError(f"Gemini OCR {source_kind} request failed: {exc}") from exc
         self.provenance.append({
             "stage": source_kind,
             "region_id": region_id,
-            "model": response.model or self.model,
+            "model": response.model or model,
             "model_stage": response.model_stage,
             "api_surface": self.api_surface,
             "prompt_version": self.prompt_version,
@@ -254,6 +365,51 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             "cache_hit": response.cache_hit,
         })
         return response
+
+    def _transcribe_track(
+        self, track: Sequence[Dict[str, Any]], consensus: Sequence[float], track_id: str
+    ) -> List[Optional[str]]:
+        selected = [track[0], track[len(track) // 2], track[-1]]
+        unique = []
+        for item in selected:
+            if item not in unique:
+                unique.append(item)
+        readings = []
+        for index, item in enumerate(unique):
+            pixel_box = self._to_pixel_box(consensus, *self._image_size(item["frame"].image_path))
+            crop = self._make_crop(item["frame"].image_path, pixel_box, variant=index % 2)
+            readings.append(self._transcribe(crop, f"{track_id}:crop_{index}", "stage_c_crop_transcription"))
+        return readings
+
+    @staticmethod
+    def _median_box(boxes: Sequence[Sequence[float]]) -> List[float]:
+        return [float(statistics.median(values)) for values in zip(*boxes)]
+
+    def _interval(self, track: Sequence[Dict[str, Any]], frames: Sequence[Frame]) -> tuple[float, float]:
+        start = track[0]["frame"].timestamp
+        last_index = track[-1]["frame_index"]
+        if last_index + 1 < len(frames):
+            end = frames[last_index + 1].timestamp
+        else:
+            deltas = [right.timestamp - left.timestamp for left, right in zip(frames, frames[1:]) if right.timestamp > left.timestamp]
+            end = track[-1]["frame"].timestamp + (statistics.median(deltas) if deltas else 1.0)
+        if end <= start:
+            raise ProviderError("Gemini OCR accepted interval must have end greater than start.")
+        return start, end
+
+    def _track_score(self, current: Dict[str, Any], prior: Dict[str, Any]) -> float:
+        box, other = current["box_2d"], prior["box_2d"]
+        iou = self._iou(box, other)
+        center = lambda value: ((value[1] + value[3]) / 2, (value[0] + value[2]) / 2)
+        width = lambda value: value[3] - value[1]
+        height = lambda value: value[2] - value[0]
+        cx, cy = center(box)
+        px, py = center(other)
+        center_score = max(0.0, 1 - (((cx - px) ** 2 + (cy - py) ** 2) ** .5 / 1000))
+        band_score = 1.0 if abs(cy - py) <= max(height(box), height(other)) else 0.0
+        size_score = min(width(box) * height(box), width(other) * height(other)) / max(width(box) * height(box), width(other) * height(other))
+        orientation_score = min(width(box) / height(box), width(other) / height(other)) / max(width(box) / height(box), width(other) / height(other))
+        return .45 * iou + .2 * center_score + .15 * band_score + .1 * size_score + .1 * orientation_score
 
     @staticmethod
     def _parse(text: str, stage: str) -> Any:
@@ -279,13 +435,15 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             raise ProviderError("Gemini OCR stage A pixel box has zero area.")
         return pixel_box
 
-    def _make_crop(self, image_path: str, pixel_box: Sequence[float]) -> bytes:
+    def _make_crop(self, image_path: str, pixel_box: Sequence[float], variant: int = 0) -> bytes:
         left, top, right, bottom = pixel_box
         try:
             with Image.open(image_path) as image:
                 pad_x = (right - left) * self.crop_padding_ratio
                 pad_y = (bottom - top) * self.crop_padding_ratio
                 crop = image.crop((max(0, left - pad_x), max(0, top - pad_y), min(image.width, right + pad_x), min(image.height, bottom + pad_y)))
+                if variant:
+                    crop = crop.convert("L")
                 output = io.BytesIO()
                 crop.save(output, format="PNG")
                 return output.getvalue()

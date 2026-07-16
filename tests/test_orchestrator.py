@@ -1,3 +1,4 @@
+import json
 import os
 from unittest.mock import Mock
 import pytest
@@ -445,3 +446,97 @@ def test_orchestrator_filtering_drops_low_quality_caption(orchestrator, monkeypa
     report = orchestrator.artifact_provider.read_json(os.path.join(orchestrator.artifact_provider.debug_dir(job.job_id), "content_quality_report.json"))
     assert result.segments == []
     assert report["captions"][0]["actual_action"] == "drop"
+
+def test_orchestrator_persists_g3_artifacts_only_for_multistage_provider(
+    orchestrator, tmp_path, monkeypatch
+):
+    from src.infrastructure.gemini.runtime import GeminiRuntime, RuntimeConfig
+    from src.infrastructure.providers.ocr.gemini_multistage_ocr_provider import (
+        GeminiMultiStageOCRProvider,
+    )
+
+    class FakeTransport:
+        def __init__(self):
+            self.payloads = [
+                {
+                    "frames": [
+                        {
+                            "frame_id": "frame_0",
+                            "regions": [
+                                {
+                                    "local_id": "subtitle",
+                                    "box_2d": [100, 100, 200, 900],
+                                }
+                            ],
+                        },
+                        {
+                            "frame_id": "frame_1",
+                            "regions": [
+                                {
+                                    "local_id": "subtitle",
+                                    "box_2d": [100, 100, 200, 900],
+                                }
+                            ],
+                        },
+                    ]
+                },
+                {
+                    "text_type": "subtitle",
+                    "evidence": "position and contrast support the label",
+                },
+                {"text_verbatim": "accepted", "transcription_status": "readable"},
+                {"text_verbatim": "accepted", "transcription_status": "readable"},
+            ]
+
+        def send(self, method, url, *, headers, data=None, timeout=60.0):
+            if method == "GET":
+                return {
+                    "name": "models/test",
+                    "supportedGenerationMethods": ["generateContent"],
+                    "modelStage": "STABLE",
+                }
+            payload = self.payloads.pop(0)
+            return {
+                "candidates": [
+                    {"content": {"parts": [{"text": json.dumps(payload)}]}}
+                ],
+                "modelStatus": {"modelStage": "STABLE"},
+            }
+
+    runtime = GeminiRuntime.create(
+        RuntimeConfig(
+            api_key="fake",
+            cache_dir=str(tmp_path / "cache"),
+            cache_enabled=False,
+        )
+    )
+    provider = GeminiMultiStageOCRProvider(runtime=runtime, api_key="fake")
+    transport = FakeTransport()
+    runtime.get_client(provider.model, api_key="fake")._transport = transport
+    monkeypatch.setattr(orchestrator.detect_onscreen_text_uc, "ocr_provider", provider)
+
+    job = VideoJob(
+        job_id="g3_artifact_persistence",
+        input_video="test.mp4",
+        features=FeatureConfig(speech_to_text=False, ocr=True, subtitle=False),
+    )
+    result = orchestrator.execute(job)
+
+    debug_dir = orchestrator.artifact_provider.debug_dir(job.job_id)
+    expected = (
+        "region_windows",
+        "tracks",
+        "classifications",
+        "crop_ocr_results",
+        "verification_results",
+        "accepted_intervals",
+        "review_regions",
+        "rejected_regions",
+    )
+    for artifact in expected:
+        assert os.path.exists(os.path.join(debug_dir, f"g3_{artifact}.json"))
+    assert [segment.text for segment in result.segments] == ["accepted"]
+    assert result.segments[0].source == "ocr"
+    assert orchestrator.artifact_provider.read_json(
+        os.path.join(debug_dir, "g3_accepted_intervals.json")
+    )[0]["text_verbatim"] == "accepted"

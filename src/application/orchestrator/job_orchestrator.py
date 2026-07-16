@@ -176,6 +176,7 @@ class JobOrchestrator:
                 logger = FeatureLogger("OCR")
                 logger.start()
                 ocr_segments = self.detect_onscreen_text_uc.execute(frames)
+                self._write_gemini_multistage_ocr_artifacts(job.job_id)
                 raw_ocr = [s.to_dict() for s in ocr_segments]
                 self.artifact_provider.write_json(
                     os.path.join(
@@ -857,6 +858,16 @@ class JobOrchestrator:
         metadata["provenance"] = provenance_data
 
         self.artifact_provider.write_json(path, metadata)
+
+    def _write_gemini_multistage_ocr_artifacts(self, job_id: str) -> None:
+        provider = self.detect_onscreen_text_uc.ocr_provider
+        if provider.__class__.__name__ != "GeminiMultiStageOCRProvider":
+            return
+        for name, artifact in provider.debug_artifacts().items():
+            self.artifact_provider.write_json(
+                os.path.join(self.artifact_provider.debug_dir(job_id), f"g3_{name}.json"),
+                artifact,
+            )
 
     def _extract_provider_provenance(self, provider: object) -> dict:
         info = {

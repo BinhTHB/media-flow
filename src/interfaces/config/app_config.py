@@ -39,6 +39,14 @@ class GeminiConfig:
     primary_model: str = "gemini-3.1-flash-lite"
     escalation_model: str = "gemini-3.5-flash"
     escalation_enabled: bool = False
+    region_detection_model: str = "gemini-3.1-flash-lite"
+    region_classification_model: str = "gemini-3.1-flash-lite"
+    crop_recognition_model: str = "gemini-3.1-flash-lite"
+    verification_model: str = "gemini-3.1-flash-lite"
+    region_window_frame_count: int = 8
+    region_window_stride: int = 4
+    representative_crop_count: int = 3
+    max_verification_requests: int = 1
     rpm_cap: int = 60
     tpm_cap: Optional[int] = None
     rpd_cap: Optional[int] = None
@@ -62,6 +70,22 @@ class GeminiConfig:
             raise ValueError("Gemini max_retries must be at least 1.")
         if self.rpm_cap < 1 or self.max_concurrency < 1:
             raise ValueError("Gemini scheduler caps must be positive.")
+        if self.region_window_frame_count < 2:
+            raise ValueError("region_window_frame_count must be at least 2.")
+        if not 1 <= self.region_window_stride <= self.region_window_frame_count:
+            raise ValueError("region_window_stride must be within the window size.")
+        if not 1 <= self.representative_crop_count <= 5:
+            raise ValueError("representative_crop_count must be between 1 and 5.")
+        if self.max_verification_requests < 0:
+            raise ValueError("max_verification_requests must be non-negative.")
+        for model in (
+            self.region_detection_model,
+            self.region_classification_model,
+            self.crop_recognition_model,
+            self.verification_model,
+        ):
+            if model != "gemini-3.1-flash-lite":
+                raise ValueError("Phase G.3 OCR stages require gemini-3.1-flash-lite.")
         if not self.cache_namespace.strip():
             raise ValueError("Gemini cache_namespace must not be empty.")
 
