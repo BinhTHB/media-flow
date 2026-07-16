@@ -1,85 +1,97 @@
-# Phase G, Live End-to-End Gemini Activation
+# Phase G, Live End-to-End Gemini Evidence Audit
 
-**Status:** IMPLEMENTED  
+**Status:** CORRECTED
+**Phase F commit:** `63b5ff9`
+**Phase G commit:** `0f4463c`
 **Production Ready:** NO
 
-## Preflight
+## Scope and evidence limits
 
-- `GEMINI_API_KEY` was available without being printed.
-- FFmpeg, FFprobe and Pillow were available.
-- `gemini-3.1-flash-lite` and `gemini-3.5-flash` were available and support
-  `generateContent`.
-- Media used, without staging it: `test_videos/real_mini_benchmark/sample2.mp4`,
-  `sample4.mp4`, and `sample5.mp4`.
-- Runtime limits for the runs: RPM `4`, max retries `5`, max concurrency `1`,
-  maximum escalation requests `2`.
+This report is based on retained untracked artifacts under
+`output/live_gemini_phase_g/`. Run commands and process exit codes were not
+persisted with those artifacts. Filesystem timestamps below are derived from
+the output directories, not process logs. No visual or reference review was
+performed.
 
-## Live execution
+Typed provider defaults are defined in `AppConfig` and `ConfigLoader`. The
+untracked, user-owned `config/providers.yaml` supplies local runtime options
+when present, but is not the source of the Phase G typed defaults and was not
+changed by the Phase G commits.
 
-The production composition root (`ApplicationBuilder`), real `JobOrchestrator`,
-FFmpeg extraction/rendering, Gemini OCR, Gemini ASR and Gemini translation ran
-on each sample.
+## Verified live API runs
 
-| Sample | Gemini-only Run A | Normal Run B | OCR requests | ASR requests | Fallback |
-|---|---:|---:|---:|---:|---|
-| sample2 | PASS | PASS | 6 | 1 | not used |
-| sample4 | PASS | PASS | 6 | 1 | not used |
-| sample5 | PASS | PASS | 6 | 1 | not used |
+`request_count > 0`, zero cache hits, Gemini effective providers, and no
+fallback establish these as non-cache Gemini API executions. Each job has
+transcript, translated transcript, subtitle, debug metadata and rendered-video
+artifacts, so these are main-pipeline renders, not qualification/shadow output.
 
-Each completed job produced WAV audio, extracted frames, transcript,
-translation, normalized/segmented subtitle artifacts and an MP4 render under
-the untracked `output/live_gemini_phase_g/` directory.
+| Sample | Input SHA256 | Run type | OCR provider | ASR provider | Fallback | Cache | Output video | Media validation | Safety result | Verdict |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sample2 | `122B2B6056205A425FFE2990219BCEB199D19DA2244CC1DA1F03712B6984A559` | LIVE API RUN, Gemini-only repair | `GeminiVisionOCRProvider`, 6 requests | `GeminiAudioSpeechProvider`, 1 request | false / false | 0 hits / 7 misses | `output/live_gemini_phase_g/run_a_gemini_only_sample2/job_repair/sample2_gemini_only_repair/videos/output.mp4` | GENERATED_AND_PARSEABLE | not evaluated | PASS |
+| sample4 | `0A127863C6DB792B736A46AF0F78C899753BAD64A49D70867136610D81DAA95C` | LIVE API RUN, Gemini-only | `GeminiVisionOCRProvider`, 6 requests | `GeminiAudioSpeechProvider`, 1 request | false / false | 0 hits / 7 misses | `output/live_gemini_phase_g/run_a_gemini_only_sample4_5/job_sample4/sample4_gemini_only/videos/output.mp4` | GENERATED_AND_PARSEABLE | not evaluated | PASS |
+| sample5 | `A3FEFB099E0C7B416F74AA9C76AA0C39F7561236317CE1185CF970BA6409F2D7` | LIVE API RUN, Gemini-only | `GeminiVisionOCRProvider`, 6 requests | `GeminiAudioSpeechProvider`, 1 request | false / false | 0 hits / 7 misses | `output/live_gemini_phase_g/run_a_gemini_only_sample4_5/job_sample5/sample5_gemini_only/videos/output.mp4` | GENERATED_AND_PARSEABLE | not independently verified | PASS |
 
-## Runtime repair
+The normal-mode sample2, sample4 and sample5 artifacts also record Gemini as
+the effective OCR/ASR provider, no fallback and no cache hits. The initial
+Gemini-only sample2 artifact has contradictory ASR provenance and zero ASR
+requests, so it is classified as **unreliable/cache-like evidence**, not a live
+PASS. The repaired sample2 run above is the canonical sample2 live evidence.
 
-Gemini-only mode exposed a provenance crash after an otherwise successful run:
-raw Gemini providers expose request provenance as a list, while the fallback
-wrapper exposes it as a mapping. `JobOrchestrator._provider_provenance()` now
-only copies mappings and summarizes the raw request list separately. The
-offline regression test `test_raw_gemini_provider_provenance_is_serializable`
-covers this path.
+## Media validation
 
-## Provenance
+FFprobe parsed each listed output as an MP4-compatible container with H.264
+video and AAC audio. Input and output resolution is `720x1280`; duration is
+preserved exactly to FFprobe precision.
 
-Normal-mode jobs recorded:
+| Sample | Input duration | Output duration | Video / audio streams | Result |
+|---|---:|---:|---|---|
+| sample2 | `21.989297s` | `21.989297s` | H.264 / AAC | parseable, resolution and audio preserved |
+| sample4 | `24.450612s` | `24.450612s` | H.264 / AAC | parseable, resolution and audio preserved |
+| sample5 | `24.311293s` | `24.311293s` | H.264 / AAC | parseable, resolution and audio preserved |
 
-```json
-{
-  "configured_provider": "gemini_vision",
-  "effective_provider": "gemini_vision",
-  "fallback_used": false,
-  "exact_model_id": "gemini-3.1-flash-lite",
-  "request_count": 6
-}
+## Main-pipeline evidence
+
+Each verified job's `debug_metadata.json` records ASR and OCR stage timings,
+non-zero Gemini request counts, translation inputs and outputs, normalization,
+segmentation, placement and render timings. Its `transcripts/translated.json`
+contains speech segments with populated `translated_text`. This demonstrates:
+
+```text
+Gemini OCR / Gemini ASR
+  -> merge and translation
+  -> subtitle generation and placement
+  -> FFmpeg render
 ```
 
-ASR recorded `gemini_audio` as both configured and effective provider, one
-request, no fallback, zero retries and inline/chunk metadata. No API key,
-Authorization header or base64 media was written to artifacts.
+The audit did not establish visual correctness or reference equivalence.
 
-## Controlled fallback
+## Provenance repair and controlled fallback
 
-Offline controlled tests prove that quota failures route only to the configured
-local fallback, corrupt WAV media does not fallback, and fallback provenance is
-recorded. Gemini and local OCR/ASR outputs are never merged.
+The initial Gemini-only sample2 run exposed a crash because raw Gemini
+provenance is a list while fallback provenance is a mapping. The parser now
+preserves list entries under `request_provenance`, copies mappings, accepts
+missing and empty provenance, and rejects malformed provenance rather than
+turning it into success. Offline tests cover rate-limit fallback, invalid-media
+fail-closed behavior, and all supported provenance shapes.
 
-## Known limitations
+The fallback evidence is **OFFLINE FAKE TRANSPORT**, not a live local-fallback
+run. It verifies quota fallback to Paddle/Faster-Whisper without merging output,
+and confirms invalid media does not trigger fallback.
 
-- The live samples contain Vietnamese speech and mixed on-screen text. Asking
-  for target Vietnamese can preserve or prefix already-Vietnamese text, which
-  requires language-aware translation quality work rather than an ASR/OCR
-  provider fallback.
-- Phase G used the normal subtitle render flow. Dynamic source-cover safety
-  remains governed by the existing static safety policy, including sample5
-  `interval_6` `true_person_overlap_risk`.
-- Live quality qualification, corpus review and SLA validation are outstanding;
-  this does not revert the Gemini defaults.
+## sample5 safety evidence
+
+No Phase G live output artifact contains `interval_6`,
+`true_person_overlap_risk`, or `SKIPPED`. The retained sample5 placement report
+has `source_visibility_not_evaluated_count: 9` and
+`source_overlap_count: 0`. Therefore the historical
+`sample5 interval_6 SKIPPED true_person_overlap_risk` decision is retained only
+as earlier-strategy evidence, not claimed as verified by this Phase G run.
 
 ## Verdict
 
 ```text
-Gemini OCR live activation: ENABLED
-Gemini ASR live activation: ENABLED
-Gemini fallback policy: AVAILABLE
-Live production readiness: NO
+OFFLINE END-TO-END: PASS
+LIVE GEMINI API: PASS
+LIVE END-TO-END: PASS
+Production Ready: NO
 ```

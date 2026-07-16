@@ -183,3 +183,25 @@ def test_raw_gemini_provider_provenance_is_serializable():
     assert result["exact_model_id"] == "gemini-3.1-flash-lite"
     assert result["request_count"] == 1
     assert result["fallback_used"] is False
+    assert result["request_provenance"] == RawGeminiProvider.provenance
+
+
+@pytest.mark.parametrize("provenance, expected", [
+    ({"fallback_used": True}, {"fallback_used": True}),
+    ([], {"request_provenance": []}),
+    (None, {}),
+])
+def test_provider_provenance_accepts_mapping_empty_list_and_missing(provenance, expected):
+    from src.application.orchestrator.job_orchestrator import JobOrchestrator
+
+    class Provider:
+        pass
+
+    provider = Provider()
+    if provenance is not None:
+        provider.provenance = provenance
+
+    result = JobOrchestrator._provider_provenance(provider)
+
+    for key, value in expected.items():
+        assert result[key] == value

@@ -903,12 +903,17 @@ class JobOrchestrator:
 
     @staticmethod
     def _provider_provenance(provider: object) -> dict:
-        raw_record = getattr(provider, "provenance", {}) or {}
-        record = (
-            dict(raw_record)
-            if isinstance(raw_record, dict)
-            else {}
-        )
+        raw_record = getattr(provider, "provenance", None)
+        if raw_record is None:
+            record = {}
+        elif isinstance(raw_record, dict):
+            record = dict(raw_record)
+        elif isinstance(raw_record, list):
+            if not all(isinstance(item, dict) for item in raw_record):
+                raise TypeError("Provider provenance entries must be dictionaries.")
+            record = {"request_provenance": [dict(item) for item in raw_record]}
+        else:
+            raise TypeError("Provider provenance must be a dictionary or list of dictionaries.")
         primary = getattr(provider, "primary", provider)
         requests = getattr(primary, "provenance", [])
         if isinstance(requests, list):
