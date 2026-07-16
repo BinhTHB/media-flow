@@ -4,6 +4,7 @@ import base64
 import hashlib
 import io
 import statistics
+import unicodedata
 from typing import Any, Dict, List, Optional, Sequence
 
 from PIL import Image
@@ -21,6 +22,7 @@ _TEXT_TYPES = {
     "subtitle", "watermark", "logo", "user_interface", "scene_text",
     "warning_overlay", "other",
 }
+_CLASSIFICATION_STATUSES = {"accepted", "rejected", "review_required"}
 
 class GeminiMultiStageOCRProvider(OCRProvider):
     """Gemini-only OCR adapter with detection, tracking, classification and transcription stages."""
@@ -81,6 +83,8 @@ class GeminiMultiStageOCRProvider(OCRProvider):
         self.classifications: List[Dict[str, Any]] = []
         self.crop_ocr_results: List[Dict[str, Any]] = []
         self.verification_results: List[Dict[str, Any]] = []
+        self.coverage: Dict[str, Any] = {}
+        self.warnings: List[Dict[str, str]] = []
 
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
         self.observations = []
@@ -92,10 +96,25 @@ class GeminiMultiStageOCRProvider(OCRProvider):
         self.classifications = []
         self.crop_ocr_results = []
         self.verification_results = []
+        self.coverage = {}
+        self.warnings = []
         regions = self._detect_regions(frames)
         tracks = self._track_regions(regions)
         self.tracks = tracks
-        return self._process_tracks(tracks, frames)
+        segments = self._process_tracks(tracks, frames)
+        self.coverage = {
+            "frames_examined": len(frames),
+            "regions_detected": len(regions),
+            "tracks_detected": len(tracks),
+            "tracks_accepted": len(segments),
+            "accepted_interval_count": len(self.observations),
+        }
+        if not segments:
+            self.warnings.append({
+                "code": "no_accepted_ocr_intervals",
+                "message": "No OCR interval satisfied all evidence gates; no OCR text was emitted.",
+            })
+        return segments
 
     def debug_artifacts(self) -> Dict[str, Any]:
         """Return JSON-safe stage artifacts for the orchestrator debug directory."""
@@ -114,6 +133,8 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             "accepted_intervals": list(self.observations),
             "review_regions": list(self.review_regions),
             "rejected_regions": list(self.rejected_regions),
+            "coverage": dict(self.coverage),
+            "warnings": list(self.warnings),
         }
 
     @staticmethod
@@ -129,9 +150,13 @@ class GeminiMultiStageOCRProvider(OCRProvider):
     @staticmethod
     def _classification_prompt() -> str:
         return (
-            "Classify this cropped video text region. Return only JSON: "
-            '{"text_type":"subtitle|watermark|logo|user_interface|scene_text|'
-            'warning_overlay|other","evidence":"string"}. '
+            "Classify the outlined region using the full-frame context and the matching crop. "
+            "Return only JSON: "
+            '{"classification_status":"accepted|rejected|review_required",'
+            '"text_type":"subtitle|watermark|logo|user_interface|scene_text|'
+            'warning_overlay|other","evidence":"specific visible evidence"}. '
+            "Use accepted only for subtitle. Use rejected for every non-subtitle type. "
+            "Use review_required when the type or evidence is uncertain. "
             "Do not transcribe or translate."
         )
 
@@ -221,14 +246,22 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             consensus = self._median_box([item["box_2d"] for item in track])
             representative = track[len(track) // 2]
             crop = self._make_crop(representative["frame"].image_path, self._to_pixel_box(consensus, *self._image_size(representative["frame"].image_path)))
-            classification = self._classify(crop, track_id)
+            classification = self._classify(
+                representative["frame"].image_path, crop, consensus, track_id
+            )
             for item in track:
                 item["track_id"] = track_id
                 item["stages"].extend(["tracking", "B"])
                 item["text_type"] = classification["text_type"]
                 item["classification_evidence"] = classification["evidence"]
-            if classification["text_type"] != "subtitle":
-                self.rejected_regions.extend(self._artifact(item, "not_output_text_type") for item in track)
+            if classification["classification_status"] != "accepted":
+                status = (
+                    "classification_review_required"
+                    if classification["classification_status"] == "review_required"
+                    else "not_output_text_type"
+                )
+                target = self.review_regions if status == "classification_review_required" else self.rejected_regions
+                target.extend(self._artifact(item, status) for item in track)
                 continue
             readings = self._transcribe_track(track, consensus, track_id)
             readable = [text for text in readings if text is not None]
@@ -237,14 +270,23 @@ class GeminiMultiStageOCRProvider(OCRProvider):
                 continue
             for item in track:
                 item["stages"].append("C")
+            profiles = {self._script_profile(text) for text in readable}
+            if len(profiles) != 1:
+                self.review_regions.extend(self._artifact(item, "script_profile_contradiction") for item in track)
+                continue
+            script_profile = profiles.pop()
             unique = set(readable)
             transcription = readable[0] if len(unique) == 1 and len(readable) == len(readings) else None
             stage_d_used = False
             if transcription is None and self.verification_enabled:
                 stage_d_used = True
-                verified = self._transcribe(crop, track_id, "stage_d_verification")
-                if verified is None or (unique and verified not in unique):
-                    self.review_regions.extend(self._artifact(item, "verification_failed") for item in track)
+                verified = self._transcribe(
+                    crop, track_id, "stage_d_verification",
+                    expected_texts=sorted(unique), script_profile=script_profile,
+                )
+                if (verified is None or verified not in unique
+                        or self._script_profile(verified) != script_profile):
+                    self.review_regions.extend(self._artifact(item, "verification_contradiction") for item in track)
                     continue
                 transcription = verified
                 for item in track:
@@ -264,29 +306,46 @@ class GeminiMultiStageOCRProvider(OCRProvider):
                     "confidence_kind": "unknown", "text_type": "subtitle", "track_id": track_id,
                     "stage_provenance": list(representative["stages"]),
                     "validation_evidence": {"stage_a_bbox_valid": True, "stage_b_evidence": classification["evidence"],
-                    "stage_c_readings": len(readings), "stage_d_verified": stage_d_used, "consensus_box_2d": consensus}}))
+                    "stage_b_status": classification["classification_status"],
+                    "stage_c_readings": len(readings), "stage_c_script_profile": sorted(script_profile),
+                    "stage_d_verified": stage_d_used, "consensus_box_2d": consensus}}))
         return segments
 
-    def _classify(self, crop: bytes, region_id: str) -> Dict[str, str]:
+    def _classify(
+        self, image_path: str, crop: bytes, box_2d: Sequence[float], region_id: str
+    ) -> Dict[str, str]:
+        context = self._annotated_frame(image_path, box_2d)
         payload = self._parse(
-            self._send(self._classification_prompt(), crop, "stage_b_classification", region_id).text,
+            self._send_classification(context, crop, region_id).text,
             "stage B",
         )
         text_type = payload.get("text_type") if isinstance(payload, dict) else None
         evidence = payload.get("evidence") if isinstance(payload, dict) else None
-        if text_type not in _TEXT_TYPES or not isinstance(evidence, str) or not evidence.strip():
-            raise ProviderError("Gemini OCR stage B response has an invalid text_type.")
+        status = payload.get("classification_status") if isinstance(payload, dict) else None
+        if (text_type not in _TEXT_TYPES or status not in _CLASSIFICATION_STATUSES
+                or not isinstance(evidence, str) or len(evidence.strip()) < 3
+                or (status == "accepted" and text_type != "subtitle")
+                or (status == "rejected" and text_type == "subtitle")):
+            raise ProviderError("Gemini OCR stage B response has invalid enum, evidence, or status.")
         self.classifications.append(
             {
                 "track_id": region_id,
+                "classification_status": status,
                 "text_type": text_type,
                 "evidence": evidence,
             }
         )
-        return {"text_type": text_type, "evidence": evidence}
+        return {"classification_status": status, "text_type": text_type, "evidence": evidence}
 
-    def _transcribe(self, crop: bytes, region_id: str, source_kind: str) -> Optional[str]:
+    def _transcribe(
+        self, crop: bytes, region_id: str, source_kind: str,
+        expected_texts: Optional[Sequence[str]] = None, script_profile: Optional[frozenset[str]] = None,
+    ) -> Optional[str]:
         prompt = self._verification_prompt() if source_kind == "stage_d_verification" else self._transcription_prompt()
+        if expected_texts is not None:
+            prompt += " Select exactly one candidate, without correction: " + repr(list(expected_texts)) + "."
+        if script_profile is not None:
+            prompt += " The required Unicode script profile is: " + repr(sorted(script_profile)) + "."
         payload = self._parse(self._send(prompt, crop, source_kind, region_id).text, source_kind)
         result = {
             "region_id": region_id,
@@ -327,6 +386,15 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             [{"parts": [{"text": f"{prompt} source_id={region_id}"},
                          {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(image_bytes).decode("ascii")}}]}],
         )
+
+    def _send_classification(self, context: bytes, crop: bytes, region_id: str):
+        prompt = self._classification_prompt()
+        contents = [{"parts": [
+            {"text": f"{prompt} source_id={region_id}; image_1=annotated_full_frame; image_2=region_crop"},
+            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(context).decode("ascii")}},
+            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(crop).decode("ascii")}},
+        ]}]
+        return self._send_with_contents(prompt, context + crop, "stage_b_classification", region_id, contents)
 
     def _send_with_contents(
         self, prompt: str, image_bytes: bytes, source_kind: str, region_id: str,
@@ -375,9 +443,14 @@ class GeminiMultiStageOCRProvider(OCRProvider):
             if item not in unique:
                 unique.append(item)
         readings = []
+        seen_visuals = set()
         for index, item in enumerate(unique):
             pixel_box = self._to_pixel_box(consensus, *self._image_size(item["frame"].image_path))
-            crop = self._make_crop(item["frame"].image_path, pixel_box, variant=index % 2)
+            crop = self._make_crop(item["frame"].image_path, pixel_box)
+            visual_key = hashlib.sha256(crop).hexdigest()
+            if visual_key in seen_visuals:
+                continue
+            seen_visuals.add(visual_key)
             readings.append(self._transcribe(crop, f"{track_id}:crop_{index}", "stage_c_crop_transcription"))
         return readings
 
@@ -449,6 +522,38 @@ class GeminiMultiStageOCRProvider(OCRProvider):
                 return output.getvalue()
         except OSError as exc:
             raise ProviderError(f"Gemini OCR crop failed for '{image_path}': {exc}") from exc
+
+    def _annotated_frame(self, image_path: str, box_2d: Sequence[float]) -> bytes:
+        try:
+            with Image.open(image_path) as image:
+                annotated = image.convert("RGB").copy()
+                left, top, right, bottom = self._to_pixel_box(box_2d, image.width, image.height)
+                from PIL import ImageDraw
+                ImageDraw.Draw(annotated).rectangle((left, top, right, bottom), outline="red", width=max(2, image.width // 250))
+                output = io.BytesIO()
+                annotated.save(output, format="PNG")
+                return output.getvalue()
+        except OSError as exc:
+            raise ProviderError(f"Gemini OCR annotation failed for '{image_path}': {exc}") from exc
+
+    @staticmethod
+    def _script_profile(text: str) -> frozenset[str]:
+        profiles = set()
+        for char in text:
+            if not char.isalpha():
+                continue
+            name = unicodedata.name(char, "")
+            if "CJK UNIFIED" in name or "HIRAGANA" in name or "KATAKANA" in name or "HANGUL" in name:
+                profiles.add("cjk")
+            elif "ARABIC" in name:
+                profiles.add("arabic")
+            elif "CYRILLIC" in name:
+                profiles.add("cyrillic")
+            elif "LATIN" in name:
+                profiles.add("latin")
+            else:
+                profiles.add("other")
+        return frozenset(profiles)
 
     @staticmethod
     def _read_bytes(path: str) -> bytes:

@@ -483,6 +483,7 @@ def test_orchestrator_persists_g3_artifacts_only_for_multistage_provider(
                 {
                     "text_type": "subtitle",
                     "evidence": "position and contrast support the label",
+                    "classification_status": "accepted",
                 },
                 {"text_verbatim": "accepted", "transcription_status": "readable"},
                 {"text_verbatim": "accepted", "transcription_status": "readable"},

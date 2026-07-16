@@ -688,6 +688,22 @@ class JobOrchestrator:
                     if replacement_required
                     else segments
                 )
+                if replacement_required and not display_segments:
+                    quality_metrics["dynamic_replacement_status"] = (
+                        "NO_ACCEPTED_SUBTITLE_INTERVALS"
+                    )
+                    quality_metrics["render_replacement_status"] = "NOT_RUN"
+                    job.error_message = "NO_ACCEPTED_SUBTITLE_INTERVALS"
+                    self.artifact_provider.write_json(
+                        self.artifact_provider.final_timeline_path(job.job_id),
+                        self.final_timeline_builder.build(
+                            narration_segments, [], regions, [], True
+                        ).to_dict(),
+                    )
+                    logger.done()
+                    timings["placement"] = round(time.monotonic() - started, 3)
+                    if controls.run_render:
+                        return job
                 placements = self.calculate_subtitle_placement_uc.execute(
                     regions, display_segments, self.subtitle_style
                 )

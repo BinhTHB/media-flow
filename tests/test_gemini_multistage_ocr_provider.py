@@ -52,8 +52,12 @@ def _window(*frames):
     return {"frames": [{"frame_id": frame_id, "regions": regions} for frame_id, regions in frames]}
 
 
-def _classification(text_type, evidence="position and contrast support the label"):
-    return {"text_type": text_type, "evidence": evidence}
+def _classification(text_type, evidence="position and contrast support the label", status=None):
+    return {
+        "text_type": text_type,
+        "evidence": evidence,
+        "classification_status": status or ("accepted" if text_type == "subtitle" else "rejected"),
+    }
 
 
 def _reading(text, status="readable"):
@@ -76,8 +80,8 @@ def test_multistage_tracks_regions_into_one_evidence_gated_interval(tmp_path):
     assert segments[0].end == 3.0
     assert segments[0].metadata["stage_provenance"] == ["A", "tracking", "B", "C"]
     assert segments[0].metadata["validation_evidence"]["stage_b_evidence"]
-    assert [entry["stage"] for entry in provider.provenance] == ["stage_a_region_detection", "stage_b_classification", "stage_c_crop_transcription", "stage_c_crop_transcription"]
-    assert len(transport.calls) == 4
+    assert [entry["stage"] for entry in provider.provenance] == ["stage_a_region_detection", "stage_b_classification", "stage_c_crop_transcription"]
+    assert len(transport.calls) == 3
     assert provider.rejected_regions == []
     assert provider.review_regions == []
 
@@ -97,14 +101,14 @@ def test_multistage_records_rejected_and_review_artifacts(tmp_path):
 def test_multistage_uses_one_stage_d_request_on_disagreement(tmp_path):
     first = _frame(tmp_path, "first.png", 1.0)
     second = _frame(tmp_path, "second.png", 2.0)
+    with Image.open(first.image_path) as image:
+        image.putpixel((150, 75), (0, 0, 0))
+        image.save(first.image_path)
     provider, transport = _provider(tmp_path, [
         _window(("frame_0", [_region("local_0", [100, 100, 200, 200])]), ("frame_1", [_region("local_1", [100, 100, 200, 200])])),
-        _classification("subtitle"), _reading("??"), _reading("kh?c"), _reading("??"),
+        _classification("subtitle"), _reading("same"), _reading("other"), _reading("same"),
     ])
-    segments = provider.detect_text([first, second])
-    assert [segment.text for segment in segments] == ["??"]
-    assert segments[0].metadata["validation_evidence"]["stage_d_verified"] is True
-    assert segments[0].metadata["stage_provenance"][-1] == "D"
+    assert [segment.text for segment in provider.detect_text([first, second])] == ["same"]
     assert [entry["stage"] for entry in provider.provenance].count("stage_d_verification") == 1
     assert len(transport.calls) == 5
 
@@ -125,13 +129,13 @@ def test_multistage_deduplicates_overlapping_windows_and_uses_consensus_bbox(tmp
     provider, transport = _provider(tmp_path, [
         _window(("frame_0", [_region("local_0", [100, 100, 200, 200])]), ("frame_1", [_region("local_1", [120, 110, 220, 210])]), ("frame_2", [_region("local_2", [140, 120, 240, 220])])),
         _window(("frame_2", [_region("local_2", [140, 120, 240, 220])]), ("frame_3", [])),
-        _classification("subtitle"), _reading("????"), _reading("????"), _reading("????"),
+        _classification("subtitle"), _reading("????"),
     ], window_size=3, window_overlap=1)
     segments = provider.detect_text(frames)
     assert len(segments) == 1
     assert segments[0].end > segments[0].start
     assert segments[0].bbox == {"left": 110.0, "top": 60.0, "right": 210.0, "bottom": 110.0}
-    assert len(transport.calls) == 6
+    assert len(transport.calls) == 4
 
 
 def test_multistage_stores_stage_configuration(tmp_path):
@@ -157,10 +161,7 @@ def test_multistage_exposes_serializable_stage_artifacts(tmp_path):
             ("frame_0", [_region("local_0", [100, 100, 200, 200])]),
             ("frame_1", [_region("local_1", [100, 100, 200, 200])]),
         ),
-        _classification("subtitle"),
-        _reading("first"),
-        _reading("second"),
-        _reading("first"),
+        _classification("subtitle"), _reading("first"),
     ])
 
     accepted = provider.detect_text([first, second])
@@ -171,14 +172,63 @@ def test_multistage_exposes_serializable_stage_artifacts(tmp_path):
     assert len(artifacts["tracks"]) == 1
     assert artifacts["classifications"] == [{
         "track_id": "track_0",
+        "classification_status": "accepted",
         "text_type": "subtitle",
         "evidence": "position and contrast support the label",
     }]
-    assert [result["text_verbatim"] for result in artifacts["crop_ocr_results"]] == [
-        "first", "second"
-    ]
-    assert artifacts["verification_results"][0]["text_verbatim"] == "first"
+    assert [result["text_verbatim"] for result in artifacts["crop_ocr_results"]] == ["first"]
+    assert artifacts["verification_results"] == []
     assert artifacts["accepted_intervals"][0]["text_verbatim"] == "first"
+    assert artifacts["coverage"]["accepted_interval_count"] == 1
+    assert artifacts["warnings"] == []
     assert artifacts["review_regions"] == []
     assert artifacts["rejected_regions"] == []
     json.dumps(artifacts)
+
+
+def test_multistage_stage_b_sends_annotated_context_and_crop(tmp_path):
+    frame = _frame(tmp_path, "frame.png", 1.0)
+    provider, transport = _provider(tmp_path, [
+        _window(("frame_0", [_region("local_0", [100, 100, 200, 200])])),
+        _classification("subtitle"), _reading("text"),
+    ])
+
+    assert [segment.text for segment in provider.detect_text([frame])] == ["text"]
+    stage_b_request = transport.calls[1][1]
+    image_parts = [
+        part for part in stage_b_request["contents"][0]["parts"] if "inline_data" in part
+    ]
+    assert len(image_parts) == 2
+    assert "annotated_full_frame" in stage_b_request["contents"][0]["parts"][0]["text"]
+
+
+def test_multistage_rejects_invalid_classification_status_pair(tmp_path):
+    frame = _frame(tmp_path, "frame.png", 1.0)
+    provider, _ = _provider(tmp_path, [
+        _window(("frame_0", [_region("local_0", [100, 100, 200, 200])])),
+        _classification("subtitle", status="rejected"),
+    ])
+
+    with pytest.raises(ProviderError, match="invalid enum"):
+        provider.detect_text([frame])
+
+
+def test_multistage_requires_matching_script_profiles_before_verification(tmp_path):
+    first = _frame(tmp_path, "first.png", 1.0)
+    second = _frame(tmp_path, "second.png", 2.0)
+    with Image.open(first.image_path) as image:
+        image.putpixel((150, 75), (0, 0, 0))
+        image.save(first.image_path)
+    provider, transport = _provider(tmp_path, [
+        _window(
+            ("frame_0", [_region("local_0", [100, 100, 200, 200])]),
+            ("frame_1", [_region("local_1", [100, 100, 200, 200])]),
+        ),
+        _classification("subtitle"), _reading("latin"), _reading("中文"),
+    ])
+
+    assert provider.detect_text([first, second]) == []
+    assert provider.review_regions[0]["status"] == "script_profile_contradiction"
+    assert [entry["stage"] for entry in provider.provenance].count("stage_d_verification") == 0
+    assert provider.debug_artifacts()["warnings"][0]["code"] == "no_accepted_ocr_intervals"
+    assert len(transport.calls) == 4
