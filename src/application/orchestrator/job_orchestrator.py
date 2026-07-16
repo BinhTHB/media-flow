@@ -903,7 +903,12 @@ class JobOrchestrator:
 
     @staticmethod
     def _provider_provenance(provider: object) -> dict:
-        record = dict(getattr(provider, "provenance", {}) or {})
+        raw_record = getattr(provider, "provenance", {}) or {}
+        record = (
+            dict(raw_record)
+            if isinstance(raw_record, dict)
+            else {}
+        )
         primary = getattr(provider, "primary", provider)
         requests = getattr(primary, "provenance", [])
         if isinstance(requests, list):

@@ -167,3 +167,19 @@ def test_phase_f_explicit_overrides():
     assert ocr_p.__class__.__name__ == "PaddleOCRProvider"
     assert not isinstance(speech_p, FallbackSpeechProvider)
     assert speech_p.__class__.__name__ == "FasterWhisperSpeechProvider"
+
+
+def test_raw_gemini_provider_provenance_is_serializable():
+    from src.application.orchestrator.job_orchestrator import JobOrchestrator
+
+    class RawGeminiProvider:
+        provenance = [{"model": "gemini-3.1-flash-lite", "cache_hit": False}]
+        validation = []
+        model = "gemini-3.1-flash-lite"
+        _escalation_requests = 0
+
+    result = JobOrchestrator._provider_provenance(RawGeminiProvider())
+
+    assert result["exact_model_id"] == "gemini-3.1-flash-lite"
+    assert result["request_count"] == 1
+    assert result["fallback_used"] is False
