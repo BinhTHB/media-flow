@@ -47,6 +47,7 @@ class ProviderRegistry:
 def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.ocr.mock_ocr_provider import MockOCRProvider
     from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
+    from src.infrastructure.providers.ocr.gemini_multistage_ocr_provider import GeminiMultiStageOCRProvider
     from src.infrastructure.providers.ocr.gemini_vision_ocr_provider import GeminiVisionOCRProvider
     from src.infrastructure.providers.speech.faster_whisper_speech_provider import FasterWhisperSpeechProvider
     from src.infrastructure.providers.speech.gemini_audio_speech_provider import GeminiAudioSpeechProvider
@@ -164,6 +165,16 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         crop_retry_enabled=bool(opt.get("crop_retry_enabled", True)),
         crop_padding_ratio=float(opt.get("crop_padding_ratio", 0.05)),
         crop_upscale_factor=float(opt.get("crop_upscale_factor", 2.0)),
+    ))
+    registry.register("ocr", "gemini_vision_multistage", lambda opt: GeminiMultiStageOCRProvider(
+        runtime=opt.get("runtime"),
+        model=opt.get("model", "gemini-3.1-flash-lite"),
+        api_key=opt.get("api_key"),
+        verification_enabled=bool(opt.get("verification_enabled", False)),
+        tracking_iou_threshold=float(opt.get("tracking_iou_threshold", 0.3)),
+        crop_padding_ratio=float(opt.get("crop_padding_ratio", 0.05)),
+        prompt_version=opt.get("prompt_version", "gemini_ocr_multistage_v1"),
+        schema_version=opt.get("schema_version", "ocr_multistage_v1"),
     ))
 
     # storage

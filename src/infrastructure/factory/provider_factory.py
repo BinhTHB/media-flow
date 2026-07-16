@@ -110,7 +110,7 @@ class ProviderFactory:
 
     def create_ocr_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         provider_name, options = self._merged_options("ocr", name, overrides)
-        if provider_name == "gemini_vision":
+        if provider_name in {"gemini_vision", "gemini_vision_multistage"}:
             options["runtime"] = self._get_gemini_runtime(options)
             primary = self.registry.create("ocr", provider_name, options)
             fallback_config = self.provider_fallback_config
