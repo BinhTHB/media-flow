@@ -27,7 +27,7 @@ class FilterOCRSegmentsUseCase:
         for s in ocr_segs:
             text = s.text.strip()
             # 1. Drop by confidence
-            if s.confidence < self.config.ocr_min_confidence:
+            if s.confidence_available and s.confidence < self.config.ocr_min_confidence:
                 dropped_confidence += 1
                 dropped_tokens.append(text)
                 continue

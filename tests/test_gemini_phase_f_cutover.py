@@ -205,3 +205,71 @@ def test_provider_provenance_accepts_mapping_empty_list_and_missing(provenance, 
 
     for key, value in expected.items():
         assert result[key] == value
+
+
+def test_gemini_ocr_without_confidence_bypasses_confidence_filter():
+    from src.application.use_cases.filter_ocr_segments import FilterOCRSegmentsUseCase
+
+    segment = Segment(
+        "ocr-1",
+        0,
+        1,
+        "字幕内容",
+        source="ocr",
+        confidence=0.0,
+        confidence_available=False,
+    )
+
+    kept, metrics = FilterOCRSegmentsUseCase().execute([segment], "zh")
+
+    assert kept == [segment]
+    assert metrics["dropped_by_confidence"] == 0
+
+
+def test_ocr_bbox_becomes_display_region_with_fallback_confidence():
+    from src.application.orchestrator.job_orchestrator import JobOrchestrator
+
+    segment = Segment(
+        "ocr-1",
+        1,
+        2,
+        "字幕内容",
+        source="ocr",
+        confidence=0.0,
+        confidence_available=False,
+        bbox={"left": 100, "top": 200, "right": 500, "bottom": 300},
+    )
+
+    regions = JobOrchestrator._ocr_regions([segment], 1000, 500)
+
+    assert len(regions) == 1
+    assert regions[0].to_dict() == {
+        "start_time": 1,
+        "end_time": 2,
+        "x": 0.1,
+        "y": 0.4,
+        "width": 0.4,
+        "height": 0.2,
+        "confidence": 1.0,
+    }
+
+
+def test_segment_cache_fields_preserve_gemini_geometry():
+    from src.application.orchestrator.job_orchestrator import JobOrchestrator
+
+    item = Segment(
+        "ocr-1",
+        0,
+        1,
+        "字幕内容",
+        source="ocr",
+        confidence_available=False,
+        bbox={"left": 10, "top": 20, "right": 30, "bottom": 40},
+        metadata={"provider": "gemini"},
+    ).to_dict()
+
+    restored = Segment(**JobOrchestrator._segment_fields(item))
+
+    assert restored.confidence_available is False
+    assert restored.bbox == item["bbox"]
+    assert restored.metadata == item["metadata"]

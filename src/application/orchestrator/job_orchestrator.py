@@ -394,6 +394,15 @@ class JobOrchestrator:
             else:
                 segments = self.merge_segments_uc.execute(speech_segments, ocr_segments)
 
+            if (
+                placement_config.placement_mode == "replace_source_subtitle"
+                and video_width > 0
+                and video_height > 0
+            ):
+                regions.extend(
+                    self._ocr_regions(ocr_segments, video_width, video_height)
+                )
+
             # Translation Grouping
             segments = self.group_segments_uc.execute(segments, job.source_language)
             after_group_examples = [s.to_dict() for s in segments]
@@ -669,11 +678,20 @@ class JobOrchestrator:
                 self.state_machine.transition(job, JobStatus.GENERATING_SUBTITLE)
                 logger = FeatureLogger("Subtitle")
                 logger.start()
+                replacement_required = (
+                    self.calculate_subtitle_placement_uc.placement_service.config.placement_mode
+                    == "replace_source_subtitle"
+                )
+                display_segments = (
+                    [segment for segment in segments if segment.source == "ocr"]
+                    if replacement_required
+                    else segments
+                )
                 placements = self.calculate_subtitle_placement_uc.execute(
-                    regions, segments, self.subtitle_style
+                    regions, display_segments, self.subtitle_style
                 )
                 placement_report = self.calculate_subtitle_placement_uc.quality_report(
-                    regions, segments, placements, self.subtitle_style
+                    regions, display_segments, placements, self.subtitle_style
                 )
                 self.artifact_provider.write_json(
                     self.artifact_provider.placement_quality_report_path(job.job_id),
@@ -683,13 +701,9 @@ class JobOrchestrator:
                     self.artifact_provider.placement_quality_report_path(job.job_id)
                 ):
                     raise ValidationError("placement_quality_report.json is missing.")
-                replacement_required = (
-                    self.calculate_subtitle_placement_uc.placement_service.config.placement_mode
-                    == "replace_source_subtitle"
-                )
                 final_timeline = self.final_timeline_builder.build(
                     narration_segments,
-                    segments,
+                    display_segments,
                     regions,
                     placements,
                     replacement_required,
@@ -699,12 +713,12 @@ class JobOrchestrator:
                     self.artifact_provider.final_timeline_path(job.job_id),
                     final_timeline.to_dict(),
                 )
-                srt_content = self.generate_subtitle_uc.execute(segments)
+                srt_content = self.generate_subtitle_uc.execute(display_segments)
                 job.subtitle_content = srt_content
                 job.subtitle_path = self.artifact_provider.subtitle_path(job.job_id)
                 self.artifact_provider.write_text(job.subtitle_path, srt_content)
                 ass_content = self.generate_subtitle_uc.execute(
-                    segments,
+                    display_segments,
                     subtitle_format="ass",
                     style=self.subtitle_style,
                     placements=(
@@ -930,6 +944,30 @@ class JobOrchestrator:
         return record
 
     @staticmethod
+    def _ocr_regions(
+        segments: list[Segment], video_width: int, video_height: int
+    ) -> list[SubtitleRegion]:
+        regions = []
+        for segment in segments:
+            bbox = segment.bbox
+            if segment.source != "ocr" or bbox is None:
+                continue
+            left, top = bbox["left"], bbox["top"]
+            right, bottom = bbox["right"], bbox["bottom"]
+            regions.append(
+                SubtitleRegion(
+                    start_time=segment.start,
+                    end_time=segment.end,
+                    x=max(0.0, min(1.0, left / video_width)),
+                    y=max(0.0, min(1.0, top / video_height)),
+                    width=max(0.0, min(1.0, (right - left) / video_width)),
+                    height=max(0.0, min(1.0, (bottom - top) / video_height)),
+                    confidence=segment.confidence if segment.confidence_available else 1.0,
+                )
+            )
+        return regions
+
+    @staticmethod
     def _segment_fields(item: dict) -> dict:
         return {
             key: item[key]
@@ -941,6 +979,9 @@ class JobOrchestrator:
                 "translated_text",
                 "source",
                 "confidence",
+                "confidence_available",
+                "bbox",
+                "metadata",
             )
             if key in item
         }

@@ -70,6 +70,9 @@ class SubtitleSegmentationService:
                 translated_text=segment.translated_text,
                 source=segment.source,
                 confidence=segment.confidence,
+                confidence_available=segment.confidence_available,
+                bbox=segment.bbox,
+                metadata=dict(segment.metadata),
             )
             formatted = SubtitleTextFormatter.format_text(chunk, self.config.max_chars_per_line, self.config.max_lines_per_subtitle)
             self._set_active_text(new_segment, formatted, is_translated)

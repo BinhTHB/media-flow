@@ -74,6 +74,17 @@ class GroupSegmentsUseCase:
         last = group[-1]
         avg_confidence = sum(s.confidence for s in group) / len(group)
 
+        bboxes = [s.bbox for s in group if s.bbox is not None]
+        bbox = (
+            {
+                "left": min(box["left"] for box in bboxes),
+                "top": min(box["top"] for box in bboxes),
+                "right": max(box["right"] for box in bboxes),
+                "bottom": max(box["bottom"] for box in bboxes),
+            }
+            if bboxes
+            else None
+        )
         merged = Segment(
             id=first.id,
             start=first.start,
@@ -81,7 +92,14 @@ class GroupSegmentsUseCase:
             text=text_val,
             translated_text="",
             source=first.source,
-            confidence=avg_confidence
+            confidence=avg_confidence,
+            confidence_available=all(s.confidence_available for s in group),
+            bbox=bbox,
+            metadata={
+                **first.metadata,
+                "source_segment_ids": [s.id for s in group],
+                "observation_count": len(group),
+            },
         )
         self.provenance_map[merged.id] = [s.id for s in group]
         return merged

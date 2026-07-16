@@ -112,6 +112,17 @@ class NormalizeSegmentsUseCase:
                             last.translated_text = last.translated_text + " " + s.translated_text
                         last.end = s.end
                         last.confidence = (last.confidence + s.confidence) / 2.0
+                        last.confidence_available = (
+                            last.confidence_available and s.confidence_available
+                        )
+                        boxes = [box for box in (last.bbox, s.bbox) if box is not None]
+                        if boxes:
+                            last.bbox = {
+                                "left": min(box["left"] for box in boxes),
+                                "top": min(box["top"] for box in boxes),
+                                "right": max(box["right"] for box in boxes),
+                                "bottom": max(box["bottom"] for box in boxes),
+                            }
                         merged_ids = getattr(last, "_merged_source_ids", [last.id])
                         setattr(
                             last,
@@ -335,6 +346,9 @@ class NormalizeSegmentsUseCase:
                     translated_text=translated_chunks[index],
                     source="speech",
                     confidence=speech.confidence,
+                    confidence_available=speech.confidence_available,
+                    bbox=speech.bbox,
+                    metadata=dict(speech.metadata),
                 )
                 if is_translated:
                     split.translated_text = active_text

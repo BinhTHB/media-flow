@@ -190,6 +190,26 @@ class GeminiVisionOCRProvider(OCRProvider):
                         text=text,
                         source="ocr",
                         confidence=0.0,
+                        confidence_available=False,
+                        bbox={
+                            "left": pixel_box[0],
+                            "top": pixel_box[1],
+                            "right": pixel_box[2],
+                            "bottom": pixel_box[3],
+                        },
+                        metadata={
+                            "provider": self.__class__.__name__,
+                            "model": self.model,
+                            "confidence_kind": "unknown",
+                            "text_type": "subtitle",
+                            "frame_id": frame_id,
+                            "frame_timestamp": frame.timestamp,
+                            "validation_evidence": {
+                                "structured_schema_valid": True,
+                                "bbox_valid": True,
+                                "frame_mapping_valid": True,
+                            },
+                        },
                     )
                 )
         return segments
