@@ -24,8 +24,16 @@ class ConfigLoader:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
         self.providers_path = providers_path or os.path.join(base_dir, "config", "providers.yaml")
         self.subtitle_styles_path = subtitle_styles_path or os.path.join(base_dir, "config", "subtitle_styles.yaml")
-        self.secrets_path = os.path.join(base_dir, "config", "config.yml")
+        self.secrets_path = os.path.join(base_dir, "config.yml")
         self.gemini_api_key: Optional[str] = None
+        self.credential_readiness: Dict[str, Any] = {
+            "credential_source": "config.yml",
+            "config_file_present": False,
+            "config_key_present": False,
+            "placeholder_detected": False,
+            "key_looks_valid": False,
+            "request_permitted": False,
+        }
 
     def load(self, overrides: Optional[Dict[str, Any]] = None) -> AppConfig:
         providers_raw = self._load_yaml(self.providers_path)
@@ -51,7 +59,18 @@ class ConfigLoader:
             }
             for category, configured in providers_raw.get("providers", {}).items()
         }
-        self.gemini_api_key = os.environ.get("GEMINI_API_KEY")
+        secrets_raw = self._load_yaml(self.secrets_path)
+        gemini_secrets = secrets_raw.get("gemini", {}) if isinstance(secrets_raw, dict) else {}
+        config_key = gemini_secrets.get("api_key") if isinstance(gemini_secrets, dict) else None
+        self.credential_readiness = self._credential_readiness(
+            self.secrets_path,
+            config_key,
+        )
+        self.gemini_api_key = (
+            config_key.strip()
+            if self.credential_readiness["request_permitted"]
+            else None
+        )
         gemini_raw = providers.get("translation", {}).get("gemini", {})
         quality_raw = providers_raw.get("subtitle_quality", {})
         placement_raw = providers_raw.get("subtitle_placement", {})
@@ -304,6 +323,27 @@ class ConfigLoader:
             with open(path, "r", encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {}
+
+    @staticmethod
+    def _credential_readiness(path: str, value: Any) -> Dict[str, Any]:
+        key = value.strip() if isinstance(value, str) else ""
+        normalized = key.lower()
+        placeholder = bool(key) and (
+            key.startswith("$" + "{")
+            or (key.startswith("«redacted:") and key.endswith("»"))
+            or key == "<placeholder>"
+            or "placeholder" in normalized
+            or normalized.startswith("your_")
+        )
+        key_looks_valid = bool(key) and not placeholder and len(key) >= 20
+        return {
+            "credential_source": "config.yml",
+            "config_file_present": os.path.isfile(path),
+            "config_key_present": bool(key),
+            "placeholder_detected": placeholder,
+            "key_looks_valid": key_looks_valid,
+            "request_permitted": key_looks_valid,
+        }
 
     @staticmethod
     def _env_int(name: str, default: Any) -> int:

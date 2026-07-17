@@ -12,6 +12,8 @@ def test_cli_mock_flow():
         "--speech-provider", "mock",
         "--translation-provider", "mock",
         "--subtitle-provider", "mock",
+        "--ocr-provider", "mock",
+        "--frame-provider", "mock",
         "--output-dir", "test_output",
         "--job-id", "job_test_1"
     ]

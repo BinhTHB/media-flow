@@ -135,13 +135,14 @@ def test_config_loader_loads_defaults():
     assert app_config.defaults.get("video") == "mock"
     assert app_config.providers.get("speech", {}).get("faster-whisper", {}).get("model_size") == "base"
 
-def test_config_loader_applies_gemini_env_overrides_without_storing_api_key(
+def test_config_loader_reads_gemini_api_key_from_config_file(
     tmp_path, monkeypatch
 ):
     from src.interfaces.config.config_loader import ConfigLoader
 
     providers_path = tmp_path / "providers.yaml"
     styles_path = tmp_path / "styles.yaml"
+    secrets_path = tmp_path / "config.yml"
     providers_path.write_text(
         "providers:\n"
         "  translation:\n"
@@ -151,19 +152,47 @@ def test_config_loader_applies_gemini_env_overrides_without_storing_api_key(
         encoding="utf-8",
     )
     styles_path.write_text("styles: {}\n", encoding="utf-8")
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    secrets_path.write_text(
+        "gemini:\n  api_key: configured_api_key_for_tests_123\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "environment_api_key_for_tests_456")
     monkeypatch.setenv("GEMINI_MODEL", "env-model")
     monkeypatch.setenv("GEMINI_MAX_RETRIES", "4")
     monkeypatch.setenv("GEMINI_CACHE_ENABLED", "false")
 
     loader = ConfigLoader(str(providers_path), str(styles_path))
+    loader.secrets_path = str(secrets_path)
     config = loader.load()
 
     assert config.gemini.model == "env-model"
     assert config.gemini.max_retries == 4
     assert config.gemini.cache_enabled is False
     assert config.providers["translation"]["gemini"].get("api_key") is None
-    assert loader.gemini_api_key == "test-key"
+    assert loader.gemini_api_key == "configured_api_key_for_tests_123"
+    assert loader.credential_readiness["request_permitted"] is True
+
+
+def test_config_loader_rejects_config_credential_placeholder(tmp_path, monkeypatch):
+    from src.interfaces.config.config_loader import ConfigLoader
+
+    secrets_path = tmp_path / "config.yml"
+    secrets_path.write_text(
+        "gemini:\n  api_key: '${GEMINI_API_KEY}'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GEMINI_API_KEY", "environment_api_key_for_tests_456")
+
+    loader = ConfigLoader(
+        providers_path=str(tmp_path / "missing.yaml"),
+        subtitle_styles_path=str(tmp_path / "missing_styles.yaml"),
+    )
+    loader.secrets_path = str(secrets_path)
+    loader.load()
+
+    assert loader.gemini_api_key is None
+    assert loader.credential_readiness["placeholder_detected"] is True
+    assert loader.credential_readiness["request_permitted"] is False
 
 def test_config_loader_missing_sections(tmp_path):
     from src.interfaces.config.config_loader import ConfigLoader
@@ -206,7 +235,14 @@ def test_provider_factory_uses_registry():
 def test_application_builder_context_uses_app_config():
     from src.interfaces.config.app_config import AppConfig
 
-    app = ApplicationBuilder(video_provider="mock", speech_provider="mock").build()
+    app = ApplicationBuilder(
+        video_provider="mock",
+        speech_provider="mock",
+        translation_provider="mock",
+        subtitle_provider="mock",
+        ocr_provider="mock",
+        frame_provider="mock",
+    ).build()
     assert isinstance(app.context.config, AppConfig)
 
 
@@ -279,11 +315,23 @@ def test_application_builder_preserves_quality_config_and_applies_overrides(tmp_
     configured = ApplicationBuilder(
         config_path=str(providers_path),
         subtitle_styles_path=str(styles_path),
+        video_provider="mock",
+        speech_provider="mock",
+        translation_provider="mock",
+        subtitle_provider="mock",
+        ocr_provider="mock",
+        frame_provider="mock",
     ).build()
     overridden = ApplicationBuilder(
         config_path=str(providers_path),
         subtitle_styles_path=str(styles_path),
         max_chars_per_line=24,
+        video_provider="mock",
+        speech_provider="mock",
+        translation_provider="mock",
+        subtitle_provider="mock",
+        ocr_provider="mock",
+        frame_provider="mock",
     ).build()
 
     assert configured.context.config.subtitle_quality.max_chars_per_line == 30
