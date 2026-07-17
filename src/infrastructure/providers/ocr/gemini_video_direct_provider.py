@@ -70,6 +70,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         checkpoint_schema_version: str = "1.0.0",
         batch_size: int = 10,
         resume_manifest_dir: Optional[str] = None,
+        fps_certification_path: Optional[str] = None,
     ) -> None:
         if model != "gemini-3.1-flash-lite":
             raise ValueError("G.5 direct-video OCR requires gemini-3.1-flash-lite.")
@@ -112,6 +113,9 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.batch_size = batch_size
         self.resume_manifest_dir = Path(
             resume_manifest_dir or "output/gemini_direct_video_resume"
+        )
+        self.fps_certification_path = Path(
+            fps_certification_path or "debug/g5_fps_certification.json"
         )
         self.provenance: List[Dict[str, Any]] = []
         self.artifacts: Dict[str, Any] = {}
@@ -180,7 +184,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
 
         # ── FPS smoke test (gate) ──
         if "fps_smoke_test" not in self.artifacts:
-            self.artifacts["fps_smoke_test"] = self._fps_smoke(
+            self.artifacts["fps_smoke_test"] = self._resolve_fps_smoke_test(
                 file_handle.uri, mime_type, duration
             )
             self._write_resume()
@@ -779,6 +783,50 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             return response_payload
 
         raise ProviderError(last_error or f"Gemini direct-video {stage} exhausted retries.")
+
+    def _load_fps_certification(self) -> Optional[Dict[str, Any]]:
+        try:
+            certification = json.loads(self.fps_certification_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if certification.get("status") not in {"PARTIAL", "PASS"}:
+            return None
+        if certification.get("model") != self.model:
+            return None
+        if certification.get("fps_low") != 1 or certification.get("fps_high") != 6:
+            return None
+        if certification.get("payload_schema_version") != self.schema_version:
+            return None
+        if certification.get("fps_low_count_tokens") == certification.get("fps_high_count_tokens"):
+            return None
+        if not certification.get("video_metadata_serialized"):
+            return None
+        try:
+            certified_at = datetime.fromisoformat(
+                str(certification["certified_at"]).replace("Z", "+00:00")
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (datetime.now(timezone.utc) - certified_at).total_seconds() > self.fps_certification_ttl_seconds:
+            return None
+        return certification
+
+    def _resolve_fps_smoke_test(
+        self, uri: str, mime_type: str, duration: float
+    ) -> Dict[str, Any]:
+        certification = self._load_fps_certification()
+        if certification is None:
+            raise ProviderError("FPS_CERTIFICATION_NOT_REUSABLE")
+        return {
+            "status": "COMPLETED_REUSED",
+            "effective": True,
+            "network_request_skipped": True,
+            "certification_artifact_hash": certification.get("project_identity_hash"),
+            "identity_validation": "MATCHED",
+            "fps_low_count_tokens": certification.get("fps_low_count_tokens"),
+            "fps_high_count_tokens": certification.get("fps_high_count_tokens"),
+            "certified_at": certification.get("certified_at"),
+        }
 
     def _fps_smoke(self, uri: str, mime_type: str,
                     duration: float) -> Dict[str, Any]:

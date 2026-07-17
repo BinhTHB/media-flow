@@ -707,3 +707,103 @@ def test_g51_no_live_network_in_pytest():
     # If any test attempts real urlopen, it should be captured by pytest or mock
     assert True
 
+
+
+def test_fps_certification_reuse_skips_smoke_request(tmp_path, monkeypatch):
+    import json
+    cert_path = tmp_path / "g5_fps_certification.json"
+    cert_path.write_text(json.dumps({
+        "status": "PARTIAL",
+        "project_identity_hash": "cert_hash_123",
+        "model": "gemini-3.1-flash-lite",
+        "fps_low": 1,
+        "fps_high": 6,
+        "fps_low_count_tokens": 1838,
+        "fps_high_count_tokens": 9908,
+        "video_metadata_serialized": True,
+        "certified_at": "2026-07-17T12:15:01Z",
+        "payload_schema_version": "gemini_direct_video_g5_v2",
+    }), encoding="utf-8")
+
+    from src.infrastructure.providers.ocr.gemini_video_direct_provider import (
+        GeminiDirectVideoOCRProvider,
+    )
+    provider = GeminiDirectVideoOCRProvider(
+        fps_certification_path=str(cert_path),
+        fps_certification_ttl_seconds=86400.0,
+    )
+
+    smoke_called = []
+    def fake_smoke(uri, mime_type, duration):
+        smoke_called.append(True)
+        return {"requests": [], "effective": True}
+
+    monkeypatch.setattr(provider, "_fps_smoke", fake_smoke)
+
+    res = provider._resolve_fps_smoke_test("uri_123", "video/mp4", 10.0)
+
+    assert res["status"] == "COMPLETED_REUSED"
+    assert res["network_request_skipped"] is True
+    assert res["certification_artifact_hash"] == "cert_hash_123"
+    assert len(smoke_called) == 0
+
+
+def test_fps_certification_missing_fails(tmp_path, monkeypatch):
+    from src.infrastructure.providers.ocr.gemini_video_direct_provider import (
+        GeminiDirectVideoOCRProvider,
+    )
+    # Certification path does not exist
+    provider = GeminiDirectVideoOCRProvider(
+        fps_certification_path=str(tmp_path / "missing.json"),
+    )
+
+    smoke_called = []
+    def fake_smoke(uri, mime_type, duration):
+        smoke_called.append(True)
+        return {"requests": [], "effective": True}
+
+    monkeypatch.setattr(provider, "_fps_smoke", fake_smoke)
+
+    import pytest
+    from src.shared.exceptions import ProviderError
+    with pytest.raises(ProviderError, match="FPS_CERTIFICATION_NOT_REUSABLE"):
+        provider._resolve_fps_smoke_test("uri_123", "video/mp4", 10.0)
+    assert smoke_called == []
+
+
+def test_fps_certification_identity_mismatch_fails(tmp_path, monkeypatch):
+    import json
+    cert_path = tmp_path / "g5_fps_certification.json"
+    cert_path.write_text(json.dumps({
+        "status": "PARTIAL",
+        "project_identity_hash": "cert_hash_123",
+        "model": "different-model-name",
+        "fps_low": 1,
+        "fps_high": 6,
+        "fps_low_count_tokens": 1838,
+        "fps_high_count_tokens": 9908,
+        "video_metadata_serialized": True,
+        "certified_at": "2026-07-17T12:15:01Z",
+        "payload_schema_version": "gemini_direct_video_g5_v2",
+    }), encoding="utf-8")
+
+    from src.infrastructure.providers.ocr.gemini_video_direct_provider import (
+        GeminiDirectVideoOCRProvider,
+    )
+    provider = GeminiDirectVideoOCRProvider(
+        fps_certification_path=str(cert_path),
+    )
+
+    smoke_called = []
+    def fake_smoke(uri, mime_type, duration):
+        smoke_called.append(True)
+        return {"requests": [], "effective": True}
+
+    monkeypatch.setattr(provider, "_fps_smoke", fake_smoke)
+
+    # identity mismatch should fail-closed with ProviderError
+    import pytest
+    from src.shared.exceptions import ProviderError
+    with pytest.raises(ProviderError, match="FPS_CERTIFICATION_NOT_REUSABLE"):
+        provider._resolve_fps_smoke_test("uri_123", "video/mp4", 10.0)
+    assert smoke_called == []
