@@ -112,6 +112,24 @@ class RequestScheduler:
     def should_retry(self, attempt: int) -> bool:
         return attempt < self.max_retries
 
+    def ledger_state(self, tokens: int = 0) -> Dict[str, Optional[float] | int]:
+        """Return the current rolling-window state without reserving a request."""
+        with self._lock:
+            now = self._clock()
+            self._reset_rpd_if_needed()
+            self._purge(now)
+            return {
+                "rolling_requests": len(self._request_times),
+                "rolling_tokens": sum(value for _, value in self._token_events),
+                "configured_rpm": self.rpm_cap,
+                "configured_tpm": self.tpm_cap,
+                "configured_rpd": self.rpd_cap,
+                "next_eligible_wait_seconds": self._compute_wait(now, tokens),
+                "last_request_age_seconds": (
+                    now - self._request_times[-1] if self._request_times else None
+                ),
+            }
+
     def _compute_wait(self, now: float, tokens: int) -> float:
         wait = 0.0
         if len(self._request_times) >= self.rpm_cap:

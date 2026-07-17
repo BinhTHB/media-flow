@@ -14,15 +14,21 @@ REVIEW_ROOT = Path("output/review/gemini_direct_video_g5")
 REVIEW_ROOT.mkdir(parents=True, exist_ok=True)
 
 
-def run_sample(sample_id: str, source_language: str = "vi"):
+def run_sample(
+    sample_id: str,
+    source_language: str = "vi",
+    stop_after_stage: str | None = None,
+):
     print(f"\n{'='*60}\nSAMPLE {sample_id}\n{'='*60}")
-    config = ConfigLoader().load()
+    loader = ConfigLoader()
+    config = loader.load()
     factory = ProviderFactory(
         config=config.providers,
         gemini_config=config.gemini,
-        gemini_api_key=os.environ.get("GEMINI_API_KEY"),
+        gemini_api_key=loader.gemini_api_key,
     )
     provider = factory.create_ocr_provider("gemini_video_direct")
+    provider.stop_after_stage = stop_after_stage
     # ensure file_manager client is initialized (provider does this internally too)
     provider.runtime.get_client(provider.model, api_key=provider.api_key)
 
@@ -55,6 +61,9 @@ def run_sample(sample_id: str, source_language: str = "vi"):
         "video_metadata": "g5_video_metadata.json",
         "checkpoints": "g5_checkpoints.json",
         "quota_failure": "g5_quota_failure.json",
+        "authenticated_preflight": "g5_authenticated_preflight.json",
+        "safe_slot_audit": "g5_safe_slot_audit.json",
+        "stage_status": "g5_stage_status.json",
     }
     for key, fname in name_map.items():
         if key in arts:
@@ -74,6 +83,16 @@ def run_sample(sample_id: str, source_language: str = "vi"):
         (out_dir / "g5_request_plan_v2.json").write_text(
             json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    checkpoints = arts.get("checkpoints", {})
+    for checkpoint, filename in (
+        ("candidates_raw", "g5_candidates_raw.json"),
+        ("candidates_deduplicated", "g5_candidates_deduplicated.json"),
+    ):
+        if checkpoint in checkpoints:
+            (out_dir / filename).write_text(
+                json.dumps(checkpoints[checkpoint], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     (out_dir / "g5_request_manifest.json").write_text(
         json.dumps(provider.provenance, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -103,6 +122,11 @@ if __name__ == "__main__":
     parser.add_argument("sample", nargs="?", default="sample2")
     parser.add_argument("--source", default="vi",
                         help="Source (original) subtitle language code, e.g. vi, zh.")
+    parser.add_argument("--stop-after-stage", choices=["V1"])
     args = parser.parse_args()
-    run_sample(args.sample, source_language=args.source)
+    run_sample(
+        args.sample,
+        source_language=args.source,
+        stop_after_stage=args.stop_after_stage,
+    )
     print("\nDONE")

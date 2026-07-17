@@ -71,6 +71,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         batch_size: int = 10,
         resume_manifest_dir: Optional[str] = None,
         fps_certification_path: Optional[str] = None,
+        preflight_certification_path: Optional[str] = None,
+        preflight_certification_ttl_seconds: float = 86400.0,
+        preflight_credential_identity_hash: Optional[str] = None,
+        stop_after_stage: Optional[str] = None,
     ) -> None:
         if model != "gemini-3.1-flash-lite":
             raise ValueError("G.5 direct-video OCR requires gemini-3.1-flash-lite.")
@@ -117,6 +121,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.fps_certification_path = Path(
             fps_certification_path or "debug/g5_fps_certification.json"
         )
+        self.preflight_certification_path = Path(
+            preflight_certification_path or "debug/g5_authenticated_preflight.json"
+        )
+        self.preflight_certification_ttl_seconds = preflight_certification_ttl_seconds
+        self.preflight_credential_identity_hash = preflight_credential_identity_hash
+        if stop_after_stage not in {None, "V1"}:
+            raise ValueError("stop_after_stage must be None or 'V1'.")
+        self.stop_after_stage = stop_after_stage
         self.provenance: List[Dict[str, Any]] = []
         self.artifacts: Dict[str, Any] = {}
         self._render_eligibility: List[Dict[str, Any]] = []
@@ -163,6 +175,11 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 "resumed": False,
             }
 
+        if "authenticated_preflight" not in self.artifacts:
+            self.artifacts["authenticated_preflight"] = (
+                self._resolve_authenticated_preflight()
+            )
+            self._write_resume()
         self.runtime.get_client(self.model, api_key=self.api_key)
         # ── Files API upload (once) ──
         try:
@@ -194,6 +211,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         # ── V1: Discovery ──
         raw_checkpoint = self.artifacts.get("checkpoints", {}).get("candidates_raw", {})
         candidates = raw_checkpoint.get("candidates")
+        v1_reused = isinstance(candidates, list)
         if not isinstance(candidates, list):
             discovery = self._request(
                 "v1_discovery", self._discovery_prompt(), self._discovery_schema(),
@@ -213,6 +231,18 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 )
             candidates = self._validate_candidates(discovery, duration)
             self._checkpoint("candidates_raw", {"candidates": candidates})
+        self.artifacts.setdefault("stage_status", {})["V1"] = {
+            "status": "COMPLETED_REUSED" if v1_reused else "COMPLETED",
+            "network_request_completed": not v1_reused,
+            "network_request_skipped": v1_reused,
+            "artifact_sha256": self._artifact_hash(candidates),
+            "payload_sha256": (
+                self.provenance[-1]["serialized_payload_sha256"]
+                if not v1_reused and self.provenance else None
+            ),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_resume()
         raw_count = len(candidates)
         if raw_count > min(self.max_raw_candidates, 200):
             self._checkpoint("final", {
@@ -251,6 +281,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 f"CANDIDATE_EXPLOSION: deduplicated={dedup_count} > max={self.max_deduplicated_candidates}"
             )
         self.artifacts["candidates"] = {"candidates": candidates}
+
+        if self.stop_after_stage == "V1":
+            self._checkpoint("final", {
+                "status": "STOPPED_AFTER_V1",
+                "resume_stage": "V2",
+            })
+            self._log_progress("[STOP] stop_after_stage=V1")
+            return []
 
         # ── V2: Classification ──
         classification_checkpoint = self.artifacts.get("checkpoints", {}).get("classifications", {})
@@ -424,6 +462,47 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self._last_progress_time = time.monotonic()
         # Safe console output (no secrets)
         print(message, flush=True)
+
+    @staticmethod
+    def _artifact_hash(value: Any) -> str:
+        return hashlib.sha256(
+            json.dumps(value, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+    def _audit_safe_slot(self, stage: str, counted_tokens: int) -> None:
+        state = self.runtime.scheduler.ledger_state(counted_tokens)
+        last_age = state["last_request_age_seconds"]
+        spacing_wait = max(
+            0.0,
+            self.min_request_spacing_seconds - (last_age or 0.0),
+        )
+        wait = max(state["next_eligible_wait_seconds"], spacing_wait)
+        audit = {
+            "stage": stage,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "configured_rpm": state["configured_rpm"],
+            "configured_tpm": state["configured_tpm"],
+            "configured_rpd": state["configured_rpd"],
+            "rolling_requests": state["rolling_requests"],
+            "rolling_tokens": state["rolling_tokens"],
+            "counted_tokens": counted_tokens,
+            "minimum_request_spacing_seconds": self.min_request_spacing_seconds,
+            "next_eligible_wait_seconds": wait,
+        }
+        self.artifacts["safe_slot_audit"] = audit
+        if wait <= 0:
+            return
+        self._log_progress(
+            f"[WAITING_FOR_SAFE_SLOT] stage={stage} wait={wait:.1f}s "
+            f"requests={state['rolling_requests']} tokens={state['rolling_tokens']}"
+        )
+        if wait > self.max_quota_wait_seconds:
+            raise ProviderError(
+                f"WAITING_FOR_SAFE_SLOT: stage={stage} wait={wait:.1f}s "
+                f"> max={self.max_quota_wait_seconds}s"
+            )
+        time.sleep(wait)
+        self._log_progress(f"[SAFE_SLOT_READY] stage={stage}")
 
     def _checkpoint(self, name: str, data: Dict[str, Any]) -> None:
         self.artifacts.setdefault("checkpoints", {})[name] = data
@@ -747,6 +826,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     raise ProviderError(
                         f"TOKEN_BUDGET_EXCEEDED: predicted={counted_tokens} > max={self.max_counted_input_tokens_per_job}"
                     )
+                if stage == "v1_discovery":
+                    self._audit_safe_slot(stage, counted_tokens or 0)
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
             except GeminiRateLimitError as exc:
@@ -810,6 +891,65 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         if (datetime.now(timezone.utc) - certified_at).total_seconds() > self.fps_certification_ttl_seconds:
             return None
         return certification
+
+    def _load_authenticated_preflight_certification(
+        self,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            certification = json.loads(
+                self.preflight_certification_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return None
+        if certification.get("model") != self.model:
+            return None
+        if certification.get("http_status") != 200:
+            return None
+        if (
+            certification.get("authentication_verdict")
+            != "AUTHENTICATED_PREFLIGHT_PASS"
+        ):
+            return None
+        credential_identity_hash = self._credential_identity_hash()
+        if certification.get("credential_identity_hash") != credential_identity_hash:
+            return None
+        try:
+            certified_at = datetime.fromisoformat(
+                str(certification["timestamp"]).replace("Z", "+00:00")
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (
+            datetime.now(timezone.utc) - certified_at
+        ).total_seconds() > self.preflight_certification_ttl_seconds:
+            return None
+        return certification
+
+    def _credential_identity_hash(self) -> Optional[str]:
+        key = self.preflight_credential_identity_hash
+        if key is None:
+            key = self.api_key or getattr(self.runtime._config, "api_key", None)
+        if not isinstance(key, str) or not key:
+            return None
+        if len(key) == 64 and all(char in "0123456789abcdef" for char in key):
+            return key
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+    def _resolve_authenticated_preflight(self) -> Dict[str, Any]:
+        certification = self._load_authenticated_preflight_certification()
+        if certification is None:
+            raise ProviderError("AUTHENTICATED_PREFLIGHT_NOT_REUSABLE")
+        return {
+            "status": "COMPLETED_REUSED",
+            "authenticated": True,
+            "network_request_skipped": True,
+            "original_http_status": certification["http_status"],
+            "certification_artifact_hash": hashlib.sha256(
+                self.preflight_certification_path.read_bytes()
+            ).hexdigest(),
+            "certified_at": certification["timestamp"],
+            "identity_validation": "MATCHED",
+        }
 
     def _resolve_fps_smoke_test(
         self, uri: str, mime_type: str, duration: float

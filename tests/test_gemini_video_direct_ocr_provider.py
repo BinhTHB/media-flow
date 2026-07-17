@@ -807,3 +807,149 @@ def test_fps_certification_identity_mismatch_fails(tmp_path, monkeypatch):
     with pytest.raises(ProviderError, match="FPS_CERTIFICATION_NOT_REUSABLE"):
         provider._resolve_fps_smoke_test("uri_123", "video/mp4", 10.0)
     assert smoke_called == []
+
+
+def test_authenticated_preflight_certification_reuse_skips_network(tmp_path):
+    import json
+    from datetime import datetime, timezone
+
+    key = "test-api-key-for-preflight-certification"
+    cert_path = tmp_path / "g5_authenticated_preflight.json"
+    cert_path.write_text(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "model": "gemini-3.1-flash-lite",
+        "http_status": 200,
+        "authentication_verdict": "AUTHENTICATED_PREFLIGHT_PASS",
+        "credential_identity_hash": hashlib.sha256(key.encode("utf-8")).hexdigest(),
+    }), encoding="utf-8")
+    provider = GeminiDirectVideoOCRProvider(
+        api_key=key,
+        preflight_certification_path=str(cert_path),
+    )
+
+    result = provider._resolve_authenticated_preflight()
+
+    assert result["status"] == "COMPLETED_REUSED"
+    assert result["network_request_skipped"] is True
+    assert result["original_http_status"] == 200
+
+
+def test_authenticated_preflight_certification_rejects_expired_or_mismatched_identity(
+    tmp_path,
+):
+    import json
+
+    cert_path = tmp_path / "g5_authenticated_preflight.json"
+    cert_path.write_text(json.dumps({
+        "timestamp": "2020-01-01T00:00:00+00:00",
+        "model": "gemini-3.1-flash-lite",
+        "http_status": 200,
+        "authentication_verdict": "AUTHENTICATED_PREFLIGHT_PASS",
+        "credential_identity_hash": "different",
+    }), encoding="utf-8")
+    provider = GeminiDirectVideoOCRProvider(
+        api_key="test-api-key-for-preflight-certification",
+        preflight_certification_path=str(cert_path),
+    )
+
+    with pytest.raises(ProviderError, match="AUTHENTICATED_PREFLIGHT_NOT_REUSABLE"):
+        provider._resolve_authenticated_preflight()
+
+
+def test_stop_after_v1_persists_checkpoint_and_resume_skips_v1(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    key = "test-api-key-for-v1-resume-proof"
+    video = tmp_path / "sample2.mp4"
+    video.write_bytes(b"sample2")
+    preflight = tmp_path / "preflight.json"
+    preflight.write_text(json.dumps({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "model": "gemini-3.1-flash-lite",
+        "http_status": 200,
+        "authentication_verdict": "AUTHENTICATED_PREFLIGHT_PASS",
+        "credential_identity_hash": hashlib.sha256(key.encode("utf-8")).hexdigest(),
+    }), encoding="utf-8")
+    fps = tmp_path / "fps.json"
+    fps.write_text(json.dumps({
+        "status": "PARTIAL",
+        "project_identity_hash": "fps-cert",
+        "model": "gemini-3.1-flash-lite",
+        "fps_low": 1,
+        "fps_high": 6,
+        "fps_low_count_tokens": 1838,
+        "fps_high_count_tokens": 9908,
+        "video_metadata_serialized": True,
+        "certified_at": datetime.now(timezone.utc).isoformat(),
+        "payload_schema_version": "gemini_direct_video_g5_v2",
+    }), encoding="utf-8")
+    provider = GeminiDirectVideoOCRProvider(
+        api_key=key,
+        preflight_certification_path=str(preflight),
+        fps_certification_path=str(fps),
+        resume_manifest_dir=str(tmp_path / "resume"),
+        stop_after_stage="V1",
+    )
+    monkeypatch.setattr(provider, "_probe_duration", lambda _: 10.0)
+    monkeypatch.setattr(provider, "_probe_fps", lambda _: 30.0)
+    monkeypatch.setattr(provider, "_probe_width", lambda _: 720)
+    monkeypatch.setattr(provider, "_probe_height", lambda _: 1280)
+    monkeypatch.setattr(
+        provider.runtime.file_manager,
+        "upload_file",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            uri="https://example.invalid/video", metadata={"state": "ACTIVE"}
+        ),
+    )
+    requested = []
+
+    def request(stage, *_args, **_kwargs):
+        requested.append(stage)
+        return {"candidates": [{
+            "candidate_id": "candidate",
+            "start_seconds": 0.0,
+            "end_seconds": 2.0,
+            "representative_box_2d": [1, 1, 2, 2],
+        }]}
+
+    monkeypatch.setattr(provider, "_request", request)
+    assert provider.extract_subtitles(video, "vi") == []
+    assert requested == ["v1_discovery"]
+    assert provider.debug_artifacts()["stage_status"]["V1"]["status"] == "COMPLETED"
+    assert provider.debug_artifacts()["checkpoints"]["final"]["resume_stage"] == "V2"
+
+    monkeypatch.setattr(
+        provider,
+        "_request",
+        lambda *_args, **_kwargs: pytest.fail("V1 network request was not skipped"),
+    )
+    assert provider.extract_subtitles(video, "vi") == []
+    status = provider.debug_artifacts()["stage_status"]["V1"]
+    assert status["status"] == "COMPLETED_REUSED"
+    assert status["network_request_skipped"] is True
+
+
+def test_safe_slot_audit_waits_before_generate(monkeypatch):
+    provider = GeminiDirectVideoOCRProvider(min_request_spacing_seconds=2.0)
+    monkeypatch.setattr(
+        provider.runtime.scheduler,
+        "ledger_state",
+        lambda _tokens: {
+            "configured_rpm": 1,
+            "configured_tpm": None,
+            "configured_rpd": None,
+            "rolling_requests": 1,
+            "rolling_tokens": 9908,
+            "last_request_age_seconds": 1.0,
+            "next_eligible_wait_seconds": 4.0,
+        },
+    )
+    sleeps = []
+    monkeypatch.setattr("time.sleep", sleeps.append)
+
+    provider._audit_safe_slot("v1_discovery", 100)
+
+    assert sleeps == [4.0]
+    assert provider.artifacts["safe_slot_audit"]["rolling_requests"] == 1
