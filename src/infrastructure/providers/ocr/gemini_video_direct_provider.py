@@ -526,11 +526,11 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
                 raise ProviderError("V1 candidate timing must be numbers.")
             start_f, end_f = float(start), float(end)
+            # Skip (do not kill the job) candidates with non-positive or
+            # out-of-range duration; Gemini occasionally emits degenerate
+            # intervals during discovery.
             if start_f < 0 or end_f <= start_f or end_f > duration:
-                raise ProviderError(
-                    f"V1 candidate {cid} timing {start_f}-{end_f} outside "
-                    f"valid range 0..{duration}."
-                )
+                continue
             ids.add(cid)
             box = self._validate_box(item.get("representative_box_2d"))
             result.append({
@@ -880,7 +880,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "punctuation, reading order, line breaks. "
             "Do not translate, classify, change timestamps, return a new bbox, "
             "or read text outside the supplied region. "
-            "Return REVIEW_REQUIRED if text is not stable or readable.\n"
+            "Return review_required if text is not stable or readable, and readable otherwise in the status field.\n"
             + json.dumps({"event": event, "bbox": geometry["representative_box_2d"]})
         )
 
