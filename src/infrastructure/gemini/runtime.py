@@ -55,7 +55,7 @@ class GeminiRuntime:
             enabled=self._config.cache_enabled,
         )
         self._usage = UsageRecorder()
-        self._files = FileManager()
+        self._files = FileManager(enabled=self._config.file_manager_enabled)
         self._clients: Dict[str, GeminiClient] = {}
 
     @classmethod
@@ -95,4 +95,6 @@ class GeminiRuntime:
                 validate_models=self._config.validate_models,
             )
             self._clients[cache_key] = client
+            if self._files.enabled and not self._files.supports_remote_upload:
+                self._files._client = client
         return client

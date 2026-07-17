@@ -84,6 +84,15 @@ class GeminiClient:
             return f"{self._base_url}/{model_path}?key={key}"
         return f"{self._base_url}/models?key={key}"
 
+    def _files_url(self, file_name: str = "") -> str:
+        key = self._resolve_api_key()
+        suffix = f"/{file_name.lstrip('/')}" if file_name else ""
+        return f"{GEMINI_API_BASE}/upload/{GEMINI_API_VERSION}/files{suffix}?key={key}"
+
+    def _file_resource_url(self, file_name: str) -> str:
+        key = self._resolve_api_key()
+        return f"{self._base_url}/{file_name.lstrip('/')}?key={key}"
+
     # --- generate content ---
     def generate_content(self, request: GeminiRequest, *, use_cache: bool = True) -> GeminiResponse:
         request.model = request.model or self._model
@@ -109,14 +118,22 @@ class GeminiClient:
                 self._record_usage(request, resp, cache_hit=True, retry_count=0)
                 return resp
 
-        body = self._build_body(request)
+        body = {"contents": request.contents}
+        if request.generation_config is not None:
+            body["generationConfig"] = request.generation_config
+        if request.system_instruction is not None:
+            body["systemInstruction"] = {"parts": [{"text": request.system_instruction}]}
+        if request.safety_settings is not None:
+            body["safetySettings"] = request.safety_settings
+
         data = json.dumps(body).encode("utf-8")
         headers = {"Content-Type": "application/json"}
 
         attempt = 0
+        tokens_estimate = request.predicted_tokens or self._estimate_tokens(data)
         if self._scheduler is not None:
             self._scheduler.acquire(
-                tokens=self._estimate_tokens(data), model=request.model,
+                tokens=tokens_estimate, model=request.model,
                 is_escalation=self._role == MODE_ROLE_ESCALATION,
             )
         try:
@@ -148,6 +165,58 @@ class GeminiClient:
         finally:
             if self._scheduler is not None:
                 self._scheduler.release()
+
+    def count_tokens(self, request: GeminiRequest) -> int:
+        """Count tokens for the exact generateContent payload."""
+        request.model = request.model or self._model
+        body = {"contents": request.contents}
+        if request.generation_config is not None:
+            body["generationConfig"] = request.generation_config
+        if request.system_instruction is not None:
+            body["systemInstruction"] = {"parts": [{"text": request.system_instruction}]}
+        if request.safety_settings is not None:
+            body["safetySettings"] = request.safety_settings
+
+        raw = self._transport.send(
+            "POST",
+            self._model_url("countTokens"),
+            headers={"Content-Type": "application/json"},
+            data=json.dumps(body).encode("utf-8"),
+            timeout=self._timeout,
+        )
+        if not isinstance(raw, dict) or not isinstance(raw.get("totalTokens"), int):
+            raise GeminiValidationError("Malformed Gemini countTokens response.")
+        return raw["totalTokens"]
+
+    def upload_file(self, path: str, *, mime_type: Optional[str] = None) -> Dict[str, Any]:
+        mime_type = mime_type or "application/octet-stream"
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        except OSError as exc:
+            raise GeminiValidationError(f"Could not read upload file '{path}': {exc}") from exc
+        return self._transport.send(
+            "POST",
+            self._files_url(),
+            headers={
+                "Content-Type": mime_type,
+                "X-Goog-Upload-Protocol": "raw",
+                "X-Goog-Upload-Header-Content-Length": str(len(data)),
+                "X-Goog-Upload-Header-Content-Type": mime_type,
+            },
+            data=data,
+            timeout=self._timeout,
+        )
+
+    def get_file(self, file_name: str) -> Dict[str, Any]:
+        return self._transport.send(
+            "GET", self._file_resource_url(file_name), headers={}, timeout=self._timeout
+        )
+
+    def delete_file(self, file_name: str) -> None:
+        self._transport.send(
+            "DELETE", self._file_resource_url(file_name), headers={}, timeout=self._timeout
+        )
 
     def _build_body(self, request: GeminiRequest) -> Dict[str, Any]:
         body: Dict[str, Any] = {"contents": request.contents}

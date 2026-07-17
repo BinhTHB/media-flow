@@ -132,6 +132,58 @@ class ConfigLoader:
                 "GEMINI_VALIDATE_MODELS",
                 gemini_overrides.get("validate_models", gemini_raw.get("validate_models", False)),
             ),
+            ocr_strategy=os.environ.get(
+                "GEMINI_OCR_STRATEGY",
+                gemini_overrides.get("ocr_strategy", gemini_raw.get("ocr_strategy", "gemini_video_direct")),
+            ),
+            direct_video_model=os.environ.get(
+                "GEMINI_DIRECT_VIDEO_MODEL",
+                gemini_overrides.get("direct_video_model", gemini_raw.get("direct_video_model", GeminiConfig.direct_video_model)),
+            ),
+            direct_video_discovery_fps=self._env_float(
+                "GEMINI_DIRECT_VIDEO_DISCOVERY_FPS",
+                gemini_overrides.get("direct_video_discovery_fps", gemini_raw.get("direct_video_discovery_fps", 6)),
+            ),
+            direct_video_classification_fps=self._env_float(
+                "GEMINI_DIRECT_VIDEO_CLASSIFICATION_FPS",
+                gemini_overrides.get("direct_video_classification_fps", gemini_raw.get("direct_video_classification_fps", 6)),
+            ),
+            direct_video_segmentation_fps=self._env_float(
+                "GEMINI_DIRECT_VIDEO_SEGMENTATION_FPS",
+                gemini_overrides.get("direct_video_segmentation_fps", gemini_raw.get("direct_video_segmentation_fps", 12)),
+            ),
+            direct_video_geometry_fps=self._env_float(
+                "GEMINI_DIRECT_VIDEO_GEOMETRY_FPS",
+                gemini_overrides.get("direct_video_geometry_fps", gemini_raw.get("direct_video_geometry_fps", 12)),
+            ),
+            direct_video_transcription_fps=self._env_float(
+                "GEMINI_DIRECT_VIDEO_TRANSCRIPTION_FPS",
+                gemini_overrides.get("direct_video_transcription_fps", gemini_raw.get("direct_video_transcription_fps", 12)),
+            ),
+            direct_video_media_resolution=os.environ.get(
+                "GEMINI_DIRECT_VIDEO_MEDIA_RESOLUTION",
+                gemini_overrides.get("direct_video_media_resolution", gemini_raw.get("direct_video_media_resolution", "high")),
+            ),
+            direct_video_clip_padding_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_CLIP_PADDING_SECONDS",
+                gemini_overrides.get("direct_video_clip_padding_seconds", gemini_raw.get("direct_video_clip_padding_seconds", 0.40)),
+            ),
+            direct_video_upload_mode=os.environ.get(
+                "GEMINI_DIRECT_VIDEO_UPLOAD_MODE",
+                gemini_overrides.get("direct_video_upload_mode", gemini_raw.get("direct_video_upload_mode", "files_api")),
+            ),
+            direct_video_tpm_safety_ratio=self._env_float(
+                "GEMINI_DIRECT_VIDEO_TPM_SAFETY_RATIO",
+                gemini_overrides.get("direct_video_tpm_safety_ratio", gemini_raw.get("direct_video_tpm_safety_ratio", 0.85)),
+            ),
+            direct_video_max_requests_per_job=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_REQUESTS_PER_JOB",
+                gemini_overrides.get("direct_video_max_requests_per_job", gemini_raw.get("direct_video_max_requests_per_job", 0)),
+            ),
+            direct_video_max_retry_per_stage=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_RETRY_PER_STAGE",
+                gemini_overrides.get("direct_video_max_retry_per_stage", gemini_raw.get("direct_video_max_retry_per_stage", 1)),
+            ),
         )
         fallback_raw = providers_raw.get("provider_fallback", {})
 
@@ -192,6 +244,14 @@ class ConfigLoader:
         if isinstance(default, int):
             return default
         return None
+
+    @staticmethod
+    def _env_float(name: str, default: Any) -> float:
+        value = os.environ.get(name)
+        try:
+            return float(value) if value is not None else float(default)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be a number.") from exc
 
     @staticmethod
     def _env_bool(name: str, default: Any) -> bool:

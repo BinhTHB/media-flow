@@ -49,6 +49,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
     from src.infrastructure.providers.ocr.gemini_multistage_ocr_provider import GeminiMultiStageOCRProvider
     from src.infrastructure.providers.ocr.gemini_vision_ocr_provider import GeminiVisionOCRProvider
+    from src.infrastructure.providers.ocr.gemini_video_direct_provider import GeminiDirectVideoOCRProvider
     from src.infrastructure.providers.speech.faster_whisper_speech_provider import FasterWhisperSpeechProvider
     from src.infrastructure.providers.speech.gemini_audio_speech_provider import GeminiAudioSpeechProvider
     from src.infrastructure.providers.speech.mock_speech_provider import MockSpeechProvider
@@ -184,6 +185,19 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         window_overlap=int(opt.get("window_overlap", 1)),
         prompt_version=opt.get("prompt_version", "gemini_ocr_multistage_v1"),
         schema_version=opt.get("schema_version", "ocr_multistage_v1"),
+    ))
+    registry.register("ocr", "gemini_video_direct", lambda opt: GeminiDirectVideoOCRProvider(
+        runtime=opt.get("runtime"),
+        model=opt.get("model", "gemini-3.1-flash-lite"),
+        api_key=opt.get("api_key"),
+        discovery_fps=float(opt.get("direct_video_discovery_fps", 6)),
+        classification_fps=float(opt.get("direct_video_classification_fps", 6)),
+        segmentation_fps=float(opt.get("direct_video_segmentation_fps", 12)),
+        geometry_fps=float(opt.get("direct_video_geometry_fps", 12)),
+        transcription_fps=float(opt.get("direct_video_transcription_fps", 12)),
+        media_resolution=opt.get("direct_video_media_resolution", "high"),
+        clip_padding_seconds=float(opt.get("direct_video_clip_padding_seconds", 0.40)),
+        max_retry_per_stage=int(opt.get("direct_video_max_retry_per_stage", 1)),
     ))
 
     # storage

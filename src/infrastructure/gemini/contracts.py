@@ -9,6 +9,7 @@ ESCALATION_MODEL = "gemini-3.5-flash"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com"
 GEMINI_API_VERSION = "v1beta"
 GENERATE_CONTENT_METHOD = "generateContent"
+COUNT_TOKENS_METHOD = "countTokens"
 
 MODEL_STAGE_STABLE = "STABLE"
 MODEL_STAGE_PREVIEW = "PREVIEW"
@@ -140,6 +141,7 @@ class GeminiRequest:
     source_kind: Optional[str] = None
     media_sha256: Optional[str] = None
     api_surface: Optional[str] = None
+    predicted_tokens: Optional[int] = None
     role: str = MODE_ROLE_PRIMARY
 
     def normalized_contents(self) -> Any:
@@ -206,6 +208,9 @@ class GeminiFileClient(Protocol):
         ...
 
     def delete_file(self, file_name: str) -> None:
+        ...
+
+    def get_file(self, file_name: str) -> Dict[str, Any]:
         ...
 
 

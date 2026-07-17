@@ -57,6 +57,19 @@ class GeminiConfig:
     cache_namespace: str = "shared"
     validate_models: bool = False
     scheduler: Dict[str, Any] = field(default_factory=dict)
+    ocr_strategy: str = "gemini_video_direct"
+    direct_video_model: str = "gemini-3.1-flash-lite"
+    direct_video_discovery_fps: float = 6
+    direct_video_classification_fps: float = 6
+    direct_video_segmentation_fps: float = 12
+    direct_video_geometry_fps: float = 12
+    direct_video_transcription_fps: float = 12
+    direct_video_media_resolution: str = "high"
+    direct_video_clip_padding_seconds: float = 0.40
+    direct_video_upload_mode: str = "files_api"
+    direct_video_tpm_safety_ratio: float = 0.85
+    direct_video_max_requests_per_job: int = 0
+    direct_video_max_retry_per_stage: int = 1
 
     def __post_init__(self) -> None:
         if self.model != "gemini-3.1-flash-lite" and self.primary_model == "gemini-3.1-flash-lite":
@@ -88,6 +101,14 @@ class GeminiConfig:
                 raise ValueError("Phase G.3 OCR stages require gemini-3.1-flash-lite.")
         if not self.cache_namespace.strip():
             raise ValueError("Gemini cache_namespace must not be empty.")
+        if self.direct_video_model != "gemini-3.1-flash-lite":
+            raise ValueError("G.5 direct video requires gemini-3.1-flash-lite.")
+        if any(fps <= 0 for fps in (
+            self.direct_video_discovery_fps, self.direct_video_classification_fps,
+            self.direct_video_segmentation_fps, self.direct_video_geometry_fps,
+            self.direct_video_transcription_fps,
+        )):
+            raise ValueError("Direct-video FPS values must be positive.")
 
 @dataclass
 class ProviderFallbackConfig:

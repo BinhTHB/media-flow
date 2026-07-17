@@ -13,6 +13,16 @@ providers:
   ocr:
     gemini_vision:
       model: gemini-3.1-flash-lite
+    gemini_video_direct:
+      model: gemini-3.1-flash-lite
+      direct_video_discovery_fps: 6
+      direct_video_classification_fps: 6
+      direct_video_segmentation_fps: 12
+      direct_video_geometry_fps: 12
+      direct_video_transcription_fps: 12
+      direct_video_media_resolution: high
+      direct_video_clip_padding_seconds: 0.40
+      direct_video_max_retry_per_stage: 1
     paddle:
       language: ch
       use_gpu: true

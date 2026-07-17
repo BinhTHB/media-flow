@@ -36,6 +36,7 @@ from src.application.services.final_render_manifest_service import FinalRenderMa
 from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.application.services.artifact_cache_validator import ArtifactCacheValidator
+from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
 
 class JobOrchestrator:
     def __init__(self, dependencies: OrchestratorDependencies):
@@ -100,6 +101,9 @@ class JobOrchestrator:
             "dropped_tokens": [],
         }
         controls = job.stage_controls
+        direct_video_ocr = isinstance(
+            self.detect_onscreen_text_uc.ocr_provider, VideoSubtitleOCRProvider
+        )
         timings = {}
         cached_narration_segments = None
         video_duration = self.get_video_duration_uc.execute(job.input_video)
@@ -160,10 +164,11 @@ class JobOrchestrator:
                     )
                 logger.done()
 
-            if (job.features.ocr and controls.run_ocr) or (
+            if ((job.features.ocr and controls.run_ocr and not direct_video_ocr) or (
                 job.features.subtitle_placement and job.features.subtitle
                 and controls.run_subtitle_region_detection
-            ):
+                and not direct_video_ocr
+            )):
                 frames = self.extract_frames_uc.execute(
                     job.input_video,
                     self.frame_interval,
@@ -175,8 +180,13 @@ class JobOrchestrator:
                 self.state_machine.transition(job, JobStatus.DETECTING_TEXT)
                 logger = FeatureLogger("OCR")
                 logger.start()
-                ocr_segments = self.detect_onscreen_text_uc.execute(frames)
+                ocr_segments = self.detect_onscreen_text_uc.execute(
+                    None if direct_video_ocr else frames,
+                    video_path=job.input_video if direct_video_ocr else None,
+                    source_language=job.source_language,
+                )
                 self._write_gemini_multistage_ocr_artifacts(job.job_id)
+                self._write_gemini_direct_video_ocr_artifacts(job.job_id)
                 raw_ocr = [s.to_dict() for s in ocr_segments]
                 self.artifact_provider.write_json(
                     os.path.join(
@@ -884,6 +894,35 @@ class JobOrchestrator:
                 os.path.join(self.artifact_provider.debug_dir(job_id), f"g3_{name}.json"),
                 artifact,
             )
+
+    def _write_gemini_direct_video_ocr_artifacts(self, job_id: str) -> None:
+        provider = self.detect_onscreen_text_uc.ocr_provider
+        if provider.__class__.__name__ != "GeminiDirectVideoOCRProvider":
+            return
+        names = {
+            "video_upload": "g5_video_upload.json",
+            "fps_smoke_test": "g5_fps_smoke_test.json",
+            "candidates": "g5_candidates.json",
+            "classifications": "g5_classifications.json",
+            "temporal_events": "g5_temporal_events.json",
+            "geometry": "g5_geometry.json",
+            "transcriptions": "g5_transcriptions.json",
+            "translations": "g5_translations.json",
+        }
+        for key, filename in names.items():
+            self.artifact_provider.write_json(
+                os.path.join(self.artifact_provider.debug_dir(job_id), filename),
+                provider.debug_artifacts().get(key, {}),
+            )
+        manifest = list(getattr(provider, "provenance", []))
+        self.artifact_provider.write_json(
+            os.path.join(self.artifact_provider.debug_dir(job_id), "g5_request_manifest.json"),
+            manifest,
+        )
+        self.artifact_provider.write_json(
+            os.path.join(self.artifact_provider.debug_dir(job_id), "g5_usage.json"),
+            [{"stage": item.get("stage"), "actual_usage": item.get("actual_usage", {})} for item in manifest],
+        )
 
     def _extract_provider_provenance(self, provider: object) -> dict:
         info = {

@@ -89,8 +89,13 @@ class ProviderFactory:
                     file_manager_enabled=getattr(
                         config,
                         "file_manager_enabled",
-                        options.get("file_manager_enabled", False),
+                        options.get("file_manager_enabled", True),
                     ),
+                    rpm_cap=getattr(config, "rpm_cap", options.get("rpm_cap", 60)),
+                    tpm_cap=getattr(config, "tpm_cap", options.get("tpm_cap")),
+                    rpd_cap=getattr(config, "rpd_cap", options.get("rpd_cap")),
+                    max_concurrency=getattr(config, "max_concurrency", options.get("max_concurrency", 1)),
+                    max_retries=getattr(config, "max_retries", options.get("max_retries", 3)),
                 )
             )
         return self._gemini_runtime
@@ -110,7 +115,7 @@ class ProviderFactory:
 
     def create_ocr_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         provider_name, options = self._merged_options("ocr", name, overrides)
-        if provider_name in {"gemini_vision", "gemini_vision_multistage"}:
+        if provider_name in {"gemini_vision", "gemini_vision_multistage", "gemini_video_direct"}:
             if provider_name == "gemini_vision_multistage" and self.gemini_config:
                 config = self.gemini_config
                 options.setdefault("stage_a_model", config.region_detection_model)
@@ -122,7 +127,7 @@ class ProviderFactory:
             options["runtime"] = self._get_gemini_runtime(options)
             primary = self.registry.create("ocr", provider_name, options)
             fallback_config = self.provider_fallback_config
-            if provider_name == "gemini_vision_multistage":
+            if provider_name in {"gemini_vision_multistage", "gemini_video_direct"}:
                 return primary
             if fallback_config and fallback_config.ocr_fallback_enabled:
                 fallback_name = fallback_config.ocr_fallback_provider
