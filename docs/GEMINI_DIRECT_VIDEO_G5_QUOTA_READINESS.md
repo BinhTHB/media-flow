@@ -19,6 +19,10 @@ Quota is scoped to the project/model, not individual API keys. The active quota 
 
 The recorded HTTP 429 includes `generate_content_free_tier_requests`, which is request-dimension evidence for `RATE_LIMIT_RPM`. A zero `Retry-After` is not permission to burst requests. The direct-video configuration carries minimum request spacing, jitter, unknown-429 backoff, and FPS certification TTL.
 
+## G.5.3 Correction
+
+The prior G.5.2 report must not treat HTTP 401 as a quota failure. With no valid environment credential, the correct result is `AUTHENTICATION_NOT_CONFIGURED`, `ACTIVE QUOTA IDENTIFIED: NOT_AVAILABLE`, and `QUOTA PREFLIGHT: NOT_EXECUTED_WITH_VALID_CREDENTIAL`. No unauthenticated request is sent to obtain a 401 response.
+
 ## FPS Certification
 
 The existing sample2 evidence recorded countTokens values of 1838 at FPS 1 and 9908 at FPS 6. This proves a count-token effect, but the stored run does not prove successful generation usage for both requests. `debug/g5_fps_certification.json` records this as `PARTIAL`.
