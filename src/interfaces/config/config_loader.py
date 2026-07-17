@@ -188,6 +188,10 @@ class ConfigLoader:
                 "GEMINI_DIRECT_VIDEO_MAX_RAW_CANDIDATES",
                 gemini_overrides.get("direct_video_max_raw_candidates", gemini_raw.get("direct_video_max_raw_candidates", 30)),
             ),
+            direct_video_max_parseable_raw_candidates=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_PARSEABLE_RAW_CANDIDATES",
+                gemini_overrides.get("direct_video_max_parseable_raw_candidates", gemini_raw.get("direct_video_max_parseable_raw_candidates", 200)),
+            ),
             direct_video_max_deduplicated_candidates=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_DEDUPLICATED_CANDIDATES",
                 gemini_overrides.get("direct_video_max_deduplicated_candidates", gemini_raw.get("direct_video_max_deduplicated_candidates", 10)),
@@ -219,6 +223,33 @@ class ConfigLoader:
             direct_video_job_timeout_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_JOB_TIMEOUT_SECONDS",
                 gemini_overrides.get("direct_video_job_timeout_seconds", gemini_raw.get("direct_video_job_timeout_seconds", 600)),
+            ),
+            direct_video_max_quota_wait_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_MAX_QUOTA_WAIT_SECONDS",
+                gemini_overrides.get("direct_video_max_quota_wait_seconds", gemini_raw.get("direct_video_max_quota_wait_seconds", 120)),
+            ),
+            direct_video_max_quota_retries_per_stage=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_QUOTA_RETRIES_PER_STAGE",
+                gemini_overrides.get("direct_video_max_quota_retries_per_stage", gemini_raw.get("direct_video_max_quota_retries_per_stage", 1)),
+            ),
+            direct_video_honor_retry_after=self._env_bool(
+                "GEMINI_DIRECT_VIDEO_HONOR_RETRY_AFTER",
+                gemini_overrides.get("direct_video_honor_retry_after", gemini_raw.get("direct_video_honor_retry_after", True)),
+            ),
+            direct_video_fail_fast_on_daily_quota=self._env_bool(
+                "GEMINI_DIRECT_VIDEO_FAIL_FAST_ON_DAILY_QUOTA",
+                gemini_overrides.get("direct_video_fail_fast_on_daily_quota", gemini_raw.get("direct_video_fail_fast_on_daily_quota", True)),
+            ),
+            direct_video_resume_enabled=self._env_bool(
+                "GEMINI_DIRECT_VIDEO_RESUME_ENABLED",
+                gemini_overrides.get("direct_video_resume_enabled", gemini_raw.get("direct_video_resume_enabled", True)),
+            ),
+            direct_video_checkpoint_schema_version=str(
+                gemini_overrides.get("direct_video_checkpoint_schema_version", gemini_raw.get("direct_video_checkpoint_schema_version", "1.0.0"))
+            ),
+            direct_video_batch_size=self._env_int(
+                "GEMINI_DIRECT_VIDEO_BATCH_SIZE",
+                gemini_overrides.get("direct_video_batch_size", gemini_raw.get("direct_video_batch_size", 10)),
             ),
         )
         fallback_raw = providers_raw.get("provider_fallback", {})

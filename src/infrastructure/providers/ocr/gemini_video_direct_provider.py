@@ -3,11 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import os
+import re
 import statistics
 import time
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
+from src.infrastructure.gemini.exceptions import GeminiRateLimitError, ProviderRateLimitError
 
 from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
 from src.domain.entities.segment import Segment
@@ -44,7 +48,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         prompt_version: str = "gemini_direct_video_g5_v1",
         schema_version: str = "gemini_direct_video_g5_v2",
         target_language: str = "vi",
-        max_raw_candidates: int = 30,
+        max_raw_candidates: int = 200,
+        max_parseable_raw_candidates: int = 200,
         max_deduplicated_candidates: int = 10,
         max_accepted_subtitle_tracks: int = 10,
         max_events_per_track: int = 20,
@@ -53,6 +58,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         stage_timeout_seconds: float = 360,
         no_progress_timeout_seconds: float = 300,
         job_timeout_seconds: float = 600,
+        max_quota_wait_seconds: float = 120,
+        max_quota_retries_per_stage: int = 1,
+        honor_retry_after: bool = True,
+        fail_fast_on_daily_quota: bool = True,
+        resume_enabled: bool = True,
+        checkpoint_schema_version: str = "1.0.0",
+        batch_size: int = 10,
+        resume_manifest_dir: Optional[str] = None,
     ) -> None:
         if model != "gemini-3.1-flash-lite":
             raise ValueError("G.5 direct-video OCR requires gemini-3.1-flash-lite.")
@@ -73,6 +86,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.schema_version = schema_version
         self.target_language = target_language
         self.max_raw_candidates = max_raw_candidates
+        self.max_parseable_raw_candidates = max_parseable_raw_candidates
         self.max_deduplicated_candidates = max_deduplicated_candidates
         self.max_accepted_subtitle_tracks = max_accepted_subtitle_tracks
         self.max_events_per_track = max_events_per_track
@@ -81,11 +95,22 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.stage_timeout_seconds = stage_timeout_seconds
         self.no_progress_timeout_seconds = no_progress_timeout_seconds
         self.job_timeout_seconds = job_timeout_seconds
+        self.max_quota_wait_seconds = max_quota_wait_seconds
+        self.max_quota_retries_per_stage = max_quota_retries_per_stage
+        self.honor_retry_after = honor_retry_after
+        self.fail_fast_on_daily_quota = fail_fast_on_daily_quota
+        self.resume_enabled = resume_enabled
+        self.checkpoint_schema_version = checkpoint_schema_version
+        self.batch_size = batch_size
+        self.resume_manifest_dir = Path(
+            resume_manifest_dir or "output/gemini_direct_video_resume"
+        )
         self.provenance: List[Dict[str, Any]] = []
         self.artifacts: Dict[str, Any] = {}
         self._render_eligibility: List[Dict[str, Any]] = []
         self._job_start_time: float = 0.0
         self._last_progress_time: float = 0.0
+        self._resume_manifest_path: Optional[Path] = None
 
     # ── public entry point ────────────────────────────────────────────────
 
@@ -111,6 +136,20 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "width": self._probe_width(str(video_path)),
             "height": self._probe_height(str(video_path)),
         }
+        self._resume_manifest_path = self._manifest_path(video_path)
+        resume = self._load_resume(video_path, duration)
+        if resume:
+            self.artifacts.update(resume.get("artifacts", {}))
+            self.provenance = list(resume.get("provenance", []))
+            self.artifacts["resume"] = {
+                "manifest_path": str(self._resume_manifest_path),
+                "resumed": True,
+            }
+        else:
+            self.artifacts["resume"] = {
+                "manifest_path": str(self._resume_manifest_path),
+                "resumed": False,
+            }
 
         self.runtime.get_client(self.model, api_key=self.api_key)
         # ── Files API upload (once) ──
@@ -132,22 +171,38 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         }
 
         # ── FPS smoke test (gate) ──
-        self.artifacts["fps_smoke_test"] = self._fps_smoke(
-            file_handle.uri, mime_type, duration
-        )
+        if "fps_smoke_test" not in self.artifacts:
+            self.artifacts["fps_smoke_test"] = self._fps_smoke(
+                file_handle.uri, mime_type, duration
+            )
+            self._write_resume()
         if not self.artifacts["fps_smoke_test"]["effective"]:
             raise ProviderError("VIDEO_METADATA_FPS_NOT_EFFECTIVE")
 
         # ── V1: Discovery ──
-        discovery = self._request(
-            "v1_discovery", self._discovery_prompt(), self._discovery_schema(),
-            file_handle.uri, mime_type, self.fps["discovery"],
-            duration_seconds=duration,
-        )
-        candidates = self._validate_candidates(discovery, duration)
-        self._checkpoint("candidates_raw", {"candidates": candidates})
+        raw_checkpoint = self.artifacts.get("checkpoints", {}).get("candidates_raw", {})
+        candidates = raw_checkpoint.get("candidates")
+        if not isinstance(candidates, list):
+            discovery = self._request(
+                "v1_discovery", self._discovery_prompt(), self._discovery_schema(),
+                file_handle.uri, mime_type, self.fps["discovery"],
+                duration_seconds=duration,
+            )
+            raw_payload = discovery.get("candidates")
+            if not isinstance(raw_payload, list):
+                raise ProviderError("V1 response requires candidates.")
+            raw_payload_count = len(raw_payload)
+            raw_cap = min(
+                self.max_raw_candidates, self.max_parseable_raw_candidates, 200
+            )
+            if raw_payload_count > raw_cap:
+                raise ProviderError(
+                    f"CANDIDATE_EXPLOSION: V1 raw={raw_payload_count} > max={raw_cap}"
+                )
+            candidates = self._validate_candidates(discovery, duration)
+            self._checkpoint("candidates_raw", {"candidates": candidates})
         raw_count = len(candidates)
-        if raw_count > self.max_raw_candidates:
+        if raw_count > min(self.max_raw_candidates, 200):
             self._checkpoint("final", {
                 "status": "CANDIDATE_EXPLOSION",
                 "reason": f"V1 raw candidates ({raw_count}) exceed max_raw_candidates ({self.max_raw_candidates})",
@@ -164,8 +219,13 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             return []
 
         # ── Deduplication ──
-        candidates, merge_groups = self._deduplicate_candidates(candidates, duration)
-        self._checkpoint("candidates_deduplicated", {"candidates": candidates, "merge_groups": merge_groups})
+        dedup_checkpoint = self.artifacts.get("checkpoints", {}).get("candidates_deduplicated", {})
+        merge_groups = dedup_checkpoint.get("merge_groups")
+        if isinstance(dedup_checkpoint.get("candidates"), list) and isinstance(merge_groups, list):
+            candidates = dedup_checkpoint["candidates"]
+        else:
+            candidates, merge_groups = self._deduplicate_candidates(candidates, duration)
+            self._checkpoint("candidates_deduplicated", {"candidates": candidates, "merge_groups": merge_groups})
         dedup_count = len(candidates)
         self._log_progress(f"[V1] valid={raw_count} deduplicated={dedup_count}")
         if dedup_count > self.max_deduplicated_candidates:
@@ -181,11 +241,15 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.artifacts["candidates"] = {"candidates": candidates}
 
         # ── V2: Classification ──
-        classifications = self._request(
-            "v2_classification", self._classification_prompt(candidates),
-            self._classification_schema(), file_handle.uri, mime_type,
-            self.fps["classification"], duration_seconds=duration,
-        )
+        classification_checkpoint = self.artifacts.get("checkpoints", {}).get("classifications", {})
+        classifications = classification_checkpoint.get("payload")
+        if not isinstance(classifications, dict):
+            classifications = self._request(
+                "v2_classification", self._classification_prompt(candidates),
+                self._classification_schema(), file_handle.uri, mime_type,
+                self.fps["classification"], duration_seconds=duration,
+            )
+            self._checkpoint("classifications", {"payload": classifications})
         accepted, rejected, review = self._validate_classifications(classifications, candidates)
         self.artifacts["classifications"] = {
             "classifications": classifications.get("classifications", [])
@@ -226,91 +290,86 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._final_artifact(candidates)
             return []
 
-        # ── V3: Temporal segmentation per accepted candidate ──
+        # ── V3: Temporal segmentation in same-stage batches ──
         events: List[Dict[str, Any]] = []
-        for idx, candidate in enumerate(accepted):
+        for idx, batch in enumerate(self._batches(accepted)):
             self._check_job_timeout()
-            clip_start = max(0.0, candidate["start_seconds"] - self.clip_padding_seconds)
-            clip_end = min(duration, candidate["end_seconds"] + self.clip_padding_seconds)
+            clip_start = max(0.0, min(item["start_seconds"] for item in batch) - self.clip_padding_seconds)
+            clip_end = min(duration, max(item["end_seconds"] for item in batch) + self.clip_padding_seconds)
             if clip_start >= clip_end:
                 continue
             payload = self._request(
-                "v3_segmentation", self._segmentation_prompt(candidate),
-                self._segmentation_schema(), file_handle.uri, mime_type,
+                "v3_segmentation", self._batch_prompt("segment", batch),
+                self._batch_schema("candidate_id", self._segmentation_schema()), file_handle.uri, mime_type,
                 self.fps["segmentation"], start=clip_start, end=clip_end,
                 duration_seconds=duration,
             )
-            cand_events = self._validate_events(
-                payload, candidate, clip_start, clip_end, duration
-            )
-            if len(cand_events) > self.max_events_per_track:
-                raise ProviderError(
-                    f"CANDIDATE_EXPLOSION: candidate {candidate['candidate_id']} events={len(cand_events)} > max={self.max_events_per_track}"
-                )
-            events.extend(cand_events)
-            self._log_progress(f"[V3] completed={idx+1}/{len(accepted)}")
+            responses = self._batch_responses(payload, batch, "candidate_id")
+            for candidate in batch:
+                cand_events = self._validate_events(responses[candidate["candidate_id"]], candidate, clip_start, clip_end, duration)
+                if len(cand_events) > self.max_events_per_track:
+                    raise ProviderError(f"CANDIDATE_EXPLOSION: candidate {candidate['candidate_id']} events={len(cand_events)} > max={self.max_events_per_track}")
+                events.extend(cand_events)
+            self._log_progress(f"[V3] completed={idx+1}/{len(self._batches(accepted))}")
         self.artifacts["temporal_events"] = {"events": events}
         self._checkpoint("temporal_events", {"events": events})
 
-        # ── V4: Geometry refinement per event ──
+        # ── V4: Geometry refinement in same-stage batches ──
         geometry: Dict[str, Dict[str, Any]] = {}
-        for idx, event in enumerate(events):
+        for idx, batch in enumerate(self._batches(events)):
             self._check_job_timeout()
-            clip_start = max(0.0, event["start_seconds_in_source"] - 0.25)
-            clip_end = min(duration, event["end_seconds_in_source"] + 0.25)
+            clip_start = max(0.0, min(item["start_seconds_in_source"] for item in batch) - 0.25)
+            clip_end = min(duration, max(item["end_seconds_in_source"] for item in batch) + 0.25)
             payload = self._request(
-                "v4_geometry", self._geometry_prompt(event),
-                self._geometry_schema(), file_handle.uri, mime_type,
+                "v4_geometry", self._batch_prompt("geometry", batch),
+                self._batch_schema("event_id", self._geometry_schema()), file_handle.uri, mime_type,
                 self.fps["geometry"], start=clip_start, end=clip_end,
                 duration_seconds=duration,
             )
-            geometry[event["event_id"]] = self._validate_geometry(payload, event)
-            self._log_progress(f"[V4] completed={idx+1}/{len(events)}")
+            responses = self._batch_responses(payload, batch, "event_id")
+            for event in batch:
+                geometry[event["event_id"]] = self._validate_geometry(responses[event["event_id"]], event)
+            self._log_progress(f"[V4] completed={idx+1}/{len(self._batches(events))}")
         self.artifacts["geometry"] = {"events": list(geometry.values())}
         self._checkpoint("geometry", {"events": list(geometry.values())})
 
-        # ── V5: Transcription per event ──
+        # ── V5: Transcription in same-stage batches ──
         transcriptions: List[Dict[str, Any]] = []
-        for idx, event in enumerate(events):
+        transcription_inputs = [{**event, "bbox": geometry[event["event_id"]]["representative_box_2d"]}
+                                for event in events if event["event_id"] in geometry]
+        for idx, batch in enumerate(self._batches(transcription_inputs)):
             self._check_job_timeout()
-            item = geometry.get(event["event_id"])
-            if item is None:
-                continue
-            clip_start = max(0.0, event["start_seconds_in_source"] - 0.25)
-            clip_end = min(duration, event["end_seconds_in_source"] + 0.25)
+            clip_start = max(0.0, min(item["start_seconds_in_source"] for item in batch) - 0.25)
+            clip_end = min(duration, max(item["end_seconds_in_source"] for item in batch) + 0.25)
             payload = self._request(
-                "v5_transcription", self._transcription_prompt(event, item),
-                self._transcription_schema(), file_handle.uri, mime_type,
+                "v5_transcription", self._batch_prompt("transcribe", batch),
+                self._batch_schema("event_id", self._transcription_schema()), file_handle.uri, mime_type,
                 self.fps["transcription"], start=clip_start, end=clip_end,
                 duration_seconds=duration,
             )
-            transcription = self._validate_transcription(payload, event)
-            if transcription is not None:
-                transcriptions.append({**event, **item, **transcription})
-            self._log_progress(f"[V5] completed={idx+1}/{len(events)}")
+            responses = self._batch_responses(payload, batch, "event_id")
+            for event in batch:
+                transcription = self._validate_transcription(responses[event["event_id"]], event)
+                if transcription is not None:
+                    transcriptions.append({**event, **geometry[event["event_id"]], **transcription})
+            self._log_progress(f"[V5] completed={idx+1}/{len(self._batches(transcription_inputs))}")
         self.artifacts["transcriptions"] = {"events": transcriptions}
         self._checkpoint("transcriptions", {"events": transcriptions})
 
-        # ── Translation ──
+        # ── Translation in same-stage batches ──
         translations: List[Dict[str, Any]] = []
-        for idx, item in enumerate(transcriptions):
+        for idx, batch in enumerate(self._batches(transcriptions)):
             self._check_job_timeout()
             payload = self._text_request(
                 "translation",
-                self._translation_prompt(
-                    item["event_id"], item["text_verbatim"], source_language
-                ),
-                self._translation_schema(),
+                self._batch_translation_prompt(batch, source_language),
+                self._batch_schema("event_id", self._translation_schema()),
             )
-            translated = self._validate_translation(
-                payload, item["event_id"], item["text_verbatim"]
-            )
-            translations.append({
-                **item,
-                "translated_text": translated or "",
-                "translation_status": "ok" if translated else "REVIEW_REQUIRED",
-            })
-            self._log_progress(f"[TR] completed={idx+1}/{len(transcriptions)}")
+            responses = self._batch_responses(payload, batch, "event_id")
+            for item in batch:
+                translated = self._validate_translation(responses[item["event_id"]], item["event_id"], item["text_verbatim"])
+                translations.append({**item, "translated_text": translated or "", "translation_status": "ok" if translated else "REVIEW_REQUIRED"})
+            self._log_progress(f"[TR] completed={idx+1}/{len(self._batches(transcriptions))}")
         self.artifacts["translations"] = {"events": translations}
         self._checkpoint("translations", {"events": translations})
 
@@ -357,6 +416,92 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     def _checkpoint(self, name: str, data: Dict[str, Any]) -> None:
         self.artifacts.setdefault("checkpoints", {})[name] = data
         self._last_progress_time = time.monotonic()
+        self._write_resume()
+
+    def _manifest_path(self, video_path: Path) -> Path:
+        digest = hashlib.sha256(video_path.read_bytes()).hexdigest()
+        return self.resume_manifest_dir / f"{digest}.json"
+
+    def _resume_identity(self, video_sha256: str, mime_type: str) -> Dict[str, Any]:
+        return {
+            "video_sha256": video_sha256,
+            "mime_type": mime_type,
+            "model": self.model,
+            "media_resolution": self.media_resolution,
+            "max_events_per_track": self.max_events_per_track,
+            "batch_size": self.batch_size,
+        }
+
+    def _identity_matches(
+        self, resume: Dict[str, Any], identity: Dict[str, Any]
+    ) -> bool:
+        stored = resume.get("identity")
+        if not isinstance(stored, dict):
+            return resume.get("video_sha256") == identity["video_sha256"]
+        return stored == identity
+
+    def _load_resume(self, video_path: Path, duration: float) -> Optional[Dict[str, Any]]:
+        if not self.resume_enabled or self._resume_manifest_path is None:
+            return None
+        try:
+            payload = json.loads(self._resume_manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        identity = self._resume_identity(
+            hashlib.sha256(video_path.read_bytes()).hexdigest(), "video/mp4"
+        )
+        if (
+            payload.get("checkpoint_schema_version") != self.checkpoint_schema_version
+            or not self._identity_matches(payload, identity)
+            or payload.get("duration_seconds") != duration
+            or not isinstance(payload.get("artifacts"), dict)
+        ):
+            return None
+        return payload
+
+    def _write_resume(self) -> None:
+        if not self.resume_enabled or self._resume_manifest_path is None:
+            return
+        self._resume_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "checkpoint_schema_version": self.checkpoint_schema_version,
+            "video_sha256": self._resume_manifest_path.stem,
+            "identity": self._resume_identity(
+                self._resume_manifest_path.stem,
+                self.artifacts.get("video_metadata", {}).get("mime_type", "video/mp4"),
+            ),
+            "duration_seconds": self.artifacts.get("video_metadata", {}).get("duration_seconds"),
+            "artifacts": self.artifacts,
+            "provenance": self.provenance,
+        }
+        temporary = self._resume_manifest_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(temporary, self._resume_manifest_path)
+
+    def _save_resume_manifest(
+        self,
+        video_sha256: str,
+        identity: Dict[str, Any],
+        duration: float,
+        checkpoints: Dict[str, Any],
+    ) -> None:
+        if self._resume_manifest_path is None:
+            raise ProviderError("Resume manifest path is not initialized.")
+        self._resume_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "checkpoint_schema_version": self.checkpoint_schema_version,
+            "video_sha256": video_sha256,
+            "identity": identity,
+            "duration_seconds": duration,
+            "artifacts": {
+                "checkpoints": checkpoints,
+                "video_metadata": {"duration_seconds": duration},
+            },
+            "provenance": self.provenance,
+        }
+        temporary = self._resume_manifest_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(temporary, self._resume_manifest_path)
 
     def _check_job_timeout(self) -> None:
         elapsed = time.monotonic() - self._job_start_time
@@ -370,7 +515,161 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 f"NO_PROGRESS_TIMEOUT: no_progress={no_progress:.1f}s > max={self.no_progress_timeout_seconds}s"
             )
 
+    # ── quota management ────────────────────────────────────────────────
+
+    def _execute_with_quota_management(
+        self, stage: str, request_fn: Callable[[], Any]
+    ) -> Any:
+        quota_attempts = 0
+        quota_wait_remaining = self.max_quota_wait_seconds
+        while True:
+            try:
+                return request_fn()
+            except ProviderRateLimitError:
+                raise
+            except GeminiRateLimitError as exc:
+                is_daily = self._is_daily_quota(exc)
+                if is_daily and self.fail_fast_on_daily_quota:
+                    raise ProviderRateLimitError(
+                        f"Daily quota limit exceeded for stage {stage}: {exc}",
+                        status_code=429,
+                        error_status=exc.error_status,
+                        error_code=exc.error_code,
+                        error_details=exc.error_details,
+                    ) from exc
+                if quota_attempts >= self.max_quota_retries_per_stage:
+                    raise ProviderRateLimitError(
+                        f"Stage {stage} exhausted quota retries ({self.max_quota_retries_per_stage}): {exc}",
+                    ) from exc
+                delay = 2.0 * (2.0 ** quota_attempts)
+                if self.honor_retry_after and exc.retry_after is not None:
+                    delay = max(delay, exc.retry_after)
+                if delay > quota_wait_remaining:
+                    raise ProviderRateLimitError(
+                        f"Stage {stage} bounded wait exceeded: waited {self.max_quota_wait_seconds - quota_wait_remaining:.1f}s, needs at least {delay:.1f}s more",
+                    ) from exc
+                self._log_progress(
+                    f"[QUOTA:{stage}] Rate limited. Waiting {delay:.1f}s (remaining budget {quota_wait_remaining - delay:.1f}s)..."
+                )
+                time.sleep(delay)
+                quota_wait_remaining -= delay
+                quota_attempts += 1
+
+    @staticmethod
+    def _is_daily_quota(exc: GeminiRateLimitError) -> bool:
+        msg = str(exc).lower()
+        if "per day" in msg or "daily" in msg:
+            return True
+        if exc.error_status == "RESOURCE_EXHAUSTED" and "rate limit" not in msg:
+            return True
+        return False
+
+    # ── resume manifest ─────────────────────────────────────────────────
+
+    def _save_legacy_resume_manifest(
+        self, video_path: Path, completed_stages: List[str]
+    ) -> None:
+        if not self.resume_enabled:
+            return
+        path = video_path.parent / f".{video_path.name}.resume_manifest.json"
+        data = {
+            "checkpoint_schema_version": self.checkpoint_schema_version,
+            "completed_stages": completed_stages,
+            "video_path": str(video_path.resolve()),
+            "video_size": video_path.stat().st_size,
+            "video_mtime": video_path.stat().st_mtime,
+            "artifacts": self.artifacts,
+            "provenance": self.provenance,
+        }
+        with open(path, "w", encoding="utf-8") as fp:
+            json.dump(data, fp, ensure_ascii=False, indent=2)
+
+    def _load_resume_manifest(self, video_path: Path) -> Optional[Dict[str, Any]]:
+        if not self.resume_enabled:
+            return None
+        path = video_path.parent / f".{video_path.name}.resume_manifest.json"
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        if data.get("checkpoint_schema_version") != self.checkpoint_schema_version:
+            self._log_progress(f"[RESUME] Schema version mismatch: manifest={data.get('checkpoint_schema_version')}, current={self.checkpoint_schema_version}")
+            return None
+        try:
+            manifest_video = Path(data.get("video_path", ""))
+            st = video_path.stat()
+        except (OSError, ValueError):
+            return None
+        if str(video_path.resolve()) != str(manifest_video.resolve()) or st.st_size != data.get("video_size") or st.st_mtime != data.get("video_mtime"):
+            self._log_progress(f"[RESUME] Video file changed since manifest.")
+            return None
+        return data
+
+    @staticmethod
+    def _chunk(items: List[Any], n: int) -> List[List[Any]]:
+        return [items[i:i + n] for i in range(0, len(items), n)]
+
     # ── request helpers ──────────────────────────────────────────────────
+
+    def _quota_wait(
+        self,
+        stage: str,
+        exc: GeminiRateLimitError,
+        retries: int,
+        payload_sha256: str,
+        counted_tokens: int,
+    ) -> None:
+        details = json.dumps(exc.error_details, ensure_ascii=False).lower()
+        message = f"{exc} {exc.error_status or ''} {details}".lower()
+        if any(marker in message for marker in ("per day", "daily", "requests_per_day", "rpd")):
+            classification = "RATE_LIMIT_RPD"
+            metric = "generate_content_free_tier_requests_per_day"
+        elif any(marker in message for marker in ("tokens", "tpm", "tokens_per_minute")):
+            classification = "RATE_LIMIT_TPM"
+            metric = "generate_content_free_tier_tokens"
+        elif any(marker in message for marker in ("requests", "rpm", "requests_per_minute")):
+            classification = "RATE_LIMIT_RPM"
+            metric = "generate_content_free_tier_requests"
+        elif any(marker in message for marker in ("overload", "unavailable", "503")):
+            classification = "TRANSIENT_SERVER_OVERLOAD"
+            metric = "server_overload"
+        else:
+            classification = "RESOURCE_EXHAUSTED_UNKNOWN"
+            metric = "unknown"
+        quota = {
+            "stage": stage,
+            "http_status": 429,
+            "quota_classification": classification,
+            "quota_metric": metric,
+            "retry_after_seconds": exc.retry_after,
+            "request_payload_sha256": payload_sha256,
+            "counted_input_tokens": counted_tokens,
+            "rolling_input_tokens": counted_tokens,
+            "attempt": retries + 1,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        self.artifacts["quota_failure"] = quota
+        self.artifacts.setdefault("quota_events", []).append(quota)
+        if classification == "RATE_LIMIT_RPD" and self.fail_fast_on_daily_quota:
+            raise ProviderError(f"DAILY_QUOTA_EXHAUSTED: stage={stage} (RESUMABLE)") from exc
+        if retries >= self.max_quota_retries_per_stage:
+            raise ProviderError(f"QUOTA_BLOCKED: stage={stage} (RESUMABLE)") from exc
+        wait = exc.retry_after if self.honor_retry_after else None
+        wait = 1.0 if wait is None else max(0.0, wait)
+        if wait > self.max_quota_wait_seconds:
+            raise ProviderError(
+                f"QUOTA_BLOCKED: stage={stage} bounded_wait={wait:.1f}s "
+                f"> max={self.max_quota_wait_seconds}s (RESUMABLE)"
+            ) from exc
+        quota["wait_seconds"] = wait
+        self._log_progress(
+            f"[WAITING_FOR_QUOTA] stage={stage} wait={wait:.1f}s "
+            f"class={classification}"
+        )
+        self._write_resume()
+        time.sleep(wait)
 
     def _request(
         self, stage: str, prompt: str, schema: Dict[str, Any], uri: str,
@@ -416,6 +715,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         max_attempts = 1 + self.max_retry_per_stage
 
         stage_start_time = time.monotonic()
+        quota_retries = 0
         for attempt in range(max_attempts):
             elapsed_stage = time.monotonic() - stage_start_time
             if elapsed_stage > self.stage_timeout_seconds:
@@ -437,6 +737,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     )
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
+            except GeminiRateLimitError as exc:
+                self._quota_wait(stage, exc, quota_retries, serialized_sha, counted_tokens)
+                quota_retries += 1
+                continue
             except GeminiError as exc:
                 last_error = f"Gemini direct-video {stage} attempt {attempt+1} failed: {exc}"
                 if attempt < max_attempts - 1:
@@ -512,6 +816,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         max_attempts = 1 + self.max_retry_per_stage
 
         stage_start_time = time.monotonic()
+        quota_retries = 0
         for attempt in range(max_attempts):
             elapsed_stage = time.monotonic() - stage_start_time
             if elapsed_stage > self.stage_timeout_seconds:
@@ -532,6 +837,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     )
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
+            except GeminiRateLimitError as exc:
+                self._quota_wait(stage, exc, quota_retries, serialized_sha, counted_tokens)
+                quota_retries += 1
+                continue
             except GeminiError as exc:
                 last_error = f"Gemini direct-video {stage} text attempt {attempt+1} failed: {exc}"
                 if attempt < max_attempts - 1:
@@ -567,6 +876,71 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         if resolution in {"HIGH", "MEDIA_RESOLUTION_HIGH"}:
             return "MEDIA_RESOLUTION_HIGH"
         raise ProviderError(f"Unsupported Gemini media resolution: {self.media_resolution!r}.")
+
+    def _batches(self, items: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+        return [list(items[index:index + self.batch_size]) for index in range(0, len(items), self.batch_size)]
+
+    @staticmethod
+    def _batch_schema(identifier: str, item_schema: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"results": {"type": "array", "items": item_schema}},
+            "required": ["results"],
+        }
+
+    @staticmethod
+    def _batch_responses(
+        payload: Dict[str, Any], expected: Sequence[Dict[str, Any]], identifier: str
+    ) -> Dict[str, Dict[str, Any]]:
+        results = payload.get("results")
+        if not isinstance(results, list):
+            results = []
+        response_map = {
+            item.get(identifier): item for item in results
+            if isinstance(item, dict) and isinstance(item.get(identifier), str)
+        }
+        for item in expected:
+            item_id = item[identifier]
+            if item_id in response_map:
+                continue
+            if identifier == "candidate_id":
+                response_map[item_id] = {"candidate_id": item_id, "events": []}
+            else:
+                response_map[item_id] = {
+                    "event_id": item_id,
+                    "representative_box_2d": item.get("representative_box_2d", [0, 0, 1, 1]),
+                    "box_keyframes": [],
+                    "text_verbatim": "",
+                    "language": "unknown",
+                    "script": "unknown",
+                    "status": "review_required",
+                    "translated_text": "",
+                    "is_source_copy": False,
+                    "reason_for_source_copy": "",
+                }
+        return response_map
+
+    @staticmethod
+    def _batch_prompt(stage: str, items: Sequence[Dict[str, Any]]) -> str:
+        instructions = {
+            "segment": "For every candidate, return stable subtitle events. Do not transcribe or translate.",
+            "geometry": "For every event, refine only the subtitle geometry. Do not transcribe or translate.",
+            "transcribe": "For every event, transcribe only text within its supplied bbox. Do not translate.",
+        }
+        return (
+            f"{instructions[stage]} Return one result for every supplied item in results. "
+            + json.dumps({"items": list(items)}, ensure_ascii=False)
+        )
+
+    def _batch_translation_prompt(
+        self, items: Sequence[Dict[str, Any]], source_language: Optional[str]
+    ) -> str:
+        return (
+            f"Translate every supplied event from {source_language or 'unknown'} to "
+            f"{self.target_language}. Return one result for every item. "
+            "Preserve source-copy only with its reason.\n"
+            + json.dumps({"items": list(items)}, ensure_ascii=False)
+        )
 
     @staticmethod
     def _canonical_body(request: GeminiRequest) -> Dict[str, Any]:
@@ -784,17 +1158,17 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     def _compute_request_plan(
         self, accepted: List[Dict[str, Any]], duration: float
     ) -> Dict[str, Any]:
-        """Compute conservative request plan before dispatching downstream."""
-        v3 = len(accepted)
+        """Compute quota-safe same-stage batch plan before downstream dispatch."""
+        v3 = max(1, len(self._batches(accepted))) if accepted else 0
         fixed = 4  # FPS smoke A/B, V1 discovery, V2 batch classification.
-        # Conservative upper bound: each track could have up to max_events_per_track events
-        max_events = v3 * self.max_events_per_track
-        v4 = max_events
-        v5 = max_events
-        tr = max_events
-        # Minimum assumes 1 event per track
-        min_total = fixed + v3 + v3 + v3 + v3
+        max_events = len(accepted) * self.max_events_per_track
+        v4 = v3
+        v5 = v3
+        tr = v3
+        min_total = fixed + v3 + v4 + v5 + tr
         return {
+            "old_plan_requests": fixed + len(accepted) * 4,
+            "batched": True,
             "fixed_requests": fixed,
             "v3_requests": v3,
             "v4_requests": v4,

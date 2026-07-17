@@ -39,9 +39,20 @@ class GeminiAPIError(GeminiError):
 class GeminiRateLimitError(GeminiAPIError):
     """Gemini API returned HTTP 429. Carries optional Retry-After hint (seconds)."""
 
-    def __init__(self, message: str, status_code: int = 429, retry_after: Optional[float] = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 429,
+        retry_after: Optional[float] = None,
+        error_status: Optional[str] = None,
+        error_code: Optional[int] = None,
+        error_details: Optional[Any] = None,
+    ) -> None:
         super().__init__(message, status_code=status_code)
         self.retry_after = retry_after
+        self.error_status = error_status
+        self.error_code = error_code
+        self.error_details = error_details
 
 
 class GeminiAuthError(GeminiAPIError):

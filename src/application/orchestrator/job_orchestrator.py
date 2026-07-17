@@ -909,6 +909,7 @@ class JobOrchestrator:
             "transcriptions": "g5_transcriptions.json",
             "translations": "g5_translations.json",
             "checkpoints": "g5_checkpoints.json",
+            "quota_failure": "g5_quota_failure.json",
         }
         for key, filename in names.items():
             self.artifact_provider.write_json(
@@ -924,6 +925,22 @@ class JobOrchestrator:
             os.path.join(self.artifact_provider.debug_dir(job_id), "g5_usage.json"),
             [{"stage": item.get("stage"), "actual_usage": item.get("actual_usage", {})} for item in manifest],
         )
+        plan = provider.debug_artifacts().get("checkpoints", {}).get("request_plan")
+        if plan:
+            self.artifact_provider.write_json(
+                os.path.join(
+                    self.artifact_provider.debug_dir(job_id), "g5_request_plan_v2.json"
+                ),
+                plan,
+            )
+        resume_path = getattr(provider, "_resume_manifest_path", None)
+        if resume_path and resume_path.is_file():
+            self.artifact_provider.write_json(
+                os.path.join(
+                    self.artifact_provider.debug_dir(job_id), "g5_resume_manifest.json"
+                ),
+                json.loads(resume_path.read_text(encoding="utf-8")),
+            )
 
     def _extract_provider_provenance(self, provider: object) -> dict:
         info = {

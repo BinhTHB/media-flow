@@ -1,4 +1,4 @@
-﻿# Gemini Direct-Video OCR candidate explosion fix (Phase G.5)
+# Gemini Direct-Video OCR candidate explosion fix (Phase G.5)
 
 ## 1. Bối cảnh
 Trong Phase G.5, frame-window OCR được thay thế bằng pipeline Gemini direct-video. Trong quá trình chạy live, một lỗi "candidate explosion" đã xảy ra trên video sample4 (duration ~24s) do:
@@ -16,7 +16,15 @@ Trong Phase G.5, frame-window OCR được thay thế bằng pipeline Gemini dir
 - **Checkpointing**: Ghi file checkpoint nguyên tử sau mỗi stage chính (`candidates_raw`, `candidates_deduplicated`, `request_plan`, v.v.) và đảm bảo chúng được lưu trữ khi bị gián đoạn hoặc kết thúc.
 
 ## 3. Kiểm thử
-Tất cả các trường hợp biên và logic nghiệp vụ đã được bao phủ bởi 29 unit tests chuyên biệt trong `tests/test_gemini_video_direct_ocr_provider.py` (tất cả đều Pass, không có regression trên 507 test suite).
+Các trường hợp biên và logic nghiệp vụ được bao phủ bởi 48 unit tests chuyên biệt trong `tests/test_gemini_video_direct_ocr_provider.py`.
 
 ## 4. Trạng thái Production Ready: NO
 Hệ thống đã sẵn sàng về mặt cấu trúc và thuật toán để chặn candidate explosion, tuy nhiên do giới hạn quota API Free Tier trên môi trường live hiện tại (gặp lỗi Rate Limit HTTP 429 sau vài requests ban đầu), pipeline chạy live chưa thể xác nhận E2E hoàn thành toàn bộ sample mà không bị nghẽn mạng. Cần nâng cấp quota API hoặc cấu hình retry dài hạn trước khi chuyển trạng thái sang Production Ready.
+
+
+## 12. Phân định nguyên nhân gốc rễ (Sự cố thực tế vs. Kết quả Audit)
+- **Sự cố thực tế (Observed Incident)**: Lỗi Rate Limit HTTP 429 xảy ra trên sample2 do gọi API quá dày đặc mà không có cơ chế dừng/chờ thông minh, khiến tiến trình bị gián đoạn và không thể hoàn thành. Lỗi CANDIDATE_EXPLOSION trên sample4 xảy ra do V1 Discovery trả về quá nhiều text candidates riêng lẻ (theo từng frame) mà không gom nhóm, vượt quá ngưỡng giới hạn request của stage tiếp theo.
+- **Kết quả Audit kỹ thuật (Audit Findings)**: Quá trình audit chỉ ra các thiếu sót sâu xa hơn trong hệ thống:
+  1. Không gom nhóm candidates (deduplication) một cách deterministic sau stage V1.
+  2. Xử lý tuần tự từng candidate ở các stage V3/V4/V5/Translation thay vì gom nhóm cùng stage (same-stage batching), làm số lượng request tăng theo cấp số nhân.
+  3. Thiếu cơ chế lưu manifest checkpoint và resume thông minh dẫn tới việc chạy lại từ đầu khi gặp lỗi 429, gây lãng phí quota nghiêm trọng.

@@ -23,6 +23,12 @@ providers:
       direct_video_media_resolution: high
       direct_video_clip_padding_seconds: 0.40
       direct_video_max_retry_per_stage: 1
+      direct_video_max_raw_candidates: 200
+      direct_video_max_parseable_raw_candidates: 200
+      direct_video_batch_size: 10
+      direct_video_max_quota_wait_seconds: 120
+      direct_video_max_quota_retries_per_stage: 1
+      direct_video_resume_enabled: true
     paddle:
       language: ch
       use_gpu: true

@@ -54,12 +54,26 @@ def run_sample(sample_id: str, source_language: str = "vi"):
         "final": "g5_final.json",
         "video_metadata": "g5_video_metadata.json",
         "checkpoints": "g5_checkpoints.json",
+        "quota_failure": "g5_quota_failure.json",
     }
     for key, fname in name_map.items():
         if key in arts:
             (out_dir / fname).write_text(
                 json.dumps(arts[key], ensure_ascii=False, indent=2), encoding="utf-8"
             )
+    
+    # Save g5_resume_manifest.json if it exists
+    resume_path = getattr(provider, "_resume_manifest_path", None)
+    if resume_path and resume_path.is_file():
+        import shutil
+        shutil.copy2(resume_path, out_dir / "g5_resume_manifest.json")
+        
+    # Save g5_request_plan_v2.json if it exists
+    plan = arts.get("checkpoints", {}).get("request_plan")
+    if plan:
+        (out_dir / "g5_request_plan_v2.json").write_text(
+            json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     (out_dir / "g5_request_manifest.json").write_text(
         json.dumps(provider.provenance, ensure_ascii=False, indent=2), encoding="utf-8"
     )

@@ -327,17 +327,50 @@ class _UrllibTransport:
 
 def _raise_for_http_error(exc: urllib.error.HTTPError) -> None:
     status = exc.code
+    error_status = None
+    error_code = None
+    error_details = None
+    retry_after = _parse_retry_after(exc)
     try:
         payload = json.loads(exc.read().decode("utf-8"))
-        msg = payload.get("error", {}).get("message", exc.reason) if isinstance(payload, dict) else str(exc.reason)
+        if isinstance(payload, dict):
+            err = payload.get("error", {})
+            if isinstance(err, dict):
+                msg = err.get("message", exc.reason)
+                error_status = err.get("status")
+                error_code = err.get("code")
+                error_details = err.get("details")
+                retry_after = retry_after or _parse_retry_delay_from_details(error_details)
+            else:
+                msg = str(payload)
+        else:
+            msg = str(exc.reason)
     except Exception:
         msg = str(exc.reason)
     if status == 429:
-        raise GeminiRateLimitError(f"Gemini rate limit exceeded (429): {msg}", status_code=429,
-                                   retry_after=_parse_retry_after(exc))
+        raise GeminiRateLimitError(
+            f"Gemini rate limit exceeded (429): {msg}", status_code=429,
+            retry_after=retry_after, error_status=error_status,
+            error_code=error_code, error_details=error_details,
+        )
     if status in (401, 403):
         raise GeminiAuthError(f"Gemini authentication failed ({status}): {msg}", status_code=status)
     raise GeminiAPIError(f"Gemini API error ({status}): {msg}", status_code=status)
+
+def _parse_retry_delay_from_details(details: Any) -> Optional[float]:
+    if not isinstance(details, list):
+        return None
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        if detail.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
+            delay = detail.get("retryDelay")
+            if isinstance(delay, str) and delay.endswith("s"):
+                try:
+                    return float(delay[:-1])
+                except ValueError:
+                    return None
+    return None
 
 
 def _parse_retry_after(exc: urllib.error.HTTPError) -> Optional[float]:
