@@ -169,14 +169,14 @@ class GeminiClient:
     def count_tokens(self, request: GeminiRequest) -> int:
         """Count tokens for the exact generateContent payload."""
         request.model = request.model or self._model
-        body = {"contents": request.contents}
-        if request.generation_config is not None:
-            body["generationConfig"] = request.generation_config
-        if request.system_instruction is not None:
-            body["systemInstruction"] = {"parts": [{"text": request.system_instruction}]}
-        if request.safety_settings is not None:
-            body["safetySettings"] = request.safety_settings
+        model_name = request.model
+        if not model_name.startswith("models/"):
+            model_name = f"models/{model_name}"
 
+        g_body = self._build_body(request)
+        g_body["model"] = model_name
+
+        body = {"generateContentRequest": g_body}
         raw = self._transport.send(
             "POST",
             self._model_url("countTokens"),

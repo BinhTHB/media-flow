@@ -152,7 +152,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 self.fps["segmentation"], start=clip_start, end=clip_end,
                 duration_seconds=duration,
             )
-            events.extend(self._validate_events(payload, candidate, clip_start))
+            events.extend(self._validate_events(payload, candidate, clip_start, duration))
         self.artifacts["temporal_events"] = {"events": events}
 
         # ── V4: Geometry refinement per event ──
@@ -271,7 +271,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             contents=[{"parts": [{"text": prompt}, part]}], model=self.model,
             generation_config={"responseMimeType": "application/json",
                                "responseSchema": schema,
-                               "mediaResolution": self.media_resolution},
+                               "mediaResolution": self._media_resolution_enum()},
             system_instruction=prompt, prompt_version=self.prompt_version,
             schema_version=self.schema_version, source_kind=stage,
             media_sha256=hashlib.sha256(uri.encode("utf-8")).hexdigest(),
@@ -404,6 +404,16 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             return response_payload
 
         raise ProviderError(last_error or f"Gemini direct-video {stage} text exhausted retries.")
+
+    def _media_resolution_enum(self) -> str:
+        resolution = self.media_resolution.upper()
+        if resolution in {"LOW", "MEDIA_RESOLUTION_LOW"}:
+            return "MEDIA_RESOLUTION_LOW"
+        if resolution in {"MEDIUM", "MEDIA_RESOLUTION_MEDIUM"}:
+            return "MEDIA_RESOLUTION_MEDIUM"
+        if resolution in {"HIGH", "MEDIA_RESOLUTION_HIGH"}:
+            return "MEDIA_RESOLUTION_HIGH"
+        raise ProviderError(f"Unsupported Gemini media resolution: {self.media_resolution!r}.")
 
     @staticmethod
     def _canonical_body(request: GeminiRequest) -> Dict[str, Any]:
@@ -571,7 +581,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
 
     @staticmethod
     def _validate_events(
-        payload: Dict[str, Any], candidate: Dict[str, Any], clip_start: float
+        payload: Dict[str, Any], candidate: Dict[str, Any], clip_start: float, duration: float
     ) -> List[Dict[str, Any]]:
         if payload.get("candidate_id") != candidate["candidate_id"]:
             raise ProviderError("V3 response candidate_id mismatch.")
@@ -579,6 +589,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         if not isinstance(entries, list):
             raise ProviderError("V3 response must contain events list.")
         clip_duration = float(candidate["end_seconds"]) - float(candidate["start_seconds"])
+        clip_end = clip_start + clip_duration
         result: List[Dict[str, Any]] = []
         seen: set[str] = set()
         for item in entries:
@@ -593,30 +604,34 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             if not isinstance(rel_start, (int, float)) or not isinstance(rel_end, (int, float)):
                 raise ProviderError("V3 event timing is invalid.")
             rs, re = float(rel_start), float(rel_end)
-            # If model returned values clearly within the candidate interval,
-            # treat them as source-absolute. Otherwise assume clip-relative
-            # and add clip_start to derive absolute source timeline.
-            is_source_absolute = (
-                candidate["start_seconds"] - 0.001 <= rs
-                and re <= candidate["end_seconds"] + 0.001
-            )
-            if is_source_absolute:
+
+            # Resolve source-absolute timeline. Gemini may return either:
+            #  (A) times already on the source-absolute timeline (fit inside clip), or
+            #  (B) times relative to the served clip (fit inside [0, clip_duration]).
+            # Otherwise, treat as source-absolute and clamp defensively.
+            if 0.0 <= rs and re <= clip_end + 0.001:
                 absolute_start = rs
                 absolute_end = re
-                clip_relative_start = rs - clip_start
-                clip_relative_end = re - clip_start
+            elif 0.0 <= rs <= clip_duration + 0.001 and 0.0 <= re <= clip_duration + 0.001:
+                absolute_start = clip_start + rs
+                absolute_end = clip_start + re
             else:
-                clip_relative_start = max(0.0, rs)
-                clip_relative_end = min(clip_duration, re)
-                absolute_start = clip_start + clip_relative_start
-                absolute_end = clip_start + clip_relative_end
+                absolute_start = min(max(0.0, rs), duration)
+                absolute_end = min(max(0.0, re), duration)
+
+            # Skip (do not kill the job) events with non-positive or out-of-range
+            # duration; model occasionally emits degenerate intervals.
             if absolute_end <= absolute_start:
-                raise ProviderError(f"V3 event {event_id} has zero or negative duration.")
-            if absolute_start < 0 or absolute_end > candidate["end_seconds"] + 0.001:
-                raise ProviderError(f"V3 event {event_id} timing escapes clip range.")
+                continue
+            if absolute_start < -0.001 or absolute_end > duration + 0.001:
+                continue
+
+            clip_relative_start = absolute_start - clip_start
+            clip_relative_end = absolute_end - clip_start
             result.append({
                 **item,
                 "candidate_id": candidate["candidate_id"],
+                "representative_box_2d": candidate["representative_box_2d"],
                 "clip_source_start": clip_start,
                 "clip_relative_start": clip_relative_start,
                 "clip_relative_end": clip_relative_end,
@@ -634,15 +649,36 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     ) -> Dict[str, Any]:
         if payload.get("event_id") != event["event_id"]:
             raise ProviderError("V4 event ID mismatch.")
-        box = self._validate_box(payload.get("representative_box_2d"))
+        try:
+            box = self._validate_box(payload.get("representative_box_2d"))
+        except ProviderError:
+            box = event.get("representative_box_2d")
+
         # safety: no oversized cover
         area = self._box_area(box)
         if area > 450000:
-            raise ProviderError("V4 geometry exceeds cover safety policy.")
+            box = event.get("representative_box_2d")
+
+        valid_keyframes = []
+        for kf in payload.get("box_keyframes", []):
+            if not isinstance(kf, dict):
+                continue
+            try:
+                k_box = self._validate_box(kf.get("box_2d"))
+                t = kf.get("timestamp_seconds")
+                if not isinstance(t, (int, float)):
+                    continue
+                valid_keyframes.append({
+                    "box_2d": k_box,
+                    "timestamp_seconds": float(t)
+                })
+            except ProviderError:
+                continue
+
         return {
             "event_id": event["event_id"],
             "representative_box_2d": box,
-            "box_keyframes": payload.get("box_keyframes", []),
+            "box_keyframes": valid_keyframes,
         }
 
     # ── V5 validation ───────────────────────────────────────────────────
@@ -898,8 +934,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                         "type": "object",
                         "properties": {
                             "candidate_id": {"type": "string"},
-                            "classification": {"type": "string"},
-                            "decision": {"type": "string"},
+                            "classification": {"type": "string", "enum": ["dialogue_subtitle", "narration_subtitle", "title_card", "scene_text", "watermark", "logo", "user_interface", "warning_overlay", "account_or_channel_label", "other", "review_required"]},
+                            "decision": {"type": "string", "enum": ["accepted", "rejected"]},
                         },
                         "required": ["candidate_id", "classification", "decision"],
                     },

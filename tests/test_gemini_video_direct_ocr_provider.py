@@ -54,6 +54,12 @@ def test_direct_video_request_serializes_video_metadata_fps(monkeypatch):
     assert provider.provenance[-1]["serialized_payload_sha256"]
 
 
+def test_direct_video_media_resolution_uses_gemini_rest_enum():
+    provider = GeminiDirectVideoOCRProvider(media_resolution="high")
+
+    assert provider._media_resolution_enum() == "MEDIA_RESOLUTION_HIGH"
+
+
 def test_direct_video_clamps_clip_offsets_and_preserves_source_clip_mapping(monkeypatch):
     provider = GeminiDirectVideoOCRProvider(clip_padding_seconds=0.4)
     captured = {}
@@ -170,7 +176,13 @@ def test_count_tokens_and_generate_use_identical_canonical_body(monkeypatch):
     )
     client.count_tokens(request)
     client.generate_content(request, use_cache=False)
-    assert payloads[0][1] == payloads[1][1]
+
+    import json
+    count_body = json.loads(payloads[0][1])
+    generate_body = json.loads(payloads[1][1])
+    counted_request = count_body["generateContentRequest"]
+    assert counted_request.pop("model") == "models/gemini-3.1-flash-lite"
+    assert counted_request == generate_body
 
 
 def test_direct_video_port_rejects_missing_video_path():
