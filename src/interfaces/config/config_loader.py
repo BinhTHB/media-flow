@@ -184,6 +184,42 @@ class ConfigLoader:
                 "GEMINI_DIRECT_VIDEO_MAX_RETRY_PER_STAGE",
                 gemini_overrides.get("direct_video_max_retry_per_stage", gemini_raw.get("direct_video_max_retry_per_stage", 1)),
             ),
+            direct_video_max_raw_candidates=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_RAW_CANDIDATES",
+                gemini_overrides.get("direct_video_max_raw_candidates", gemini_raw.get("direct_video_max_raw_candidates", 30)),
+            ),
+            direct_video_max_deduplicated_candidates=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_DEDUPLICATED_CANDIDATES",
+                gemini_overrides.get("direct_video_max_deduplicated_candidates", gemini_raw.get("direct_video_max_deduplicated_candidates", 10)),
+            ),
+            direct_video_max_accepted_subtitle_tracks=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_ACCEPTED_SUBTITLE_TRACKS",
+                gemini_overrides.get("direct_video_max_accepted_subtitle_tracks", gemini_raw.get("direct_video_max_accepted_subtitle_tracks", 10)),
+            ),
+            direct_video_max_events_per_track=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_EVENTS_PER_TRACK",
+                gemini_overrides.get("direct_video_max_events_per_track", gemini_raw.get("direct_video_max_events_per_track", 20)),
+            ),
+            direct_video_max_total_stage_requests=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_TOTAL_STAGE_REQUESTS",
+                gemini_overrides.get("direct_video_max_total_stage_requests", gemini_raw.get("direct_video_max_total_stage_requests", 100)),
+            ),
+            direct_video_max_counted_input_tokens_per_job=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_COUNTED_INPUT_TOKENS_PER_JOB",
+                gemini_overrides.get("direct_video_max_counted_input_tokens_per_job", gemini_raw.get("direct_video_max_counted_input_tokens_per_job", 500000)),
+            ),
+            direct_video_stage_timeout_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_STAGE_TIMEOUT_SECONDS",
+                gemini_overrides.get("direct_video_stage_timeout_seconds", gemini_raw.get("direct_video_stage_timeout_seconds", 360)),
+            ),
+            direct_video_no_progress_timeout_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_NO_PROGRESS_TIMEOUT_SECONDS",
+                gemini_overrides.get("direct_video_no_progress_timeout_seconds", gemini_raw.get("direct_video_no_progress_timeout_seconds", 300)),
+            ),
+            direct_video_job_timeout_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_JOB_TIMEOUT_SECONDS",
+                gemini_overrides.get("direct_video_job_timeout_seconds", gemini_raw.get("direct_video_job_timeout_seconds", 600)),
+            ),
         )
         fallback_raw = providers_raw.get("provider_fallback", {})
 

@@ -908,6 +908,7 @@ class JobOrchestrator:
             "geometry": "g5_geometry.json",
             "transcriptions": "g5_transcriptions.json",
             "translations": "g5_translations.json",
+            "checkpoints": "g5_checkpoints.json",
         }
         for key, filename in names.items():
             self.artifact_provider.write_json(

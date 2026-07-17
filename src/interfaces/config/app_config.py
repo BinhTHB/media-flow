@@ -70,6 +70,15 @@ class GeminiConfig:
     direct_video_tpm_safety_ratio: float = 0.85
     direct_video_max_requests_per_job: int = 0
     direct_video_max_retry_per_stage: int = 1
+    direct_video_max_raw_candidates: int = 30
+    direct_video_max_deduplicated_candidates: int = 10
+    direct_video_max_accepted_subtitle_tracks: int = 10
+    direct_video_max_events_per_track: int = 20
+    direct_video_max_total_stage_requests: int = 100
+    direct_video_max_counted_input_tokens_per_job: int = 500000
+    direct_video_stage_timeout_seconds: float = 360
+    direct_video_no_progress_timeout_seconds: float = 300
+    direct_video_job_timeout_seconds: float = 600
 
     def __post_init__(self) -> None:
         if self.model != "gemini-3.1-flash-lite" and self.primary_model == "gemini-3.1-flash-lite":
@@ -109,6 +118,24 @@ class GeminiConfig:
             self.direct_video_transcription_fps,
         )):
             raise ValueError("Direct-video FPS values must be positive.")
+        if self.direct_video_max_raw_candidates < 1:
+            raise ValueError("direct_video_max_raw_candidates must be at least 1.")
+        if self.direct_video_max_deduplicated_candidates < 1:
+            raise ValueError("direct_video_max_deduplicated_candidates must be at least 1.")
+        if self.direct_video_max_accepted_subtitle_tracks < 1:
+            raise ValueError("direct_video_max_accepted_subtitle_tracks must be at least 1.")
+        if self.direct_video_max_events_per_track < 1:
+            raise ValueError("direct_video_max_events_per_track must be at least 1.")
+        if self.direct_video_max_total_stage_requests < 1:
+            raise ValueError("direct_video_max_total_stage_requests must be at least 1.")
+        if self.direct_video_max_counted_input_tokens_per_job < 1:
+            raise ValueError("direct_video_max_counted_input_tokens_per_job must be at least 1.")
+        if self.direct_video_stage_timeout_seconds <= 0:
+            raise ValueError("direct_video_stage_timeout_seconds must be positive.")
+        if self.direct_video_no_progress_timeout_seconds <= 0:
+            raise ValueError("direct_video_no_progress_timeout_seconds must be positive.")
+        if self.direct_video_job_timeout_seconds <= 0:
+            raise ValueError("direct_video_job_timeout_seconds must be positive.")
 
 @dataclass
 class ProviderFallbackConfig:

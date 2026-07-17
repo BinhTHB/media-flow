@@ -53,6 +53,7 @@ def run_sample(sample_id: str, source_language: str = "vi"):
         "render_eligibility": "g5_render_eligibility.json",
         "final": "g5_final.json",
         "video_metadata": "g5_video_metadata.json",
+        "checkpoints": "g5_checkpoints.json",
     }
     for key, fname in name_map.items():
         if key in arts:

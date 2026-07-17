@@ -198,6 +198,15 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         media_resolution=opt.get("direct_video_media_resolution", "high"),
         clip_padding_seconds=float(opt.get("direct_video_clip_padding_seconds", 0.40)),
         max_retry_per_stage=int(opt.get("direct_video_max_retry_per_stage", 1)),
+        max_raw_candidates=int(opt.get("direct_video_max_raw_candidates", 30)),
+        max_deduplicated_candidates=int(opt.get("direct_video_max_deduplicated_candidates", 10)),
+        max_accepted_subtitle_tracks=int(opt.get("direct_video_max_accepted_subtitle_tracks", 10)),
+        max_events_per_track=int(opt.get("direct_video_max_events_per_track", 20)),
+        max_total_stage_requests=int(opt.get("direct_video_max_total_stage_requests", 100)),
+        max_counted_input_tokens_per_job=int(opt.get("direct_video_max_counted_input_tokens_per_job", 500000)),
+        stage_timeout_seconds=float(opt.get("direct_video_stage_timeout_seconds", 360)),
+        no_progress_timeout_seconds=float(opt.get("direct_video_no_progress_timeout_seconds", 300)),
+        job_timeout_seconds=float(opt.get("direct_video_job_timeout_seconds", 600)),
     ))
 
     # storage

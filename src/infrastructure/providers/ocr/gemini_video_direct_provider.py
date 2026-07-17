@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import statistics
 import time
 import unicodedata
 from pathlib import Path
@@ -43,6 +44,15 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         prompt_version: str = "gemini_direct_video_g5_v1",
         schema_version: str = "gemini_direct_video_g5_v2",
         target_language: str = "vi",
+        max_raw_candidates: int = 30,
+        max_deduplicated_candidates: int = 10,
+        max_accepted_subtitle_tracks: int = 10,
+        max_events_per_track: int = 20,
+        max_total_stage_requests: int = 100,
+        max_counted_input_tokens_per_job: int = 500000,
+        stage_timeout_seconds: float = 360,
+        no_progress_timeout_seconds: float = 300,
+        job_timeout_seconds: float = 600,
     ) -> None:
         if model != "gemini-3.1-flash-lite":
             raise ValueError("G.5 direct-video OCR requires gemini-3.1-flash-lite.")
@@ -62,9 +72,20 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.prompt_version = prompt_version
         self.schema_version = schema_version
         self.target_language = target_language
+        self.max_raw_candidates = max_raw_candidates
+        self.max_deduplicated_candidates = max_deduplicated_candidates
+        self.max_accepted_subtitle_tracks = max_accepted_subtitle_tracks
+        self.max_events_per_track = max_events_per_track
+        self.max_total_stage_requests = max_total_stage_requests
+        self.max_counted_input_tokens_per_job = max_counted_input_tokens_per_job
+        self.stage_timeout_seconds = stage_timeout_seconds
+        self.no_progress_timeout_seconds = no_progress_timeout_seconds
+        self.job_timeout_seconds = job_timeout_seconds
         self.provenance: List[Dict[str, Any]] = []
         self.artifacts: Dict[str, Any] = {}
         self._render_eligibility: List[Dict[str, Any]] = []
+        self._job_start_time: float = 0.0
+        self._last_progress_time: float = 0.0
 
     # ── public entry point ────────────────────────────────────────────────
 
@@ -74,6 +95,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         if not video_path.is_file():
             raise ProviderError(f"Direct-video OCR input does not exist: '{video_path}'.")
         self._reset()
+        self._job_start_time = time.monotonic()
+        self._last_progress_time = self._job_start_time
         mime_type = mimetypes.guess_type(str(video_path))[0] or "video/mp4"
         if mime_type != "video/mp4":
             raise ProviderError("G.5 direct-video OCR currently requires video/mp4.")
@@ -122,11 +145,40 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             duration_seconds=duration,
         )
         candidates = self._validate_candidates(discovery, duration)
-        self.artifacts["candidates"] = {"candidates": candidates}
+        self._checkpoint("candidates_raw", {"candidates": candidates})
+        raw_count = len(candidates)
+        if raw_count > self.max_raw_candidates:
+            self._checkpoint("final", {
+                "status": "CANDIDATE_EXPLOSION",
+                "reason": f"V1 raw candidates ({raw_count}) exceed max_raw_candidates ({self.max_raw_candidates})",
+                "v1_raw_count": raw_count,
+            })
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: V1 raw={raw_count} > max={self.max_raw_candidates}"
+            )
+        self._log_progress(f"[V1] raw={raw_count}")
+
         if not candidates:
             self._empty_artifacts()
             self._final_artifact(candidates)
             return []
+
+        # ── Deduplication ──
+        candidates, merge_groups = self._deduplicate_candidates(candidates, duration)
+        self._checkpoint("candidates_deduplicated", {"candidates": candidates, "merge_groups": merge_groups})
+        dedup_count = len(candidates)
+        self._log_progress(f"[V1] valid={raw_count} deduplicated={dedup_count}")
+        if dedup_count > self.max_deduplicated_candidates:
+            self._checkpoint("final", {
+                "status": "CANDIDATE_EXPLOSION",
+                "reason": f"Deduplicated candidates ({dedup_count}) exceed max ({self.max_deduplicated_candidates})",
+                "v1_raw_count": raw_count,
+                "deduplicated_count": dedup_count,
+            })
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: deduplicated={dedup_count} > max={self.max_deduplicated_candidates}"
+            )
+        self.artifacts["candidates"] = {"candidates": candidates}
 
         # ── V2: Classification ──
         classifications = self._request(
@@ -134,14 +186,50 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._classification_schema(), file_handle.uri, mime_type,
             self.fps["classification"], duration_seconds=duration,
         )
-        accepted = self._validate_classifications(classifications, candidates)
+        accepted, rejected, review = self._validate_classifications(classifications, candidates)
         self.artifacts["classifications"] = {
             "classifications": classifications.get("classifications", [])
         }
+        self._log_progress(
+            f"[V2] accepted={len(accepted)} rejected={len(rejected)} review={len(review)}"
+        )
 
-        # ── V3: Temporal segmentation per candidate ──
+        # ── Request planning + safety limits ──
+        plan = self._compute_request_plan(accepted, duration)
+        self._checkpoint("request_plan", plan)
+        if plan["minimum_total_requests"] > self.max_total_stage_requests:
+            self._checkpoint("final", {
+                "status": "CANDIDATE_EXPLOSION",
+                "reason": f"Planned requests ({plan['minimum_total_requests']}) exceed max ({self.max_total_stage_requests})",
+                "plan": plan,
+            })
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: planned_requests={plan['minimum_total_requests']} > max={self.max_total_stage_requests}"
+            )
+        self._log_progress(
+            f"[PLAN] V3={plan['v3_requests']} V4={plan['v4_requests']} "
+            f"V5={plan['v5_requests']} TR={plan['translation_requests']} "
+            f"min_total={plan['minimum_total_requests']}"
+        )
+
+        if len(accepted) > self.max_accepted_subtitle_tracks:
+            self._checkpoint("final", {
+                "status": "CANDIDATE_EXPLOSION",
+                "reason": f"Accepted subtitle tracks ({len(accepted)}) exceed max ({self.max_accepted_subtitle_tracks})",
+            })
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: accepted={len(accepted)} > max={self.max_accepted_subtitle_tracks}"
+            )
+
+        if not accepted:
+            self._empty_artifacts()
+            self._final_artifact(candidates)
+            return []
+
+        # ── V3: Temporal segmentation per accepted candidate ──
         events: List[Dict[str, Any]] = []
-        for candidate in accepted:
+        for idx, candidate in enumerate(accepted):
+            self._check_job_timeout()
             clip_start = max(0.0, candidate["start_seconds"] - self.clip_padding_seconds)
             clip_end = min(duration, candidate["end_seconds"] + self.clip_padding_seconds)
             if clip_start >= clip_end:
@@ -152,12 +240,22 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 self.fps["segmentation"], start=clip_start, end=clip_end,
                 duration_seconds=duration,
             )
-            events.extend(self._validate_events(payload, candidate, clip_start, duration))
+            cand_events = self._validate_events(
+                payload, candidate, clip_start, clip_end, duration
+            )
+            if len(cand_events) > self.max_events_per_track:
+                raise ProviderError(
+                    f"CANDIDATE_EXPLOSION: candidate {candidate['candidate_id']} events={len(cand_events)} > max={self.max_events_per_track}"
+                )
+            events.extend(cand_events)
+            self._log_progress(f"[V3] completed={idx+1}/{len(accepted)}")
         self.artifacts["temporal_events"] = {"events": events}
+        self._checkpoint("temporal_events", {"events": events})
 
         # ── V4: Geometry refinement per event ──
         geometry: Dict[str, Dict[str, Any]] = {}
-        for event in events:
+        for idx, event in enumerate(events):
+            self._check_job_timeout()
             clip_start = max(0.0, event["start_seconds_in_source"] - 0.25)
             clip_end = min(duration, event["end_seconds_in_source"] + 0.25)
             payload = self._request(
@@ -167,11 +265,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 duration_seconds=duration,
             )
             geometry[event["event_id"]] = self._validate_geometry(payload, event)
+            self._log_progress(f"[V4] completed={idx+1}/{len(events)}")
         self.artifacts["geometry"] = {"events": list(geometry.values())}
+        self._checkpoint("geometry", {"events": list(geometry.values())})
 
         # ── V5: Transcription per event ──
         transcriptions: List[Dict[str, Any]] = []
-        for event in events:
+        for idx, event in enumerate(events):
+            self._check_job_timeout()
             item = geometry.get(event["event_id"])
             if item is None:
                 continue
@@ -186,11 +287,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             transcription = self._validate_transcription(payload, event)
             if transcription is not None:
                 transcriptions.append({**event, **item, **transcription})
+            self._log_progress(f"[V5] completed={idx+1}/{len(events)}")
         self.artifacts["transcriptions"] = {"events": transcriptions}
+        self._checkpoint("transcriptions", {"events": transcriptions})
 
         # ── Translation ──
         translations: List[Dict[str, Any]] = []
-        for item in transcriptions:
+        for idx, item in enumerate(transcriptions):
+            self._check_job_timeout()
             payload = self._text_request(
                 "translation",
                 self._translation_prompt(
@@ -206,7 +310,9 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 "translated_text": translated or "",
                 "translation_status": "ok" if translated else "REVIEW_REQUIRED",
             })
+            self._log_progress(f"[TR] completed={idx+1}/{len(transcriptions)}")
         self.artifacts["translations"] = {"events": translations}
+        self._checkpoint("translations", {"events": translations})
 
         # ── Build render eligibility records and final segment list ──
         self._build_render_eligibility(candidates, accepted, events, geometry,
@@ -238,6 +344,31 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.provenance = []
         self.artifacts = {}
         self._render_eligibility = []
+        self._job_start_time = 0.0
+        self._last_progress_time = 0.0
+
+    # ── progress / checkpoint / timeout ──────────────────────────────────
+
+    def _log_progress(self, message: str) -> None:
+        self._last_progress_time = time.monotonic()
+        # Safe console output (no secrets)
+        print(message, flush=True)
+
+    def _checkpoint(self, name: str, data: Dict[str, Any]) -> None:
+        self.artifacts.setdefault("checkpoints", {})[name] = data
+        self._last_progress_time = time.monotonic()
+
+    def _check_job_timeout(self) -> None:
+        elapsed = time.monotonic() - self._job_start_time
+        if elapsed > self.job_timeout_seconds:
+            raise ProviderError(
+                f"JOB_TIMEOUT: elapsed={elapsed:.1f}s > max={self.job_timeout_seconds}s"
+            )
+        no_progress = time.monotonic() - self._last_progress_time
+        if no_progress > self.no_progress_timeout_seconds:
+            raise ProviderError(
+                f"NO_PROGRESS_TIMEOUT: no_progress={no_progress:.1f}s > max={self.no_progress_timeout_seconds}s"
+            )
 
     # ── request helpers ──────────────────────────────────────────────────
 
@@ -284,7 +415,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         response_payload: Optional[Dict[str, Any]] = None
         max_attempts = 1 + self.max_retry_per_stage
 
+        stage_start_time = time.monotonic()
         for attempt in range(max_attempts):
+            elapsed_stage = time.monotonic() - stage_start_time
+            if elapsed_stage > self.stage_timeout_seconds:
+                raise ProviderError(
+                    f"STAGE_TIMEOUT: stage={stage} elapsed={elapsed_stage:.1f}s > "
+                    f"max={self.stage_timeout_seconds}s"
+                )
             try:
                 # canonical serialized payload hash for countTokens + generate
                 serialized_body = self._canonical_body(request)
@@ -293,6 +431,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 ).hexdigest()
                 request.predicted_tokens = client.count_tokens(request)
                 counted_tokens = request.predicted_tokens
+                if counted_tokens and counted_tokens > self.max_counted_input_tokens_per_job:
+                    raise ProviderError(
+                        f"TOKEN_BUDGET_EXCEEDED: predicted={counted_tokens} > max={self.max_counted_input_tokens_per_job}"
+                    )
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
             except GeminiError as exc:
@@ -369,7 +511,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         response_payload: Optional[Dict[str, Any]] = None
         max_attempts = 1 + self.max_retry_per_stage
 
+        stage_start_time = time.monotonic()
         for attempt in range(max_attempts):
+            elapsed_stage = time.monotonic() - stage_start_time
+            if elapsed_stage > self.stage_timeout_seconds:
+                raise ProviderError(
+                    f"STAGE_TIMEOUT: stage={stage} elapsed={elapsed_stage:.1f}s > "
+                    f"max={self.stage_timeout_seconds}s"
+                )
             try:
                 serialized_body = self._canonical_body(request)
                 serialized_sha = hashlib.sha256(
@@ -377,6 +526,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 ).hexdigest()
                 request.predicted_tokens = client.count_tokens(request)
                 counted_tokens = request.predicted_tokens
+                if counted_tokens and counted_tokens > self.max_counted_input_tokens_per_job:
+                    raise ProviderError(
+                        f"TOKEN_BUDGET_EXCEEDED: predicted={counted_tokens} > max={self.max_counted_input_tokens_per_job}"
+                    )
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
             except GeminiError as exc:
@@ -542,13 +695,127 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             })
         return result
 
+    # ── Candidate deduplication ─────────────────────────────────────────
+
+    @staticmethod
+    def _box_iou(a: Sequence[float], b: Sequence[float]) -> float:
+        ymin_a, xmin_a, ymax_a, xmax_a = a
+        ymin_b, xmin_b, ymax_b, xmax_b = b
+        inter_ymin = max(ymin_a, ymin_b)
+        inter_xmin = max(xmin_a, xmin_b)
+        inter_ymax = min(ymax_a, ymax_b)
+        inter_xmax = min(xmax_a, xmax_b)
+        if inter_ymax <= inter_ymin or inter_xmax <= inter_xmin:
+            return 0.0
+        inter_area = (inter_ymax - inter_ymin) * (inter_xmax - inter_xmin)
+        area_a = (ymax_a - ymin_a) * (xmax_a - xmin_a)
+        area_b = (ymax_b - ymin_b) * (xmax_b - xmin_b)
+        union_area = area_a + area_b - inter_area
+        return inter_area / union_area if union_area > 0 else 0.0
+
+    def _deduplicate_candidates(
+        self, candidates: List[Dict[str, Any]], duration: float
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """Merge frame-like detections into temporal tracks.
+
+        Returns (deduplicated_candidates, merge_groups).
+        """
+        if not candidates:
+            return [], []
+
+        # Sort by start time for deterministic processing
+        sorted_cands = sorted(candidates, key=lambda c: (c["start_seconds"], c["candidate_id"]))
+        merged: List[List[Dict[str, Any]]] = []
+
+        for cand in sorted_cands:
+            placed = False
+            for group in merged:
+                last = group[-1]
+                iou = self._box_iou(cand["representative_box_2d"], last["representative_box_2d"])
+                temporal_gap = cand["start_seconds"] - last["end_seconds"]
+                if iou > 0.5 and temporal_gap < 1.0:
+                    group.append(cand)
+                    placed = True
+                    break
+            if not placed:
+                merged.append([cand])
+
+        result: List[Dict[str, Any]] = []
+        merge_groups: List[Dict[str, Any]] = []
+        for idx, group in enumerate(merged):
+            if not group:
+                continue
+            start = min(c["start_seconds"] for c in group)
+            end = max(c["end_seconds"] for c in group)
+            start = max(0.0, start)
+            end = min(duration, end)
+            # Representative bbox: median of each dimension
+            ymins = [c["representative_box_2d"][0] for c in group]
+            xmins = [c["representative_box_2d"][1] for c in group]
+            ymaxs = [c["representative_box_2d"][2] for c in group]
+            xmaxs = [c["representative_box_2d"][3] for c in group]
+            try:
+                med_box = [
+                    statistics.median(ymins),
+                    statistics.median(xmins),
+                    statistics.median(ymaxs),
+                    statistics.median(xmaxs),
+                ]
+            except statistics.StatisticsError:
+                med_box = group[0]["representative_box_2d"]
+            result.append({
+                "candidate_id": f"merged_{idx}",
+                "start_seconds": start,
+                "end_seconds": end,
+                "representative_box_2d": med_box,
+            })
+            merge_groups.append({
+                "merged_id": f"merged_{idx}",
+                "source_ids": [c["candidate_id"] for c in group],
+                "count": len(group),
+                "iou_threshold": 0.5,
+                "gap_threshold": 1.0,
+            })
+
+        return result, merge_groups
+
+    # ── Request planning ────────────────────────────────────────────────
+
+    def _compute_request_plan(
+        self, accepted: List[Dict[str, Any]], duration: float
+    ) -> Dict[str, Any]:
+        """Compute conservative request plan before dispatching downstream."""
+        v3 = len(accepted)
+        fixed = 4  # FPS smoke A/B, V1 discovery, V2 batch classification.
+        # Conservative upper bound: each track could have up to max_events_per_track events
+        max_events = v3 * self.max_events_per_track
+        v4 = max_events
+        v5 = max_events
+        tr = max_events
+        # Minimum assumes 1 event per track
+        min_total = fixed + v3 + v3 + v3 + v3
+        return {
+            "fixed_requests": fixed,
+            "v3_requests": v3,
+            "v4_requests": v4,
+            "v5_requests": v5,
+            "translation_requests": tr,
+            "minimum_total_requests": min_total,
+            "maximum_total_requests": fixed + v3 + v4 + v5 + tr,
+            "accepted_subtitle_tracks": len(accepted),
+            "max_events_per_track": self.max_events_per_track,
+            "video_duration": duration,
+        }
+
     # ── V2 validation ───────────────────────────────────────────────────
 
     def _validate_classifications(
         self, payload: Dict[str, Any], candidates: Sequence[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         known = {item["candidate_id"]: item for item in candidates}
-        accepted = []
+        accepted: List[Dict[str, Any]] = []
+        rejected: List[Dict[str, Any]] = []
+        review_required: List[Dict[str, Any]] = []
         entries = payload.get("classifications")
         if not isinstance(entries, list):
             raise ProviderError("V2 response requires classifications list.")
@@ -567,6 +834,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             seen_ids.add(cid)
             if decision == "accepted" and classification in _SUBTITLE_CLASSES:
                 accepted.append(known[cid])
+            elif decision == "rejected":
+                rejected.append(known[cid])
+            else:
+                review_required.append(known[cid])
 
         # completeness: every V1 candidate must have exactly one V2 classification
         missing = set(known) - seen_ids
@@ -575,46 +846,53 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 f"V2 classification completeness: missing classifications for "
                 f"candidates: {', '.join(sorted(missing))}"
             )
-        return accepted
+        return accepted, rejected, review_required
 
     # ── V3 validation ──────────────────────────────────────────────────
 
     @staticmethod
     def _validate_events(
-        payload: Dict[str, Any], candidate: Dict[str, Any], clip_start: float, duration: float
+        payload: Dict[str, Any],
+        candidate: Dict[str, Any],
+        clip_start: float,
+        clip_end: float,
+        duration: float,
     ) -> List[Dict[str, Any]]:
         if payload.get("candidate_id") != candidate["candidate_id"]:
             raise ProviderError("V3 response candidate_id mismatch.")
         entries = payload.get("events")
         if not isinstance(entries, list):
             raise ProviderError("V3 response must contain events list.")
-        clip_duration = float(candidate["end_seconds"]) - float(candidate["start_seconds"])
-        clip_end = clip_start + clip_duration
+        clip_duration = clip_end - clip_start
         result: List[Dict[str, Any]] = []
         seen: set[str] = set()
         for item in entries:
             if not isinstance(item, dict):
                 raise ProviderError("V3 event must be a dict.")
-            event_id = item.get("event_id")
+            raw_event_id = item.get("event_id")
             rel_start = item.get("start_seconds_in_source")
             rel_end = item.get("end_seconds_in_source")
-            if not isinstance(event_id, str) or not event_id or event_id in seen:
-                raise ProviderError(f"V3 event id is invalid or duplicated: {event_id!r}")
+            if not isinstance(raw_event_id, str) or not raw_event_id:
+                raise ProviderError(
+                    f"V3 event id is invalid: {raw_event_id!r}"
+                )
+            event_id = f"{candidate['candidate_id']}:{raw_event_id}"
+            if event_id in seen:
+                raise ProviderError(f"V3 event id is duplicated: {event_id!r}")
             seen.add(event_id)
             if not isinstance(rel_start, (int, float)) or not isinstance(rel_end, (int, float)):
                 raise ProviderError("V3 event timing is invalid.")
             rs, re = float(rel_start), float(rel_end)
 
-            # Resolve source-absolute timeline. Gemini may return either:
-            #  (A) times already on the source-absolute timeline (fit inside clip), or
-            #  (B) times relative to the served clip (fit inside [0, clip_duration]).
-            # Otherwise, treat as source-absolute and clamp defensively.
-            if 0.0 <= rs and re <= clip_end + 0.001:
-                absolute_start = rs
-                absolute_end = re
-            elif 0.0 <= rs <= clip_duration + 0.001 and 0.0 <= re <= clip_duration + 0.001:
+            if (
+                0.0 <= rs <= clip_duration + 0.001
+                and 0.0 <= re <= clip_duration + 0.001
+            ):
                 absolute_start = clip_start + rs
                 absolute_end = clip_start + re
+            elif rs >= clip_start - 0.001 and re <= duration + 0.001:
+                absolute_start = rs
+                absolute_end = re
             else:
                 absolute_start = min(max(0.0, rs), duration)
                 absolute_end = min(max(0.0, re), duration)
@@ -631,6 +909,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             result.append({
                 **item,
                 "candidate_id": candidate["candidate_id"],
+                "event_id": event_id,
                 "representative_box_2d": candidate["representative_box_2d"],
                 "clip_source_start": clip_start,
                 "clip_relative_start": clip_relative_start,

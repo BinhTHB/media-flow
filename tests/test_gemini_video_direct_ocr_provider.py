@@ -267,3 +267,230 @@ def test_direct_video_empty_result_handling():
     for name in ("classifications", "temporal_events", "geometry",
                   "transcriptions", "translations", "render_eligibility"):
         assert provider.artifacts[name] == {"events": []}
+
+
+# ── New G.5 candidate-explosion fix tests ────────────────────────────
+
+
+def test_deduplicate_merges_frame_like_candidates():
+    provider = GeminiDirectVideoOCRProvider()
+    candidates = [
+        {"candidate_id": "c1", "start_seconds": 0.0, "end_seconds": 1.5, "representative_box_2d": [100, 100, 200, 200]},
+        {"candidate_id": "c2", "start_seconds": 1.4, "end_seconds": 3.0, "representative_box_2d": [105, 105, 205, 205]},
+        {"candidate_id": "c3", "start_seconds": 2.9, "end_seconds": 4.0, "representative_box_2d": [102, 102, 202, 202]},
+    ]
+    result, groups = provider._deduplicate_candidates(candidates, duration=10.0)
+    assert len(result) == 1
+    assert result[0]["start_seconds"] == 0.0
+    assert result[0]["end_seconds"] == 4.0
+    assert len(groups) == 1
+    assert groups[0]["count"] == 3
+
+
+def test_deduplicate_does_not_merge_different_spatial_regions():
+    provider = GeminiDirectVideoOCRProvider()
+    candidates = [
+        {"candidate_id": "c1", "start_seconds": 0.0, "end_seconds": 2.0, "representative_box_2d": [100, 100, 200, 200]},
+        {"candidate_id": "c2", "start_seconds": 0.0, "end_seconds": 2.0, "representative_box_2d": [800, 800, 900, 900]},
+    ]
+    result, groups = provider._deduplicate_candidates(candidates, duration=10.0)
+    assert len(result) == 2
+    assert len(groups) == 2
+
+
+def test_deduplicate_does_not_merge_large_temporal_gap():
+    provider = GeminiDirectVideoOCRProvider()
+    candidates = [
+        {"candidate_id": "c1", "start_seconds": 0.0, "end_seconds": 1.0, "representative_box_2d": [100, 100, 200, 200]},
+        {"candidate_id": "c2", "start_seconds": 3.0, "end_seconds": 4.0, "representative_box_2d": [100, 100, 200, 200]},
+    ]
+    result, groups = provider._deduplicate_candidates(candidates, duration=10.0)
+    assert len(result) == 2
+
+
+def test_validate_candidates_skips_invalid_timestamps():
+    provider = GeminiDirectVideoOCRProvider()
+    payload = {
+        "candidates": [
+            {"candidate_id": "a", "start_seconds": -1, "end_seconds": 2, "representative_box_2d": [1, 1, 2, 2]},
+            {"candidate_id": "b", "start_seconds": 1, "end_seconds": 0, "representative_box_2d": [1, 1, 2, 2]},
+            {"candidate_id": "c", "start_seconds": 1, "end_seconds": 2, "representative_box_2d": [1, 1, 2, 2]},
+            {"candidate_id": "d", "start_seconds": 1, "end_seconds": 12, "representative_box_2d": [1, 1, 2, 2]},
+        ]
+    }
+    result = provider._validate_candidates(payload, duration=10.0)
+    assert len(result) == 1
+    assert result[0]["candidate_id"] == "c"
+
+
+def test_compute_request_plan_conservative_estimates():
+    provider = GeminiDirectVideoOCRProvider(max_events_per_track=20)
+    accepted = [{"candidate_id": "a"}, {"candidate_id": "b"}]
+    plan = provider._compute_request_plan(accepted, duration=10.0)
+    assert plan["v3_requests"] == 2
+    assert plan["v4_requests"] == 40
+    assert plan["v5_requests"] == 40
+    assert plan["translation_requests"] == 40
+    assert plan["fixed_requests"] == 4
+    assert plan["minimum_total_requests"] == 12
+    assert plan["maximum_total_requests"] == 126
+
+
+def test_candidate_explosion_fail_fast_raw():
+    provider = GeminiDirectVideoOCRProvider(max_raw_candidates=2)
+    payload = {
+        "candidates": [
+            {"candidate_id": "a", "start_seconds": 0, "end_seconds": 1, "representative_box_2d": [1, 1, 2, 2]},
+            {"candidate_id": "b", "start_seconds": 1, "end_seconds": 2, "representative_box_2d": [1, 1, 2, 2]},
+            {"candidate_id": "c", "start_seconds": 2, "end_seconds": 3, "representative_box_2d": [1, 1, 2, 2]},
+        ]
+    }
+    candidates = provider._validate_candidates(payload, duration=10.0)
+    with pytest.raises(ProviderError, match="CANDIDATE_EXPLOSION"):
+        if len(candidates) > provider.max_raw_candidates:
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: V1 raw={len(candidates)} > max={provider.max_raw_candidates}"
+            )
+
+
+def test_candidate_explosion_fail_fast_deduplicated():
+    provider = GeminiDirectVideoOCRProvider(max_deduplicated_candidates=1)
+    # These candidates have low IoU (different spatial bands) so they won't merge
+    candidates = [
+        {"candidate_id": "a", "start_seconds": 0, "end_seconds": 1, "representative_box_2d": [1, 1, 2, 2]},
+        {"candidate_id": "b", "start_seconds": 1.2, "end_seconds": 2, "representative_box_2d": [800, 800, 900, 900]},
+    ]
+    deduped, _ = provider._deduplicate_candidates(candidates, duration=10.0)
+    with pytest.raises(ProviderError, match="CANDIDATE_EXPLOSION"):
+        if len(deduped) > provider.max_deduplicated_candidates:
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: deduplicated={len(deduped)} > max={provider.max_deduplicated_candidates}"
+            )
+def test_candidate_explosion_fail_fast_accepted_tracks():
+    provider = GeminiDirectVideoOCRProvider(max_accepted_subtitle_tracks=1)
+    candidates = [
+        {"candidate_id": "a", "start_seconds": 0, "end_seconds": 1, "representative_box_2d": [1, 1, 2, 2]},
+        {"candidate_id": "b", "start_seconds": 1, "end_seconds": 2, "representative_box_2d": [1, 1, 2, 2]},
+    ]
+    classifications = {
+        "classifications": [
+            {"candidate_id": "a", "classification": "dialogue_subtitle", "decision": "accepted"},
+            {"candidate_id": "b", "classification": "dialogue_subtitle", "decision": "accepted"},
+        ]
+    }
+    accepted, _rejected, _review = provider._validate_classifications(classifications, candidates)
+    with pytest.raises(ProviderError, match="CANDIDATE_EXPLOSION"):
+        if len(accepted) > provider.max_accepted_subtitle_tracks:
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: accepted={len(accepted)} > max={provider.max_accepted_subtitle_tracks}"
+            )
+
+
+def test_request_plan_fail_fast_max_total_requests():
+    provider = GeminiDirectVideoOCRProvider(max_total_stage_requests=10)
+    accepted = [{"candidate_id": "a"}, {"candidate_id": "b"}, {"candidate_id": "c"}]
+    plan = provider._compute_request_plan(accepted, duration=10.0)
+    with pytest.raises(ProviderError, match="CANDIDATE_EXPLOSION"):
+        if plan["minimum_total_requests"] > provider.max_total_stage_requests:
+            raise ProviderError(
+                f"CANDIDATE_EXPLOSION: planned_requests={plan['minimum_total_requests']} > max={provider.max_total_stage_requests}"
+            )
+
+
+def test_token_budget_check_in_request():
+    provider = GeminiDirectVideoOCRProvider(max_counted_input_tokens_per_job=5)
+    captured = {}
+
+    class Client:
+        def count_tokens(self, request):
+            captured["tokens"] = 100
+            return 100
+
+        def generate_content(self, request):
+            return _Response()
+
+    import pytest
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(provider.runtime, "get_client", lambda *args, **kwargs: Client())
+    with pytest.raises(ProviderError, match="TOKEN_BUDGET_EXCEEDED"):
+        provider._request(
+            "v1_discovery", "test", provider._discovery_schema(),
+            "uri", "video/mp4", 6, duration_seconds=10,
+        )
+    monkeypatch.undo()
+
+
+def test_job_timeout_raises():
+    provider = GeminiDirectVideoOCRProvider(job_timeout_seconds=0.01, no_progress_timeout_seconds=10)
+    provider._job_start_time = 0.0
+    with pytest.raises(ProviderError, match="JOB_TIMEOUT"):
+        provider._check_job_timeout()
+
+
+def test_no_progress_timeout_raises():
+    provider = GeminiDirectVideoOCRProvider(job_timeout_seconds=1000, no_progress_timeout_seconds=0.01)
+    now = __import__("time").monotonic()
+    provider._job_start_time = now
+    provider._last_progress_time = now - 1.0
+    with pytest.raises(ProviderError, match="NO_PROGRESS_TIMEOUT"):
+        provider._check_job_timeout()
+
+
+def test_checkpoints_written_after_stages():
+    provider = GeminiDirectVideoOCRProvider()
+    provider._checkpoint("candidates_raw", {"candidates": []})
+    assert "checkpoints" in provider.artifacts
+    assert "candidates_raw" in provider.artifacts["checkpoints"]
+
+
+def test_v2_returns_accepted_rejected_review():
+    provider = GeminiDirectVideoOCRProvider()
+    candidates = [
+        {"candidate_id": "a", "start_seconds": 0, "end_seconds": 1, "representative_box_2d": [1, 1, 2, 2]},
+        {"candidate_id": "b", "start_seconds": 1, "end_seconds": 2, "representative_box_2d": [1, 1, 2, 2]},
+        {"candidate_id": "c", "start_seconds": 2, "end_seconds": 3, "representative_box_2d": [1, 1, 2, 2]},
+    ]
+    classifications = {
+        "classifications": [
+            {"candidate_id": "a", "classification": "dialogue_subtitle", "decision": "accepted"},
+            {"candidate_id": "b", "classification": "watermark", "decision": "rejected"},
+            {"candidate_id": "c", "classification": "review_required", "decision": "accepted"},
+        ]
+    }
+    accepted, rejected, review = provider._validate_classifications(classifications, candidates)
+    assert len(accepted) == 1
+    assert accepted[0]["candidate_id"] == "a"
+    assert len(rejected) == 1
+    assert rejected[0]["candidate_id"] == "b"
+    assert len(review) == 1
+    assert review[0]["candidate_id"] == "c"
+
+
+def test_v3_namespaces_duplicate_model_event_ids_by_candidate():
+    provider = GeminiDirectVideoOCRProvider()
+    first = provider._validate_events(
+        {"candidate_id": "a", "events": [{"event_id": "0", "start_seconds_in_source": 0.2, "end_seconds_in_source": 0.8}]},
+        {"candidate_id": "a", "representative_box_2d": [1, 1, 2, 2]},
+        1.0, 3.0, 10.0,
+    )
+    second = provider._validate_events(
+        {"candidate_id": "b", "events": [{"event_id": "0", "start_seconds_in_source": 0.2, "end_seconds_in_source": 0.8}]},
+        {"candidate_id": "b", "representative_box_2d": [1, 1, 2, 2]},
+        1.0, 3.0, 10.0,
+    )
+
+    assert first[0]["event_id"] == "a:0"
+    assert second[0]["event_id"] == "b:0"
+    assert first[0]["start_seconds_in_source"] == 1.2
+
+
+def test_v3_preserves_source_absolute_times_outside_clip_relative_range():
+    provider = GeminiDirectVideoOCRProvider()
+    events = provider._validate_events(
+        {"candidate_id": "a", "events": [{"event_id": "0", "start_seconds_in_source": 5.2, "end_seconds_in_source": 5.8}]},
+        {"candidate_id": "a", "representative_box_2d": [1, 1, 2, 2]},
+        5.0, 7.0, 10.0,
+    )
+
+    assert events[0]["start_seconds_in_source"] == 5.2
+    assert events[0]["end_seconds_in_source"] == 5.8
