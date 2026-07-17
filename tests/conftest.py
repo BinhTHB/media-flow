@@ -1,7 +1,11 @@
+import os
+
 import pytest
 from src.domain.entities.segment import Segment
 from src.domain.entities.feature_config import FeatureConfig
 from src.domain.entities.video_job import VideoJob
+
+os.environ.setdefault("GEMINI_API_KEY", "dummy_testing_api_key")
 
 @pytest.fixture
 def sample_video_job() -> VideoJob:

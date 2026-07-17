@@ -84,6 +84,10 @@ class GeminiConfig:
     direct_video_max_quota_retries_per_stage: int = 1
     direct_video_honor_retry_after: bool = True
     direct_video_fail_fast_on_daily_quota: bool = True
+    direct_video_min_request_spacing_seconds: float = 1.0
+    direct_video_quota_jitter_seconds: float = 0.5
+    direct_video_unknown_429_backoff_seconds: float = 5.0
+    direct_video_fps_certification_ttl_seconds: float = 86400.0
     direct_video_resume_enabled: bool = True
     direct_video_checkpoint_schema_version: str = "1.0.0"
     direct_video_batch_size: int = 10
@@ -146,6 +150,13 @@ class GeminiConfig:
             raise ValueError("direct-video time limits must be non-negative/positive as applicable.")
         if self.direct_video_max_quota_retries_per_stage < 0:
             raise ValueError("direct_video_max_quota_retries_per_stage must be non-negative.")
+        if min(
+            self.direct_video_min_request_spacing_seconds,
+            self.direct_video_quota_jitter_seconds,
+            self.direct_video_unknown_429_backoff_seconds,
+            self.direct_video_fps_certification_ttl_seconds,
+        ) < 0:
+            raise ValueError("Direct-video quota timing values must be non-negative.")
         if self.direct_video_batch_size < 1:
             raise ValueError("direct_video_batch_size must be at least 1.")
         if not self.direct_video_checkpoint_schema_version.strip():

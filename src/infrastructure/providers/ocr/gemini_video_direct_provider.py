@@ -62,6 +62,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         max_quota_retries_per_stage: int = 1,
         honor_retry_after: bool = True,
         fail_fast_on_daily_quota: bool = True,
+        min_request_spacing_seconds: float = 1.0,
+        quota_jitter_seconds: float = 0.5,
+        unknown_429_backoff_seconds: float = 5.0,
+        fps_certification_ttl_seconds: float = 86400.0,
         resume_enabled: bool = True,
         checkpoint_schema_version: str = "1.0.0",
         batch_size: int = 10,
@@ -99,6 +103,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.max_quota_retries_per_stage = max_quota_retries_per_stage
         self.honor_retry_after = honor_retry_after
         self.fail_fast_on_daily_quota = fail_fast_on_daily_quota
+        self.min_request_spacing_seconds = min_request_spacing_seconds
+        self.quota_jitter_seconds = quota_jitter_seconds
+        self.unknown_429_backoff_seconds = unknown_429_backoff_seconds
+        self.fps_certification_ttl_seconds = fps_certification_ttl_seconds
         self.resume_enabled = resume_enabled
         self.checkpoint_schema_version = checkpoint_schema_version
         self.batch_size = batch_size

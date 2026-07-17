@@ -51,6 +51,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Runtime / cache / temp
+debug/
 cache/
 .cache/
 tmp/
@@ -133,6 +134,7 @@ config.local.*
 *.local.json
 *.local.yaml
 *.local.yml
+config.yml
 
 # Databases
 *.db

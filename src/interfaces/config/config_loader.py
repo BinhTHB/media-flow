@@ -30,7 +30,6 @@ class ConfigLoader:
     def load(self, overrides: Optional[Dict[str, Any]] = None) -> AppConfig:
         providers_raw = self._load_yaml(self.providers_path)
         styles_raw = self._load_yaml(self.subtitle_styles_path)
-        secrets_raw = self._load_yaml(self.secrets_path)
 
         defaults = {
             "ocr": "gemini_vision",
@@ -52,9 +51,7 @@ class ConfigLoader:
             }
             for category, configured in providers_raw.get("providers", {}).items()
         }
-        self.gemini_api_key = os.environ.get("GEMINI_API_KEY") or secrets_raw.get(
-            "gemini", {}
-        ).get("api_key")
+        self.gemini_api_key = os.environ.get("GEMINI_API_KEY")
         gemini_raw = providers.get("translation", {}).get("gemini", {})
         quality_raw = providers_raw.get("subtitle_quality", {})
         placement_raw = providers_raw.get("subtitle_placement", {})
@@ -239,6 +236,22 @@ class ConfigLoader:
             direct_video_fail_fast_on_daily_quota=self._env_bool(
                 "GEMINI_DIRECT_VIDEO_FAIL_FAST_ON_DAILY_QUOTA",
                 gemini_overrides.get("direct_video_fail_fast_on_daily_quota", gemini_raw.get("direct_video_fail_fast_on_daily_quota", True)),
+            ),
+            direct_video_min_request_spacing_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_MIN_REQUEST_SPACING_SECONDS",
+                gemini_overrides.get("direct_video_min_request_spacing_seconds", gemini_raw.get("direct_video_min_request_spacing_seconds", 1.0)),
+            ),
+            direct_video_quota_jitter_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_QUOTA_JITTER_SECONDS",
+                gemini_overrides.get("direct_video_quota_jitter_seconds", gemini_raw.get("direct_video_quota_jitter_seconds", 0.5)),
+            ),
+            direct_video_unknown_429_backoff_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_UNKNOWN_429_BACKOFF_SECONDS",
+                gemini_overrides.get("direct_video_unknown_429_backoff_seconds", gemini_raw.get("direct_video_unknown_429_backoff_seconds", 5.0)),
+            ),
+            direct_video_fps_certification_ttl_seconds=self._env_float(
+                "GEMINI_DIRECT_VIDEO_FPS_CERTIFICATION_TTL_SECONDS",
+                gemini_overrides.get("direct_video_fps_certification_ttl_seconds", gemini_raw.get("direct_video_fps_certification_ttl_seconds", 86400.0)),
             ),
             direct_video_resume_enabled=self._env_bool(
                 "GEMINI_DIRECT_VIDEO_RESUME_ENABLED",
