@@ -431,9 +431,16 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         # ── V5: Transcription in same-stage batches ──
         transcription_checkpoint = self.artifacts.get("checkpoints", {}).get("transcriptions", {})
         transcriptions = transcription_checkpoint.get("events")
-        v5_reused = isinstance(transcriptions, list)
+        v5_reused = isinstance(transcriptions, list) and bool(transcriptions)
         if not isinstance(transcriptions, list):
             transcriptions = []
+        raw_v5_checkpoint = self.artifacts.get("checkpoints", {}).get(
+            "v5_raw_transcription", {}
+        )
+        raw_v5_responses = raw_v5_checkpoint.get("batches")
+        if not isinstance(raw_v5_responses, list):
+            raw_v5_responses = []
+        validation_audit: List[Dict[str, Any]] = []
         transcription_inputs = (
             [] if v5_reused else
             [{**event, "bbox": geometry[event["event_id"]]["representative_box_2d"]}
@@ -450,26 +457,62 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 duration_seconds=duration,
             )
             responses = self._batch_responses(payload, batch, "event_id")
+            raw_v5_responses.append({
+                "expected_event_ids": [item["event_id"] for item in batch],
+                "payload": payload,
+            })
+            self._checkpoint("v5_raw_transcription", {
+                "batches": raw_v5_responses,
+                "artifact_sha256": self._artifact_hash(raw_v5_responses),
+            })
             for event in batch:
-                transcription = self._validate_transcription(responses[event["event_id"]], event)
-                if transcription is not None:
+                assessment = self._assess_transcription(
+                    responses[event["event_id"]], event, source_language
+                )
+                validation_audit.append(assessment)
+                transcription = assessment.get("transcription")
+                if isinstance(transcription, dict):
                     transcriptions.append({**event, **geometry[event["event_id"]], **transcription})
             self._log_progress(f"[V5] completed={idx+1}/{len(self._batches(transcription_inputs))}")
         self.artifacts["transcriptions"] = {"events": transcriptions}
-        self._checkpoint("transcriptions", {"events": transcriptions})
+        validation_status = (
+            "PASS" if transcriptions and len(transcriptions) == len(events) else
+            "PARTIAL" if transcriptions else "REVIEW_REQUIRED"
+        )
+        self._checkpoint("transcriptions", {
+            "events": transcriptions,
+            "validation_audit": validation_audit,
+            "request_status": "COMPLETED_REUSED" if v5_reused else "COMPLETED",
+            "validation_status": validation_status,
+            "stage_status": "COMPLETED" if transcriptions else "BLOCKED",
+            "raw_artifact_hash": self._artifact_hash(raw_v5_responses),
+            "validator_version": "v5_unicode_source_script_v1",
+            "normalized_artifact_hash": self._artifact_hash(transcriptions),
+        })
         self.artifacts.setdefault("stage_status", {})["V5"] = {
-            "status": "COMPLETED_REUSED" if v5_reused else "COMPLETED",
+            "status": "COMPLETED_REUSED" if v5_reused and transcriptions else (
+                "COMPLETED" if transcriptions else "BLOCKED"
+            ),
             "network_request_completed": not v5_reused,
             "network_request_skipped": v5_reused,
             "artifact_sha256": self._artifact_hash(transcriptions),
+            "request_status": "COMPLETED_REUSED" if v5_reused else "COMPLETED",
+            "validation_status": validation_status,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         self._write_resume()
+        if not transcriptions:
+            self._checkpoint("final", {
+                "status": "REVIEW_REQUIRED",
+                "resume_stage": "V5",
+                "reason": "NO_READABLE_V5_TRANSCRIPTIONS",
+            })
+            return []
 
         # ── Translation in same-stage batches ──
         translation_checkpoint = self.artifacts.get("checkpoints", {}).get("translations", {})
         translations = translation_checkpoint.get("events")
-        translation_reused = isinstance(translations, list)
+        translation_reused = isinstance(translations, list) and bool(translations)
         if not isinstance(translations, list):
             translations = []
         translation_inputs = [] if translation_reused else transcriptions
@@ -939,6 +982,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 raise ProviderError(last_error)
 
             # success
+            if stage == "v5_transcription":
+                self.artifacts.setdefault("raw_stage_responses", {}).setdefault(
+                    stage, []
+                ).append({
+                    "serialized_payload_sha256": serialized_sha,
+                    "response_text": response.text,
+                })
+                self._write_resume()
             self.provenance.append({
                 "stage": stage, "input_type": "video", "model": self.model,
                 "mime_type": mime_type, "file_data_present": True,
@@ -1631,39 +1682,68 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     # ── V5 validation ───────────────────────────────────────────────────
 
     @staticmethod
-    def _validate_transcription(
-        payload: Dict[str, Any], event: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def _assess_transcription(
+        payload: Dict[str, Any], event: Dict[str, Any],
+        source_language: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        event_id = event["event_id"]
+        raw_text = payload.get("text_verbatim")
+        audit: Dict[str, Any] = {
+            "event_id": event_id,
+            "raw_text_length": len(raw_text) if isinstance(raw_text, str) else None,
+            "parsed_text_length": len(raw_text) if isinstance(raw_text, str) else None,
+            "normalized_text_length": 0,
+            "reject_reason": None,
+            "transcription": None,
+        }
         if payload.get("event_id") != event["event_id"]:
-            raise ProviderError("V5 event ID mismatch.")
-        text = payload.get("text_verbatim")
-        status = payload.get("status")
-        if status != "readable":
-            return None
-        if not isinstance(text, str) or not text.strip():
-            return None
-        cleaned = text.strip()
-        if "\ufffd" in cleaned or any(unicodedata.category(c).startswith("C")
-                                       for c in cleaned):
-            return None
-        # mixed-script check: only one substantive script (+ common)
-        scripts = set()
-        for char in cleaned:
-            if not char.isalpha():
-                continue
-            name = unicodedata.name(char, "")
-            if any(tag in name for tag in ("CJK UNIFIED", "HIRAGANA", "KATAKANA", "HANGUL")):
-                scripts.add("cjk")
-            elif "LATIN" in name:
-                scripts.add("latin")
-        if len(scripts - {"common"}) > 1:
-            return None
-        return {
+            audit["reject_reason"] = "UNKNOWN_EVENT_ID"
+            return audit
+        if not isinstance(raw_text, str):
+            audit["reject_reason"] = "MALFORMED_STRUCTURED_OUTPUT"
+            return audit
+        cleaned = unicodedata.normalize("NFC", raw_text)
+        cleaned = "".join(
+            char for char in cleaned
+            if not (
+                char == "\ufffd"
+                or (unicodedata.category(char) == "Cf")
+                or (
+                    unicodedata.category(char).startswith("C")
+                    and char not in "\t\n\r"
+                )
+            )
+        )
+        cleaned = " ".join(cleaned.split()).strip()
+        audit["normalized_text_length"] = len(cleaned)
+        if not cleaned:
+            audit["reject_reason"] = "EMPTY_AFTER_NORMALIZATION"
+            return audit
+        if not any(char.isalnum() for char in cleaned):
+            audit["reject_reason"] = "PUNCTUATION_ONLY"
+            return audit
+        if len(cleaned) > 500:
+            audit["reject_reason"] = "HALLUCINATED_LENGTH"
+            return audit
+        if payload.get("status") not in {"readable", "ok", "success", None}:
+            audit["reject_reason"] = "MALFORMED_STRUCTURED_OUTPUT"
+            return audit
+        audit["transcription"] = {
             "text_verbatim": cleaned,
             "language": payload.get("language"),
             "script": payload.get("script"),
             "status": "readable",
         }
+        return audit
+
+    @staticmethod
+    def _validate_transcription(
+        payload: Dict[str, Any], event: Dict[str, Any],
+        source_language: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return GeminiDirectVideoOCRProvider._assess_transcription(
+            payload, event, source_language
+        ).get("transcription")
 
     # ── translation ──────────────────────────────────────────────────────
 
@@ -1946,7 +2026,10 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 "text_verbatim": {"type": "string"},
                 "language": {"type": "string"},
                 "script": {"type": "string"},
-                "status": {"type": "string"},
+                "status": {
+                    "type": "string",
+                    "enum": ["readable", "ok", "success", "review_required"],
+                },
             },
             "required": ["event_id", "text_verbatim", "language", "script", "status"],
         }

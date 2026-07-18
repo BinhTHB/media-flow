@@ -205,22 +205,19 @@ def test_app_config_loader_reads_direct_video_config_correctly(monkeypatch):
 
 
 
-def test_direct_video_mixed_script_rejections():
+def test_direct_video_source_transcription_preserves_unicode_scripts():
     provider = GeminiDirectVideoOCRProvider()
 
-    # unicode control character in text
     assert provider._validate_transcription(
         {"event_id": "e", "text_verbatim": "hello\u0000world", "status": "readable"},
         {"event_id": "e"}
-    ) is None
+    )["text_verbatim"] == "helloworld"
 
-    # mixed script: Han script + Latin script in text
     assert provider._validate_transcription(
         {"event_id": "e", "text_verbatim": "字幕 hello", "status": "readable"},
         {"event_id": "e"}
-    ) is None
+    )["text_verbatim"] == "字幕 hello"
 
-    # clean Latin script only
     assert provider._validate_transcription(
         {"event_id": "e", "text_verbatim": "hello world", "status": "readable"},
         {"event_id": "e"}
@@ -230,6 +227,50 @@ def test_direct_video_mixed_script_rejections():
         "script": None,
         "status": "readable",
     }
+
+@pytest.mark.parametrize("text", ["你好，世界", "Tiếng Việt có dấu", "สวัสดี", "Привет"])
+def test_v5_accepts_meaningful_source_scripts(text):
+    assessment = GeminiDirectVideoOCRProvider._assess_transcription(
+        {"event_id": "e", "text_verbatim": text, "status": "readable"},
+        {"event_id": "e"},
+        "auto",
+    )
+    assert assessment["reject_reason"] is None
+    assert assessment["transcription"]["text_verbatim"] == text
+
+def test_v5_nfc_normalization_preserves_meaningful_text():
+    assessment = GeminiDirectVideoOCRProvider._assess_transcription(
+        {"event_id": "e", "text_verbatim": "Tie\u0302\u0301ng Vie\u0323\u0302t", "status": "readable"},
+        {"event_id": "e"},
+    )
+    assert assessment["transcription"]["text_verbatim"] == "Tiếng Việt"
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [("\x00\u200b", "EMPTY_AFTER_NORMALIZATION"), ("...", "PUNCTUATION_ONLY")],
+)
+def test_v5_rejects_only_invalid_normalized_text(text, reason):
+    assessment = GeminiDirectVideoOCRProvider._assess_transcription(
+        {"event_id": "e", "text_verbatim": text, "status": "readable"},
+        {"event_id": "e"},
+    )
+    assert assessment["reject_reason"] == reason
+
+def test_v5_control_characters_are_removed_without_rejecting_text():
+    assessment = GeminiDirectVideoOCRProvider._assess_transcription(
+        {"event_id": "e", "text_verbatim": "xin\x00 chào\u200b", "status": "readable"},
+        {"event_id": "e"},
+    )
+    assert assessment["transcription"]["text_verbatim"] == "xin chào"
+
+@pytest.mark.parametrize("status", ["readable", "ok", "success"])
+def test_v5_accepts_observed_readability_statuses(status):
+    assessment = GeminiDirectVideoOCRProvider._assess_transcription(
+        {"event_id": "e", "text_verbatim": "Tiếng Việt", "status": status},
+        {"event_id": "e"},
+        "vi",
+    )
+    assert assessment["reject_reason"] is None
 
 
 def test_direct_video_render_eligibility_build():
