@@ -1,11 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import mimetypes
 import os
 import re
 import statistics
+import subprocess
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -30,7 +32,7 @@ _ALL_CLASSES = _SUBTITLE_CLASSES | {
 
 
 class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
-    """G.5 direct-video OCR adapter. It never receives or creates image inputs."""
+    """G.5 OCR adapter using direct video for V1-V3/V5 and Gemini images for V4."""
 
     def __init__(
         self,
@@ -76,14 +78,18 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         preflight_certification_ttl_seconds: float = 86400.0,
         preflight_credential_identity_hash: Optional[str] = None,
         stop_after_stage: Optional[str] = None,
+        geometry_mode: str = "image",
     ) -> None:
         if model != "gemini-3.1-flash-lite":
             raise ValueError("G.5 direct-video OCR requires gemini-3.1-flash-lite.")
         if clip_padding_seconds < 0:
             raise ValueError("clip_padding_seconds must be non-negative.")
+        if geometry_mode != "image":
+            raise ValueError("G.5.11 requires image-level Gemini geometry.")
         self.runtime = runtime or GeminiRuntime.create()
         self.model = model
         self.api_key = api_key
+        self.geometry_mode = geometry_mode
         self.fps = {
             "discovery": discovery_fps, "classification": classification_fps,
             "segmentation": segmentation_fps, "geometry": geometry_fps,
@@ -144,7 +150,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self._last_progress_time: float = 0.0
         self._resume_manifest_path: Optional[Path] = None
 
-    # ── public entry point ────────────────────────────────────────────────
+    # â”€â”€ public entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def extract_subtitles(
         self, video_path: Path, source_language: str | None
@@ -189,7 +195,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             )
             self._write_resume()
         self.runtime.get_client(self.model, api_key=self.api_key)
-        # ── Files API upload (once) ──
+        # â”€â”€ Files API upload (once) â”€â”€
         try:
             file_handle = self.runtime.file_manager.upload_file(
                 str(video_path), mime_type=mime_type
@@ -207,7 +213,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "final_remote_state": file_handle.metadata.get("state"),
         }
 
-        # ── FPS smoke test (gate) ──
+        # â”€â”€ FPS smoke test (gate) â”€â”€
         if "fps_smoke_test" not in self.artifacts:
             self.artifacts["fps_smoke_test"] = self._resolve_fps_smoke_test(
                 file_handle.uri, mime_type, duration
@@ -216,7 +222,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         if not self.artifacts["fps_smoke_test"]["effective"]:
             raise ProviderError("VIDEO_METADATA_FPS_NOT_EFFECTIVE")
 
-        # ── V1: Discovery ──
+        # â”€â”€ V1: Discovery â”€â”€
         raw_checkpoint = self.artifacts.get("checkpoints", {}).get("candidates_raw", {})
         candidates = raw_checkpoint.get("candidates")
         v1_reused = isinstance(candidates, list)
@@ -268,7 +274,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._final_artifact(candidates)
             return []
 
-        # ── Deduplication ──
+        # â”€â”€ Deduplication â”€â”€
         dedup_checkpoint = self.artifacts.get("checkpoints", {}).get("candidates_deduplicated", {})
         merge_groups = dedup_checkpoint.get("merge_groups")
         if isinstance(dedup_checkpoint.get("candidates"), list) and isinstance(merge_groups, list):
@@ -298,7 +304,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._log_progress("[STOP] stop_after_stage=V1")
             return []
 
-        # ── V2: Classification ──
+        # â”€â”€ V2: Classification â”€â”€
         classification_checkpoint = self.artifacts.get("checkpoints", {}).get("classifications", {})
         classifications = classification_checkpoint.get("payload")
         v2_reused = isinstance(classifications, dict)
@@ -325,7 +331,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         }
         self._write_resume()
 
-        # ── Request planning + safety limits ──
+        # â”€â”€ Request planning + safety limits â”€â”€
         plan = self._compute_request_plan(accepted, duration)
         self._checkpoint("request_plan", plan)
         if plan["minimum_total_requests"] > self.max_total_stage_requests:
@@ -357,7 +363,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._final_artifact(candidates)
             return []
 
-        # ── V3: Temporal segmentation in same-stage batches ──
+        # â”€â”€ V3: Temporal segmentation in same-stage batches â”€â”€
         temporal_checkpoint = self.artifacts.get("checkpoints", {}).get("temporal_events", {})
         events = temporal_checkpoint.get("events")
         v3_reused = isinstance(events, list)
@@ -394,7 +400,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         }
         self._write_resume()
 
-        # ── V4: Geometry refinement in same-stage batches ──
+        # â”€â”€ V4: Geometry refinement in same-stage batches â”€â”€
         geometry_checkpoint = self.artifacts.get("checkpoints", {}).get("geometry", {})
         stored_geometry = geometry_checkpoint.get("events")
         v4_reused = isinstance(stored_geometry, list)
@@ -405,17 +411,32 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         v4_inputs = [] if v4_reused else events
         for idx, batch in enumerate(self._batches(v4_inputs)):
             self._check_job_timeout()
-            clip_start = max(0.0, min(item["start_seconds_in_source"] for item in batch) - 0.25)
-            clip_end = min(duration, max(item["end_seconds_in_source"] for item in batch) + 0.25)
-            payload = self._request(
-                "v4_geometry", self._batch_prompt("geometry", batch),
-                self._batch_schema("event_id", self._geometry_schema()), file_handle.uri, mime_type,
-                self.fps["geometry"], start=clip_start, end=clip_end,
-                duration_seconds=duration,
+            frame_sets = [
+                {
+                    "event": event,
+                    "frames": [
+                        {
+                            "frame_role": role,
+                            "timestamp_seconds": timestamp,
+                            "image_bytes": self._extract_geometry_frame(
+                                video_path, timestamp
+                            ),
+                        }
+                        for role, timestamp in self._geometry_frame_times(event)
+                    ],
+                }
+                for event in batch
+            ]
+            payload = self._request_image_geometry(
+                self._image_geometry_prompt(frame_sets),
+                self._batch_schema("event_id", self._image_geometry_schema()),
+                frame_sets,
             )
             responses = self._batch_responses(payload, batch, "event_id")
             for event in batch:
-                geometry[event["event_id"]] = self._validate_geometry(responses[event["event_id"]], event)
+                geometry[event["event_id"]] = self._validate_image_geometry(
+                    responses[event["event_id"]], event
+                )
             self._log_progress(f"[V4] completed={idx+1}/{len(self._batches(events))}")
         self.artifacts["geometry"] = {"events": list(geometry.values())}
         self._checkpoint("geometry", {"events": list(geometry.values())})
@@ -428,7 +449,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         }
         self._write_resume()
 
-        # ── V5: Transcription in same-stage batches ──
+        # â”€â”€ V5: Transcription in same-stage batches â”€â”€
         transcription_checkpoint = self.artifacts.get("checkpoints", {}).get("transcriptions", {})
         transcriptions = transcription_checkpoint.get("events")
         v5_reused = isinstance(transcriptions, list) and bool(transcriptions)
@@ -509,7 +530,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             })
             return []
 
-        # ── Translation in same-stage batches ──
+        # â”€â”€ Translation in same-stage batches â”€â”€
         translation_checkpoint = self.artifacts.get("checkpoints", {}).get("translations", {})
         translations = translation_checkpoint.get("events")
         translation_reused = isinstance(translations, list) and bool(translations)
@@ -539,7 +560,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         }
         self._write_resume()
 
-        # ── Build render eligibility records and final segment list ──
+        # â”€â”€ Build render eligibility records and final segment list â”€â”€
         self._build_render_eligibility(candidates, accepted, events, geometry,
                                         transcriptions, translations, duration)
         self._final_artifact(candidates)
@@ -563,7 +584,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     def debug_artifacts(self) -> Dict[str, Any]:
         return dict(self.artifacts)
 
-    # ── reset ────────────────────────────────────────────────────────────
+    # â”€â”€ reset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _reset(self) -> None:
         self.provenance = []
@@ -572,7 +593,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self._job_start_time = 0.0
         self._last_progress_time = 0.0
 
-    # ── progress / checkpoint / timeout ──────────────────────────────────
+    # â”€â”€ progress / checkpoint / timeout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _log_progress(self, message: str) -> None:
         self._last_progress_time = time.monotonic()
@@ -734,7 +755,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 f"NO_PROGRESS_TIMEOUT: no_progress={no_progress:.1f}s > max={self.no_progress_timeout_seconds}s"
             )
 
-    # ── quota management ────────────────────────────────────────────────
+    # â”€â”€ quota management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _execute_with_quota_management(
         self, stage: str, request_fn: Callable[[], Any]
@@ -783,7 +804,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             return True
         return False
 
-    # ── resume manifest ─────────────────────────────────────────────────
+    # â”€â”€ resume manifest â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _save_legacy_resume_manifest(
         self, video_path: Path, completed_stages: List[str]
@@ -830,7 +851,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     def _chunk(items: List[Any], n: int) -> List[List[Any]]:
         return [items[i:i + n] for i in range(0, len(items), n)]
 
-    # ── request helpers ──────────────────────────────────────────────────
+    # â”€â”€ request helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _quota_wait(
         self,
@@ -1212,6 +1233,110 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
 
         raise ProviderError(last_error or f"Gemini direct-video {stage} text exhausted retries.")
 
+    @staticmethod
+    def _geometry_frame_times(event: Dict[str, Any]) -> List[tuple[str, float]]:
+        start = float(event["start_seconds_in_source"])
+        end = float(event["end_seconds_in_source"])
+        duration = end - start
+        middle = (start + end) / 2
+        if duration < 0.8:
+            return [("middle", middle)]
+        early, late = start + duration * 0.15, end - duration * 0.15
+        if duration <= 1.5:
+            return [("early", early), ("late", late)]
+        return [("early", early), ("middle", middle), ("late", late)]
+
+    @staticmethod
+    def _extract_geometry_frame(video_path: Path, timestamp: float) -> bytes:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-v", "error", "-i", str(video_path),
+                "-ss", f"{timestamp:.3f}", "-frames:v", "1",
+                "-f", "image2pipe", "-c:v", "mjpeg", "-",
+            ],
+            capture_output=True, check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            raise ProviderError("FFmpeg could not extract a V4 geometry frame.")
+        return result.stdout
+
+    def _image_geometry_prompt(self, frame_sets: Sequence[Dict[str, Any]]) -> str:
+        mapping = [
+            {
+                "event_id": item["event"]["event_id"],
+                "frames": [
+                    {
+                        "frame_role": frame["frame_role"],
+                        "timestamp_seconds": frame["timestamp_seconds"],
+                        "sha256": hashlib.sha256(frame["image_bytes"]).hexdigest(),
+                    }
+                    for frame in item["frames"]
+                ],
+            }
+            for item in frame_sets
+        ]
+        return (
+            "You are analyzing original high-resolution portrait-video frames. For each "
+            "event, identify only its main dialogue subtitle. Do not confuse it with "
+            "warning labels, creator notes, logos, account labels, stickers, UI overlays, "
+            "or unrelated scene text. Return source_text_bbox, source_container_bbox, and "
+            "recommended_cover_bbox. Include every event glyph, even for subtitles spanning "
+            "70-90% of a 9:16 frame. recommended_cover_bbox must be the smallest localized "
+            "rectangle hiding the subtitle and subtitle-specific container only. Coordinates "
+            "must be [y_min, x_min, y_max, x_max] on a 0-1000 scale. Return Gemini visual "
+            "safety fields overlaps_person, overlaps_important_object, overlaps_unrelated_text, "
+            "and needs_review. Frame mapping:\n"
+            + json.dumps(mapping, ensure_ascii=False)
+        )
+
+    def _request_image_geometry(
+        self, prompt: str, schema: Dict[str, Any], frame_sets: Sequence[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        parts: List[Dict[str, Any]] = [{"text": prompt}]
+        image_blobs: List[bytes] = []
+        for item in frame_sets:
+            for frame in item["frames"]:
+                blob = frame["image_bytes"]
+                image_blobs.append(blob)
+                parts.extend([
+                    {
+                        "text": (
+                            f"event_id={item['event']['event_id']} "
+                            f"frame_role={frame['frame_role']} "
+                            f"timestamp_seconds={frame['timestamp_seconds']:.3f}"
+                        )
+                    },
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": base64.b64encode(blob).decode("ascii"),
+                        }
+                    },
+                ])
+        request = GeminiRequest(
+            contents=[{"parts": parts}], model=self.model,
+            generation_config={"responseMimeType": "application/json", "responseSchema": schema},
+            system_instruction=prompt, prompt_version=self.prompt_version,
+            schema_version=self.schema_version, source_kind="v4_image_geometry",
+            media_sha256=hashlib.sha256(b"".join(image_blobs)).hexdigest(),
+            api_surface="generate_content",
+        )
+        client = self.runtime.get_client(self.model, role=MODE_ROLE_PRIMARY, api_key=self.api_key)
+        request.predicted_tokens = client.count_tokens(request)
+        self._audit_safe_slot("v4_image_geometry", request.predicted_tokens or 0)
+        response = client.generate_content(request)
+        payload = parse_structured(response.text)
+        if not isinstance(payload, dict):
+            raise ProviderError("V4 image geometry response was not an object.")
+        self.provenance.append({
+            "stage": "v4_image_geometry", "input_type": "image", "model": self.model,
+            "image_part_count": len(image_blobs), "local_ocr_calls": 0,
+            "count_tokens": request.predicted_tokens,
+            "actual_usage": response.usage.to_dict() if response.usage else {},
+            "cache_hit": getattr(response, "cache_hit", False),
+        })
+        return payload
+
     def _media_resolution_enum(self) -> str:
         resolution = self.media_resolution.upper()
         if resolution in {"LOW", "MEDIA_RESOLUTION_LOW"}:
@@ -1307,7 +1432,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             body["safetySettings"] = request.safety_settings
         return body
 
-    # ── bbox / geometry validation ──────────────────────────────────────
+    # â”€â”€ bbox / geometry validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _validate_box(box: Any) -> List[float]:
@@ -1326,7 +1451,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         ymin, xmin, ymax, xmax = box
         return (ymax - ymin) * (xmax - xmin)
 
-    # ── FFprobe helpers (pre-inference only) ────────────────────────────
+    # â”€â”€ FFprobe helpers (pre-inference only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _probe_duration(path: str) -> float:
@@ -1386,7 +1511,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         except Exception:
             return 0
 
-    # ── V1 validation ───────────────────────────────────────────────────
+    # â”€â”€ V1 validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _validate_candidates(
         self, payload: Dict[str, Any], duration: float
@@ -1423,7 +1548,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             })
         return result
 
-    # ── Candidate deduplication ─────────────────────────────────────────
+    # â”€â”€ Candidate deduplication â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _box_iou(a: Sequence[float], b: Sequence[float]) -> float:
@@ -1507,7 +1632,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
 
         return result, merge_groups
 
-    # ── Request planning ────────────────────────────────────────────────
+    # â”€â”€ Request planning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _compute_request_plan(
         self, accepted: List[Dict[str, Any]], duration: float
@@ -1535,7 +1660,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "video_duration": duration,
         }
 
-    # ── V2 validation ───────────────────────────────────────────────────
+    # â”€â”€ V2 validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _validate_classifications(
         self, payload: Dict[str, Any], candidates: Sequence[Dict[str, Any]]
@@ -1576,7 +1701,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             )
         return accepted, rejected, review_required
 
-    # ── V3 validation ──────────────────────────────────────────────────
+    # â”€â”€ V3 validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _validate_events(
@@ -1649,7 +1774,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             })
         return result
 
-    # ── V4 validation ───────────────────────────────────────────────────
+    # â”€â”€ V4 validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _validate_geometry(
         self, payload: Dict[str, Any], event: Dict[str, Any]
@@ -1710,7 +1835,89 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "box_keyframes": valid_keyframes,
         }
 
-    # ── V5 validation ───────────────────────────────────────────────────
+    def _validate_image_geometry(
+        self, payload: Dict[str, Any], event: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        if payload.get("event_id") != event["event_id"]:
+            raise ProviderError("V4 image geometry event ID mismatch.")
+        raw_observations = payload.get("frame_observations")
+        if not isinstance(raw_observations, list):
+            raise ProviderError("V4 image geometry observations are missing.")
+        observations = []
+        review_reasons = []
+        for item in raw_observations:
+            if not isinstance(item, dict):
+                review_reasons.append("INVALID_OBSERVATION")
+                continue
+            if item.get("needs_review") is True or any(
+                item.get(field) is True for field in (
+                    "overlaps_person", "overlaps_important_object",
+                    "overlaps_unrelated_text",
+                )
+            ):
+                review_reasons.append("GEMINI_SAFETY_REVIEW")
+                continue
+            try:
+                text_box = self._validate_box(item.get("source_text_bbox"))
+                container_box = self._validate_box(item.get("source_container_bbox"))
+                cover_box = self._validate_box(item.get("recommended_cover_bbox"))
+                if (
+                    cover_box[0] > text_box[0] or cover_box[1] > text_box[1]
+                    or cover_box[2] < text_box[2] or cover_box[3] < text_box[3]
+                    or cover_box[0] > container_box[0] or cover_box[1] > container_box[1]
+                    or cover_box[2] < container_box[2] or cover_box[3] < container_box[3]
+                ):
+                    raise ProviderError("Image cover does not contain source geometry.")
+            except ProviderError:
+                review_reasons.append("INVALID_OBSERVATION")
+                continue
+            observations.append({
+                "frame_role": item.get("frame_role"),
+                "timestamp_seconds": item.get("timestamp_seconds"),
+                "source_text_bbox": text_box,
+                "source_container_bbox": container_box,
+                "recommended_cover_bbox": cover_box,
+                "visible_source_text": str(item.get("visible_source_text", "")),
+                "overlay_type": str(item.get("overlay_type", "other")),
+                "confidence": float(item.get("confidence", 0.0)),
+                "needs_review": False,
+            })
+        if observations:
+            cover_box = [
+                min(item["recommended_cover_bbox"][0] for item in observations),
+                min(item["recommended_cover_bbox"][1] for item in observations),
+                max(item["recommended_cover_bbox"][2] for item in observations),
+                max(item["recommended_cover_bbox"][3] for item in observations),
+            ]
+            if self._box_area(cover_box) > 450000:
+                review_reasons.append("COVER_SAFETY_REVIEW")
+        else:
+            cover_box = self._validate_box(event["representative_box_2d"])
+            review_reasons.append("NO_VALID_OBSERVATION")
+        widths = [
+            item["recommended_cover_bbox"][3] - item["recommended_cover_bbox"][1]
+            for item in observations
+        ]
+        if widths and max(widths) - min(widths) > 150:
+            review_reasons.append("INCONSISTENT_OBSERVATIONS")
+        confidence = payload.get("geometry_confidence")
+        if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ProviderError("V4 image geometry confidence is invalid.")
+        return {
+            "event_id": event["event_id"],
+            "text_bbox": observations[0]["source_text_bbox"] if observations else cover_box,
+            "container_bbox": observations[0]["source_container_bbox"] if observations else cover_box,
+            "recommended_cover_bbox": cover_box,
+            "representative_box_2d": cover_box,
+            "geometry_confidence": float(confidence),
+            "needs_review": bool(payload.get("needs_review")) or bool(review_reasons),
+            "review_reason": ",".join(review_reasons) if review_reasons else None,
+            "frame_observations": observations,
+            "aggregation_method": "bounded_union",
+            "box_keyframes": [],
+        }
+
+    # â”€â”€ V5 validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _assess_transcription(
@@ -1776,7 +1983,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             payload, event, source_language
         ).get("transcription")
 
-    # ── translation ──────────────────────────────────────────────────────
+    # â”€â”€ translation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _validate_translation(
@@ -1796,7 +2003,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             return None
         return text
 
-    # ── render eligibility ──────────────────────────────────────────────
+    # â”€â”€ render eligibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _build_render_eligibility(
         self,
@@ -1852,6 +2059,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     reasons.append("INVALID_TIMING")
                 if not record["geometry_valid"]:
                     reasons.append("GEOMETRY_FAILED")
+                if g is not None and g.get("needs_review"):
+                    reasons.append("GEOMETRY_REVIEW_REQUIRED")
                 if not record["transcription_valid"]:
                     reasons.append("TRANSCRIPTION_FAILED")
                 if not record["translation_valid"]:
@@ -1866,7 +2075,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
 
         self.artifacts["render_eligibility"] = {"events": self._render_eligibility}
 
-    # ── final artifact ──────────────────────────────────────────────────
+    # â”€â”€ final artifact â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _final_artifact(self, candidates: List[Dict[str, Any]]) -> None:
         paths = self.provenance
@@ -1883,7 +2092,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "v1_candidate_count": len(candidates),
         }
 
-    # ── prompts ─────────────────────────────────────────────────────────
+    # â”€â”€ prompts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _discovery_prompt() -> str:
@@ -1953,7 +2162,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             f"Source text: {text}"
         )
 
-    # ── schemas ─────────────────────────────────────────────────────────
+    # â”€â”€ schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _discovery_schema() -> Dict[str, Any]:
@@ -2060,6 +2269,50 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         }
 
     @staticmethod
+    def _image_geometry_schema() -> Dict[str, Any]:
+        observation = {
+            "type": "object",
+            "properties": {
+                "frame_role": {"type": "string"},
+                "timestamp_seconds": {"type": "number"},
+                "source_text_bbox": {"type": "array", "items": {"type": "number"}},
+                "source_container_bbox": {"type": "array", "items": {"type": "number"}},
+                "recommended_cover_bbox": {"type": "array", "items": {"type": "number"}},
+                "visible_source_text": {"type": "string"},
+                "overlay_type": {"type": "string"},
+                "confidence": {"type": "number"},
+                "overlaps_person": {"type": "boolean"},
+                "overlaps_important_object": {"type": "boolean"},
+                "overlaps_unrelated_text": {"type": "boolean"},
+                "needs_review": {"type": "boolean"},
+            },
+            "required": [
+                "frame_role", "timestamp_seconds", "source_text_bbox",
+                "source_container_bbox", "recommended_cover_bbox",
+                "visible_source_text", "overlay_type", "confidence",
+                "overlaps_person", "overlaps_important_object",
+                "overlaps_unrelated_text", "needs_review",
+            ],
+        }
+        return {
+            "type": "object",
+            "properties": {
+                "event_id": {"type": "string"},
+                "frame_observations": {"type": "array", "items": observation},
+                "event_recommended_cover_bbox": {
+                    "type": "array", "items": {"type": "number"},
+                },
+                "geometry_confidence": {"type": "number"},
+                "needs_review": {"type": "boolean"},
+            },
+            "required": [
+                "event_id", "frame_observations",
+                "event_recommended_cover_bbox", "geometry_confidence",
+                "needs_review",
+            ],
+        }
+
+    @staticmethod
     def _transcription_schema() -> Dict[str, Any]:
         return {
             "type": "object",
@@ -2089,7 +2342,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "required": ["event_id", "translated_text"],
         }
 
-    # ── helpers ──────────────────────────────────────────────────────────
+    # â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _pixel_free_bbox(box: Sequence[float]) -> Dict[str, float]:
@@ -2100,3 +2353,4 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         for name in ("classifications", "temporal_events", "geometry",
                       "transcriptions", "translations", "render_eligibility"):
             self.artifacts.setdefault(name, {"events": []})
+

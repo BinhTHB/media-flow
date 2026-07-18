@@ -788,6 +788,7 @@ def test_g51_no_live_network_in_pytest():
 
 def test_fps_certification_reuse_skips_smoke_request(tmp_path, monkeypatch):
     import json
+    from datetime import datetime, timezone
     cert_path = tmp_path / "g5_fps_certification.json"
     cert_path.write_text(json.dumps({
         "status": "PARTIAL",
@@ -798,7 +799,7 @@ def test_fps_certification_reuse_skips_smoke_request(tmp_path, monkeypatch):
         "fps_low_count_tokens": 1838,
         "fps_high_count_tokens": 9908,
         "video_metadata_serialized": True,
-        "certified_at": "2026-07-17T12:15:01Z",
+        "certified_at": datetime.now(timezone.utc).isoformat(),
         "payload_schema_version": "gemini_direct_video_g5_v2",
     }), encoding="utf-8")
 
@@ -860,7 +861,7 @@ def test_fps_certification_identity_mismatch_fails(tmp_path, monkeypatch):
         "fps_low_count_tokens": 1838,
         "fps_high_count_tokens": 9908,
         "video_metadata_serialized": True,
-        "certified_at": "2026-07-17T12:15:01Z",
+        "certified_at": "2026-07-18T12:27:13.262653Z",
         "payload_schema_version": "gemini_direct_video_g5_v2",
     }), encoding="utf-8")
 
