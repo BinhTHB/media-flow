@@ -1274,6 +1274,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 "recommended_cover_bbox must cover all source text plus its banner/bubble, border, "
                 "outline, shadow, and safe padding. It may be asymmetrically wider than text_bbox, "
                 "but must remain localized and exclude people, unrelated objects, logos, and scene text. "
+                "For a visible banner or bubble, cover its full rendered width and height, not only the "
+                "central text area, so no source characters remain visible at either edge. "
                 "Use normalized [ymin, xmin, ymax, xmax] coordinates from 0 to 1000. "
                 "Return overlay_type, geometry_confidence, and needs_review. Do not transcribe or translate."
             ),
