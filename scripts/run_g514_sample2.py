@@ -321,6 +321,7 @@ def main() -> None:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--translation-checkpoint", type=Path)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--live-visual-qa", action="store_true")
     args = parser.parse_args()
     artifact_path, checkpoint_path = args.output_root / "g514_sample2.json", args.output_root / "g514_checkpoint.json"
@@ -330,7 +331,9 @@ def main() -> None:
     try:
         manifest, video_sha256 = json.loads(args.manifest.read_text(encoding="utf-8")), file_hash(args.video)
         events = validate_completed_stages(manifest, video_sha256)
-        loader, config = ConfigLoader(), ConfigLoader().load()
+        loader = ConfigLoader()
+        loader.secrets_path = str(ROOT / "config.yml")
+        config = loader.load()
         batch_size = args.batch_size or config.gemini.direct_video_batch_size
         if batch_size < 1:
             raise G514ValidationError("BATCH_SIZE_INVALID")
@@ -341,6 +344,28 @@ def main() -> None:
             source_texts, v5_status = reconstruct_v5(events, replay, video_sha256), "RECONSTRUCTED_FROM_IMMUTABLE_ARTIFACTS"
         except G514ValidationError:
             source_texts, v5_status = None, "V5_PROVENANCE_RECONSTRUCTION_FAILED"
+        if args.plan_only:
+            artifact = {
+                "phase": "G.5.14 Sample2 image-level dynamic replacement",
+                "request_status": "PLANNED",
+                "v1_v3_request_status": "REUSED_NO_REQUESTS",
+                "v5_provenance_status": v5_status,
+                "source_text_hint_status": (
+                    "VERIFIED" if source_texts else "UNAVAILABLE_UNVERIFIED"
+                ),
+                "events": len(events),
+                "image_parts": sum(len(geometry_frame_times(event)) for event in events),
+                "batch_size": batch_size,
+                "v4_batches": (len(events) + batch_size - 1) // batch_size,
+                "quota_report": quota,
+            }
+            args.output_root.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_text(
+                json.dumps(artifact, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            print(artifact_path)
+            return
         provider = ProviderFactory(config=config.providers, gemini_config=config.gemini, gemini_api_key=loader.gemini_api_key).create_ocr_provider(PROVIDER)
         geometry: list[dict[str, Any]] = []
         for batch in _batches(events, batch_size):
@@ -355,7 +380,9 @@ def main() -> None:
             responses = provider._batch_responses(payload, batch, "event_id")
             batch_geometry = [{**provider._validate_image_geometry(responses[event["event_id"]], event), "source_text_hint": source_texts.get(event["event_id"]) if source_texts else None, "source_text_hint_status": "VERIFIED" if source_texts else "UNAVAILABLE_UNVERIFIED"} for event in batch]
             geometry.extend(batch_geometry)
-            checkpoint.setdefault("v4_batches", {})[key] = build_v4_batch_checkpoint(batch, batch_geometry, video_sha256)
+            checkpoint.setdefault("v4_batches", {})[key] = build_v4_batch_checkpoint(
+                batch, batch_geometry, video_sha256
+            )
             save_checkpoint(checkpoint_path, checkpoint)
         v5_hash = canonical_hash({"video": video_sha256, "timings": event_timing_hash(events)})
         if source_texts is None:
