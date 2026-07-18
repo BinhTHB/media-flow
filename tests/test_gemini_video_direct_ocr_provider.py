@@ -954,6 +954,61 @@ def test_safe_slot_audit_waits_before_generate(monkeypatch):
     assert sleeps == [4.0]
     assert provider.artifacts["safe_slot_audit"]["rolling_requests"] == 1
 
+def test_non_v1_generate_request_uses_safe_slot_audit(monkeypatch):
+    provider = GeminiDirectVideoOCRProvider()
+    audited = []
+
+    class Client:
+        def count_tokens(self, _request):
+            return 12
+
+        def generate_content(self, _request):
+            return _Response()
+
+    monkeypatch.setattr(provider.runtime, "get_client", lambda *args, **kwargs: Client())
+    monkeypatch.setattr(
+        provider, "_audit_safe_slot", lambda stage, tokens: audited.append((stage, tokens))
+    )
+
+    provider._request(
+        "v2_classification",
+        "classify only",
+        provider._classification_schema(),
+        "https://example.invalid/files/video",
+        "video/mp4",
+        6,
+        duration_seconds=10,
+    )
+
+    assert audited == [("v2_classification", 12)]
+
+def test_generate_timeout_marks_stage_resumable(monkeypatch):
+    provider = GeminiDirectVideoOCRProvider(max_retry_per_stage=0)
+
+    class Client:
+        def count_tokens(self, _request):
+            return 12
+
+        def generate_content(self, _request):
+            raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(provider.runtime, "get_client", lambda *args, **kwargs: Client())
+    monkeypatch.setattr(provider, "_audit_safe_slot", lambda *_args: None)
+
+    with pytest.raises(ProviderError, match="NETWORK_TIMEOUT.*RESUMABLE"):
+        provider._request(
+            "v3_segmentation",
+            "segment only",
+            provider._segmentation_schema(),
+            "https://example.invalid/files/video",
+            "video/mp4",
+            12,
+            duration_seconds=10,
+        )
+
+    assert provider.artifacts["stage_status"]["v3_segmentation"]["status"] == "BLOCKED"
+    assert provider.artifacts["checkpoints"]["final"]["resume_stage"] == "v3_segmentation"
+
 
 def test_config_loader_reads_direct_video_model_and_rpm_from_config_yml(tmp_path):
     from src.interfaces.config.config_loader import ConfigLoader

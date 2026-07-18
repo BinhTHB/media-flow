@@ -301,6 +301,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         # ── V2: Classification ──
         classification_checkpoint = self.artifacts.get("checkpoints", {}).get("classifications", {})
         classifications = classification_checkpoint.get("payload")
+        v2_reused = isinstance(classifications, dict)
         if not isinstance(classifications, dict):
             classifications = self._request(
                 "v2_classification", self._classification_prompt(candidates),
@@ -315,6 +316,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self._log_progress(
             f"[V2] accepted={len(accepted)} rejected={len(rejected)} review={len(review)}"
         )
+        self.artifacts.setdefault("stage_status", {})["V2"] = {
+            "status": "COMPLETED_REUSED" if v2_reused else "COMPLETED",
+            "network_request_completed": not v2_reused,
+            "network_request_skipped": v2_reused,
+            "artifact_sha256": self._artifact_hash(classifications),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_resume()
 
         # ── Request planning + safety limits ──
         plan = self._compute_request_plan(accepted, duration)
@@ -349,8 +358,13 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             return []
 
         # ── V3: Temporal segmentation in same-stage batches ──
-        events: List[Dict[str, Any]] = []
-        for idx, batch in enumerate(self._batches(accepted)):
+        temporal_checkpoint = self.artifacts.get("checkpoints", {}).get("temporal_events", {})
+        events = temporal_checkpoint.get("events")
+        v3_reused = isinstance(events, list)
+        if not isinstance(events, list):
+            events = []
+        v3_inputs = [] if v3_reused else accepted
+        for idx, batch in enumerate(self._batches(v3_inputs)):
             self._check_job_timeout()
             clip_start = max(0.0, min(item["start_seconds"] for item in batch) - self.clip_padding_seconds)
             clip_end = min(duration, max(item["end_seconds"] for item in batch) + self.clip_padding_seconds)
@@ -371,10 +385,25 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._log_progress(f"[V3] completed={idx+1}/{len(self._batches(accepted))}")
         self.artifacts["temporal_events"] = {"events": events}
         self._checkpoint("temporal_events", {"events": events})
+        self.artifacts.setdefault("stage_status", {})["V3"] = {
+            "status": "COMPLETED_REUSED" if v3_reused else "COMPLETED",
+            "network_request_completed": not v3_reused,
+            "network_request_skipped": v3_reused,
+            "artifact_sha256": self._artifact_hash(events),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_resume()
 
         # ── V4: Geometry refinement in same-stage batches ──
-        geometry: Dict[str, Dict[str, Any]] = {}
-        for idx, batch in enumerate(self._batches(events)):
+        geometry_checkpoint = self.artifacts.get("checkpoints", {}).get("geometry", {})
+        stored_geometry = geometry_checkpoint.get("events")
+        v4_reused = isinstance(stored_geometry, list)
+        geometry = (
+            {item["event_id"]: item for item in stored_geometry}
+            if v4_reused else {}
+        )
+        v4_inputs = [] if v4_reused else events
+        for idx, batch in enumerate(self._batches(v4_inputs)):
             self._check_job_timeout()
             clip_start = max(0.0, min(item["start_seconds_in_source"] for item in batch) - 0.25)
             clip_end = min(duration, max(item["end_seconds_in_source"] for item in batch) + 0.25)
@@ -390,11 +419,26 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._log_progress(f"[V4] completed={idx+1}/{len(self._batches(events))}")
         self.artifacts["geometry"] = {"events": list(geometry.values())}
         self._checkpoint("geometry", {"events": list(geometry.values())})
+        self.artifacts.setdefault("stage_status", {})["V4"] = {
+            "status": "COMPLETED_REUSED" if v4_reused else "COMPLETED",
+            "network_request_completed": not v4_reused,
+            "network_request_skipped": v4_reused,
+            "artifact_sha256": self._artifact_hash(list(geometry.values())),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_resume()
 
         # ── V5: Transcription in same-stage batches ──
-        transcriptions: List[Dict[str, Any]] = []
-        transcription_inputs = [{**event, "bbox": geometry[event["event_id"]]["representative_box_2d"]}
-                                for event in events if event["event_id"] in geometry]
+        transcription_checkpoint = self.artifacts.get("checkpoints", {}).get("transcriptions", {})
+        transcriptions = transcription_checkpoint.get("events")
+        v5_reused = isinstance(transcriptions, list)
+        if not isinstance(transcriptions, list):
+            transcriptions = []
+        transcription_inputs = (
+            [] if v5_reused else
+            [{**event, "bbox": geometry[event["event_id"]]["representative_box_2d"]}
+             for event in events if event["event_id"] in geometry]
+        )
         for idx, batch in enumerate(self._batches(transcription_inputs)):
             self._check_job_timeout()
             clip_start = max(0.0, min(item["start_seconds_in_source"] for item in batch) - 0.25)
@@ -413,10 +457,23 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._log_progress(f"[V5] completed={idx+1}/{len(self._batches(transcription_inputs))}")
         self.artifacts["transcriptions"] = {"events": transcriptions}
         self._checkpoint("transcriptions", {"events": transcriptions})
+        self.artifacts.setdefault("stage_status", {})["V5"] = {
+            "status": "COMPLETED_REUSED" if v5_reused else "COMPLETED",
+            "network_request_completed": not v5_reused,
+            "network_request_skipped": v5_reused,
+            "artifact_sha256": self._artifact_hash(transcriptions),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_resume()
 
         # ── Translation in same-stage batches ──
-        translations: List[Dict[str, Any]] = []
-        for idx, batch in enumerate(self._batches(transcriptions)):
+        translation_checkpoint = self.artifacts.get("checkpoints", {}).get("translations", {})
+        translations = translation_checkpoint.get("events")
+        translation_reused = isinstance(translations, list)
+        if not isinstance(translations, list):
+            translations = []
+        translation_inputs = [] if translation_reused else transcriptions
+        for idx, batch in enumerate(self._batches(translation_inputs)):
             self._check_job_timeout()
             payload = self._text_request(
                 "translation",
@@ -430,6 +487,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._log_progress(f"[TR] completed={idx+1}/{len(self._batches(transcriptions))}")
         self.artifacts["translations"] = {"events": translations}
         self._checkpoint("translations", {"events": translations})
+        self.artifacts.setdefault("stage_status", {})["TRANSLATION"] = {
+            "status": "COMPLETED_REUSED" if translation_reused else "COMPLETED",
+            "network_request_completed": not translation_reused,
+            "network_request_skipped": translation_reused,
+            "artifact_sha256": self._artifact_hash(translations),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_resume()
 
         # ── Build render eligibility records and final segment list ──
         self._build_render_eligibility(candidates, accepted, events, geometry,
@@ -516,6 +581,18 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.artifacts.setdefault("checkpoints", {})[name] = data
         self._last_progress_time = time.monotonic()
         self._write_resume()
+
+    def _mark_stage_blocked(self, stage: str, reason: str) -> None:
+        self.artifacts.setdefault("stage_status", {})[stage] = {
+            "status": "BLOCKED",
+            "reason": reason,
+            "completed_at": None,
+        }
+        self._checkpoint("final", {
+            "status": "REVIEW_REQUIRED",
+            "resume_stage": stage,
+            "reason": reason,
+        })
 
     def _manifest_path(self, video_path: Path) -> Path:
         digest = hashlib.sha256(video_path.read_bytes()).hexdigest()
@@ -835,14 +912,19 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     raise ProviderError(
                         f"TOKEN_BUDGET_EXCEEDED: predicted={counted_tokens} > max={self.max_counted_input_tokens_per_job}"
                     )
-                if stage == "v1_discovery":
-                    self._audit_safe_slot(stage, counted_tokens or 0)
+                self._audit_safe_slot(stage, counted_tokens or 0)
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
             except GeminiRateLimitError as exc:
                 self._quota_wait(stage, exc, quota_retries, serialized_sha, counted_tokens)
                 quota_retries += 1
                 continue
+            except TimeoutError as exc:
+                self._mark_stage_blocked(
+                    stage,
+                    "NETWORK_TIMEOUT: generateContent response was not received",
+                )
+                raise ProviderError(f"NETWORK_TIMEOUT: stage={stage} (RESUMABLE)") from exc
             except GeminiError as exc:
                 last_error = f"Gemini direct-video {stage} attempt {attempt+1} failed: {exc}"
                 if attempt < max_attempts - 1:
@@ -1040,12 +1122,19 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     raise ProviderError(
                         f"TOKEN_BUDGET_EXCEEDED: predicted={counted_tokens} > max={self.max_counted_input_tokens_per_job}"
                     )
+                self._audit_safe_slot(stage, counted_tokens or 0)
                 response = client.generate_content(request)
                 response_payload = parse_structured(response.text)
             except GeminiRateLimitError as exc:
                 self._quota_wait(stage, exc, quota_retries, serialized_sha, counted_tokens)
                 quota_retries += 1
                 continue
+            except TimeoutError as exc:
+                self._mark_stage_blocked(
+                    stage,
+                    "NETWORK_TIMEOUT: generateContent response was not received",
+                )
+                raise ProviderError(f"NETWORK_TIMEOUT: stage={stage} (RESUMABLE)") from exc
             except GeminiError as exc:
                 last_error = f"Gemini direct-video {stage} text attempt {attempt+1} failed: {exc}"
                 if attempt < max_attempts - 1:
