@@ -1,7 +1,7 @@
-from pathlib import Path
 import hashlib
 import pytest
 import unicodedata
+from pathlib import Path
 from src.infrastructure.gemini.client import GeminiClient
 from src.infrastructure.gemini.contracts import GeminiRequest
 from src.infrastructure.gemini.file_manager import FileManager
@@ -129,6 +129,154 @@ def test_direct_video_geometry_rejects_cover_not_containing_container():
             "geometry_confidence": 0.95,
             "needs_review": False,
         }, {"event_id": "e1"})
+
+
+def _image_safety_event():
+    return {
+        "event_id": "e1",
+        "start_seconds_in_source": 0.0,
+        "end_seconds_in_source": 2.0,
+        "representative_box_2d": [700, 200, 800, 800],
+    }
+
+
+def _image_safety_observation(role, safety="SAFE_EQUIVALENT_OCCLUSION", **overrides):
+    return {
+        "frame_role": role,
+        "timestamp_seconds": 1.0,
+        "source_text_bbox": [720, 250, 780, 750],
+        "source_container_bbox": [700, 200, 800, 800],
+        "recommended_cover_bbox": [700, 200, 800, 800],
+        "source_container_overlaps_person": True,
+        "recommended_cover_overlaps_person": True,
+        "incremental_person_overlap": False,
+        "incremental_important_object_overlap": False,
+        "incremental_unrelated_text_overlap": False,
+        "incremental_overlap_regions": [],
+        "replacement_safety": safety,
+        "geometry_confidence": 0.98,
+        "safety_confidence": 0.94,
+        "needs_review": False,
+        "review_reason": None,
+        **overrides,
+    }
+
+
+def _image_safety_payload(*observations):
+    return {
+        "event_id": "e1",
+        "frame_observations": list(observations),
+        "event_recommended_cover_bbox": [700, 200, 800, 800],
+        "geometry_confidence": 0.98,
+        "needs_review": False,
+    }
+
+
+def test_image_geometry_accepts_equivalent_existing_person_occlusion():
+    provider = GeminiDirectVideoOCRProvider()
+    geometry = provider._validate_image_geometry(_image_safety_payload(
+        _image_safety_observation("early"),
+        _image_safety_observation("middle"),
+        _image_safety_observation("late"),
+    ), _image_safety_event())
+
+    assert geometry["needs_review"] is False
+    assert geometry["replacement_safety"] == "SAFE_EQUIVALENT_OCCLUSION"
+    assert geometry["recommended_cover_bbox"] == [700.0, 200.0, 800.0, 800.0]
+    assert geometry["frame_observations"][0]["source_container_overlaps_person"] is True
+
+
+def test_image_geometry_accepts_minor_safe_expansion():
+    provider = GeminiDirectVideoOCRProvider()
+    geometry = provider._validate_image_geometry(_image_safety_payload(
+        _image_safety_observation("early"),
+        _image_safety_observation("middle", "SAFE_MINOR_EXPANSION"),
+        _image_safety_observation("late"),
+    ), _image_safety_event())
+
+    assert geometry["needs_review"] is False
+    assert geometry["replacement_safety"] == "SAFE_MINOR_EXPANSION"
+
+
+@pytest.mark.parametrize(
+    ("field", "safety"),
+    [
+        ("incremental_person_overlap", "UNSAFE_INCREMENTAL_OCCLUSION"),
+        ("incremental_important_object_overlap", "UNSAFE_INCREMENTAL_OCCLUSION"),
+        ("incremental_unrelated_text_overlap", "UNSAFE_INCREMENTAL_OCCLUSION"),
+    ],
+)
+def test_image_geometry_rejects_incremental_damage_without_majority_vote(field, safety):
+    provider = GeminiDirectVideoOCRProvider()
+    unsafe = _image_safety_observation(
+        "middle", safety, **{field: True, "incremental_overlap_regions": ["face"]}
+    )
+    geometry = provider._validate_image_geometry(_image_safety_payload(
+        _image_safety_observation("early"), unsafe, _image_safety_observation("late"),
+    ), _image_safety_event())
+
+    assert geometry["needs_review"] is True
+    assert geometry["replacement_safety"] == "UNSAFE_INCREMENTAL_OCCLUSION"
+    assert geometry["image_level_recommended_cover_bbox"] is None
+    assert geometry["fallback_bbox"] == [700.0, 200.0, 800.0, 800.0]
+    assert geometry["fallback_used_for_render"] is False
+
+
+def test_image_geometry_review_bbox_is_never_aggregated():
+    provider = GeminiDirectVideoOCRProvider()
+    review = _image_safety_observation(
+        "middle", "REVIEW_REQUIRED", needs_review=True, review_reason="uncertain"
+    )
+    geometry = provider._validate_image_geometry(_image_safety_payload(
+        _image_safety_observation("early"), review, _image_safety_observation("late"),
+    ), _image_safety_event())
+
+    assert geometry["needs_review"] is True
+    assert geometry["recommended_cover_bbox"] is None
+    assert geometry["representative_box_2d"] is None
+
+
+def test_image_geometry_sends_three_frames_in_one_request(monkeypatch):
+    provider = GeminiDirectVideoOCRProvider()
+    captured = {}
+
+    class Client:
+        def count_tokens(self, request):
+            captured["count"] = request
+            return 12
+
+        def generate_content(self, request):
+            captured["generate"] = request
+            return type("Response", (), {
+                "text": '{"results": []}', "usage": _Response.usage(), "cache_hit": False,
+            })()
+
+    monkeypatch.setattr(provider.runtime, "get_client", lambda *args, **kwargs: Client())
+    frame_set = [{
+        "event": _image_safety_event(),
+        "frames": [
+            {"frame_role": role, "timestamp_seconds": index, "image_bytes": b"jpeg"}
+            for index, role in enumerate(("early", "middle", "late"))
+        ],
+    }]
+    provider._request_image_geometry(
+        provider._image_geometry_prompt(frame_set),
+        provider._batch_schema("event_id", provider._image_geometry_schema()),
+        frame_set,
+    )
+
+    assert captured["count"] is captured["generate"]
+    assert provider.provenance[-1]["image_part_count"] == 3
+    assert len(captured["generate"].contents) == 1
+
+
+def test_image_geometry_contract_does_not_import_local_cv_or_ocr():
+    provider_source = Path(
+        "src/infrastructure/providers/ocr/gemini_video_direct_provider.py"
+    ).read_text(encoding="utf-8").lower()
+
+    assert "import cv2" not in provider_source
+    assert "paddleocr" not in provider_source
 
 
 def test_direct_video_rejects_incomplete_or_duplicate_classifications():

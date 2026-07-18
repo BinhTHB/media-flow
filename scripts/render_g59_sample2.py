@@ -50,6 +50,9 @@ def build_render_plan(manifest: dict[str, Any], width: int, height: int) -> dict
         if not event or not geom or event["candidate_id"] not in accepted:
             skipped.append({"event_id": event_id, "reason": "missing_prerequisite"})
             continue
+        if geom.get("needs_review"):
+            skipped.append({"event_id": event_id, "reason": "geometry_review_required"})
+            continue
         text = str(translation.get("translated_text", "")).strip()
         box = _pixel_box(geom["representative_box_2d"], width, height)
         box_area = (box["right"] - box["left"]) * (box["bottom"] - box["top"])

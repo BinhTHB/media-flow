@@ -25,6 +25,16 @@ from src.shared.exceptions import ProviderError
 
 
 _SUBTITLE_CLASSES = {"dialogue_subtitle", "narration_subtitle"}
+_REPLACEMENT_SAFETY = {
+    "SAFE_EQUIVALENT_OCCLUSION",
+    "SAFE_MINOR_EXPANSION",
+    "UNSAFE_INCREMENTAL_OCCLUSION",
+    "REVIEW_REQUIRED",
+}
+_ACCEPTED_REPLACEMENT_SAFETY = {
+    "SAFE_EQUIVALENT_OCCLUSION",
+    "SAFE_MINOR_EXPANSION",
+}
 _ALL_CLASSES = _SUBTITLE_CLASSES | {
     "title_card", "scene_text", "watermark", "logo", "user_interface",
     "warning_overlay", "account_or_channel_label", "other", "review_required",
@@ -440,8 +450,12 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             self._log_progress(f"[V4] completed={idx+1}/{len(self._batches(events))}")
         self.artifacts["geometry"] = {"events": list(geometry.values())}
         self._checkpoint("geometry", {"events": list(geometry.values())})
+        v4_blocked = any(item.get("needs_review") for item in geometry.values())
         self.artifacts.setdefault("stage_status", {})["V4"] = {
-            "status": "COMPLETED_REUSED" if v4_reused else "COMPLETED",
+            "request_status": "REUSED" if v4_reused else "COMPLETED",
+            "validation_status": "REVIEW_REQUIRED" if v4_blocked else "ACCEPTED",
+            "stage_status": "BLOCKED" if v4_blocked else "COMPLETED",
+            "resume_stage": "V4" if v4_blocked else "V5",
             "network_request_completed": not v4_reused,
             "network_request_skipped": v4_reused,
             "artifact_sha256": self._artifact_hash(list(geometry.values())),
@@ -1276,16 +1290,35 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             for item in frame_sets
         ]
         return (
-            "You are analyzing original high-resolution portrait-video frames. For each "
-            "event, identify only its main dialogue subtitle. Do not confuse it with "
-            "warning labels, creator notes, logos, account labels, stickers, UI overlays, "
-            "or unrelated scene text. Return source_text_bbox, source_container_bbox, and "
-            "recommended_cover_bbox. Include every event glyph, even for subtitles spanning "
-            "70-90% of a 9:16 frame. recommended_cover_bbox must be the smallest localized "
-            "rectangle hiding the subtitle and subtitle-specific container only. Coordinates "
-            "must be [y_min, x_min, y_max, x_max] on a 0-1000 scale. Return Gemini visual "
-            "safety fields overlaps_person, overlaps_important_object, overlaps_unrelated_text, "
-            "and needs_review. Frame mapping:\n"
+            "You are evaluating the safety of replacing an existing subtitle in original "
+            "high-resolution frames from a 720x1280 portrait short video. The goal is not "
+            "to avoid every overlap with a person. The original "
+            "subtitle or its background may already cover part of a person or object. "
+            "Replacing it in approximately the same visual region does not create new damage.\n\n"
+            "For every frame separately, identify only the event's main dialogue subtitle. "
+            "Do not confuse it with warning labels, creator notes, logos, account labels, "
+            "stickers, UI overlays, or unrelated scene text.\n\n"
+            "1. Existing occlusion: identify the person/object area already covered by "
+            "source_text_bbox or source_container_bbox.\n"
+            "2. Incremental occlusion: identify the additional person/object area covered by "
+            "recommended_cover_bbox outside source_container_bbox.\n"
+            "3. Unrelated content: determine whether the proposed cover newly hides a face, "
+            "hand, important object, warning label, logo, or unrelated text.\n\n"
+            "Return source_text_bbox, source_container_bbox, recommended_cover_bbox, "
+            "source_container_overlaps_person and recommended_cover_overlaps_person for "
+            "context, but do not use either as the final verdict. Set incremental_person_overlap, "
+            "incremental_important_object_overlap, and incremental_unrelated_text_overlap only "
+            "when the proposed cover newly hides that content outside the source container. "
+            "List those new areas in incremental_overlap_regions. Return replacement_safety, "
+            "geometry_confidence, safety_confidence, needs_review, and review_reason. "
+            "replacement_safety must be one of "
+            "SAFE_EQUIVALENT_OCCLUSION, SAFE_MINOR_EXPANSION, "
+            "UNSAFE_INCREMENTAL_OCCLUSION, REVIEW_REQUIRED. Coordinates must be "
+            "[y_min, x_min, y_max, x_max] on a 0-1000 scale. Do not mark an event unsafe "
+            "only because both the source subtitle and replacement cover overlap the same "
+            "already-occluded region. Mark unsafe only when the recommended cover introduces "
+            "meaningful new occlusion outside the original subtitle container. The three supplied frames for "
+            "each event must be evaluated together for stability and movement. Frame mapping:\n"
             + json.dumps(mapping, ensure_ascii=False)
         )
 
@@ -1845,17 +1878,11 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             raise ProviderError("V4 image geometry observations are missing.")
         observations = []
         review_reasons = []
+        unsafe = False
+        expected_roles = {role for role, _ in self._geometry_frame_times(event)}
         for item in raw_observations:
             if not isinstance(item, dict):
                 review_reasons.append("INVALID_OBSERVATION")
-                continue
-            if item.get("needs_review") is True or any(
-                item.get(field) is True for field in (
-                    "overlaps_person", "overlaps_important_object",
-                    "overlaps_unrelated_text",
-                )
-            ):
-                review_reasons.append("GEMINI_SAFETY_REVIEW")
                 continue
             try:
                 text_box = self._validate_box(item.get("source_text_bbox"))
@@ -1871,6 +1898,47 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             except ProviderError:
                 review_reasons.append("INVALID_OBSERVATION")
                 continue
+            replacement_safety = item.get("replacement_safety")
+            if replacement_safety not in _REPLACEMENT_SAFETY:
+                review_reasons.append("INVALID_SAFETY_VERDICT")
+                continue
+            if item.get("frame_role") not in expected_roles:
+                review_reasons.append("INVALID_FRAME_ROLE")
+                continue
+            boolean_fields = (
+                "source_container_overlaps_person",
+                "recommended_cover_overlaps_person",
+                "incremental_person_overlap",
+                "incremental_important_object_overlap",
+                "incremental_unrelated_text_overlap",
+                "needs_review",
+            )
+            if any(not isinstance(item.get(field), bool) for field in boolean_fields):
+                review_reasons.append("INVALID_SAFETY_OBSERVATION")
+                continue
+            confidence_fields = ("geometry_confidence", "safety_confidence")
+            if any(
+                not isinstance(item.get(field), (int, float))
+                or not 0 <= float(item[field]) <= 1
+                for field in confidence_fields
+            ):
+                review_reasons.append("INVALID_SAFETY_CONFIDENCE")
+                continue
+            if replacement_safety == "UNSAFE_INCREMENTAL_OCCLUSION":
+                unsafe = True
+                review_reasons.append("UNSAFE_INCREMENTAL_OCCLUSION")
+                continue
+            if (
+                replacement_safety == "REVIEW_REQUIRED"
+                or item["needs_review"]
+                or any(item[field] for field in (
+                    "incremental_person_overlap",
+                    "incremental_important_object_overlap",
+                    "incremental_unrelated_text_overlap",
+                ))
+            ):
+                review_reasons.append("GEMINI_SAFETY_REVIEW")
+                continue
             observations.append({
                 "frame_role": item.get("frame_role"),
                 "timestamp_seconds": item.get("timestamp_seconds"),
@@ -1879,10 +1947,26 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 "recommended_cover_bbox": cover_box,
                 "visible_source_text": str(item.get("visible_source_text", "")),
                 "overlay_type": str(item.get("overlay_type", "other")),
-                "confidence": float(item.get("confidence", 0.0)),
+                "source_container_overlaps_person": item["source_container_overlaps_person"],
+                "recommended_cover_overlaps_person": item["recommended_cover_overlaps_person"],
+                "incremental_person_overlap": item["incremental_person_overlap"],
+                "incremental_important_object_overlap": item["incremental_important_object_overlap"],
+                "incremental_unrelated_text_overlap": item["incremental_unrelated_text_overlap"],
+                "incremental_overlap_regions": item.get("incremental_overlap_regions", []),
+                "replacement_safety": replacement_safety,
+                "geometry_confidence": float(item.get("geometry_confidence", 0.0)),
+                "safety_confidence": float(item.get("safety_confidence", 0.0)),
                 "needs_review": False,
             })
-        if observations:
+        if (
+            len(observations) != len(expected_roles)
+            or {item["frame_role"] for item in observations} != expected_roles
+        ):
+            review_reasons.append("INCOMPLETE_FRAME_OBSERVATIONS")
+        if payload.get("needs_review") is True:
+            review_reasons.append("EVENT_REVIEW_REQUIRED")
+        blocked = bool(review_reasons)
+        if observations and not blocked:
             cover_box = [
                 min(item["recommended_cover_bbox"][0] for item in observations),
                 min(item["recommended_cover_bbox"][1] for item in observations),
@@ -1892,24 +1976,38 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             if self._box_area(cover_box) > 450000:
                 review_reasons.append("COVER_SAFETY_REVIEW")
         else:
-            cover_box = self._validate_box(event["representative_box_2d"])
-            review_reasons.append("NO_VALID_OBSERVATION")
+            cover_box = None
+            if not review_reasons:
+                review_reasons.append("NO_VALID_OBSERVATION")
         widths = [
             item["recommended_cover_bbox"][3] - item["recommended_cover_bbox"][1]
             for item in observations
         ]
         if widths and max(widths) - min(widths) > 150:
             review_reasons.append("INCONSISTENT_OBSERVATIONS")
+        if review_reasons:
+            cover_box = None
         confidence = payload.get("geometry_confidence")
         if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
             raise ProviderError("V4 image geometry confidence is invalid.")
         return {
             "event_id": event["event_id"],
-            "text_bbox": observations[0]["source_text_bbox"] if observations else cover_box,
-            "container_bbox": observations[0]["source_container_bbox"] if observations else cover_box,
+            "text_bbox": observations[0]["source_text_bbox"] if observations and not review_reasons else None,
+            "container_bbox": observations[0]["source_container_bbox"] if observations and not review_reasons else None,
             "recommended_cover_bbox": cover_box,
             "representative_box_2d": cover_box,
+            "image_level_recommended_cover_bbox": cover_box,
+            "fallback_bbox": self._validate_box(event["representative_box_2d"]),
+            "fallback_used_for_render": False,
             "geometry_confidence": float(confidence),
+            "replacement_safety": (
+                "UNSAFE_INCREMENTAL_OCCLUSION" if unsafe else
+                "REVIEW_REQUIRED" if review_reasons else
+                "SAFE_MINOR_EXPANSION" if any(
+                    item["replacement_safety"] == "SAFE_MINOR_EXPANSION"
+                    for item in observations
+                ) else "SAFE_EQUIVALENT_OCCLUSION"
+            ),
             "needs_review": bool(payload.get("needs_review")) or bool(review_reasons),
             "review_reason": ",".join(review_reasons) if review_reasons else None,
             "frame_observations": observations,
@@ -2278,20 +2376,26 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 "source_text_bbox": {"type": "array", "items": {"type": "number"}},
                 "source_container_bbox": {"type": "array", "items": {"type": "number"}},
                 "recommended_cover_bbox": {"type": "array", "items": {"type": "number"}},
-                "visible_source_text": {"type": "string"},
-                "overlay_type": {"type": "string"},
-                "confidence": {"type": "number"},
-                "overlaps_person": {"type": "boolean"},
-                "overlaps_important_object": {"type": "boolean"},
-                "overlaps_unrelated_text": {"type": "boolean"},
+                "source_container_overlaps_person": {"type": "boolean"},
+                "recommended_cover_overlaps_person": {"type": "boolean"},
+                "incremental_person_overlap": {"type": "boolean"},
+                "incremental_important_object_overlap": {"type": "boolean"},
+                "incremental_unrelated_text_overlap": {"type": "boolean"},
+                "incremental_overlap_regions": {"type": "array", "items": {"type": "string"}},
+                "replacement_safety": {"type": "string", "enum": sorted(_REPLACEMENT_SAFETY)},
+                "geometry_confidence": {"type": "number"},
+                "safety_confidence": {"type": "number"},
                 "needs_review": {"type": "boolean"},
+                "review_reason": {"type": "string"},
             },
             "required": [
                 "frame_role", "timestamp_seconds", "source_text_bbox",
                 "source_container_bbox", "recommended_cover_bbox",
-                "visible_source_text", "overlay_type", "confidence",
-                "overlaps_person", "overlaps_important_object",
-                "overlaps_unrelated_text", "needs_review",
+                "source_container_overlaps_person", "recommended_cover_overlaps_person",
+                "incremental_person_overlap", "incremental_important_object_overlap",
+                "incremental_unrelated_text_overlap", "incremental_overlap_regions",
+                "replacement_safety", "geometry_confidence", "safety_confidence",
+                "needs_review", "review_reason",
             ],
         }
         return {
