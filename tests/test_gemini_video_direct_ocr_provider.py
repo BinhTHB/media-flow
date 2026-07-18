@@ -95,6 +95,42 @@ def test_direct_video_rejects_invalid_and_oversized_boxes():
         provider._validate_box([0, 0, 1000, 1000])
 
 
+def test_direct_video_geometry_uses_gemini_recommended_cover_bbox():
+    provider = GeminiDirectVideoOCRProvider()
+    event = {"event_id": "e1"}
+    geometry = provider._validate_geometry({
+        "event_id": "e1",
+        "text_bbox": [740, 300, 780, 700],
+        "container_bbox": [720, 200, 800, 800],
+        "recommended_cover_bbox": [710, 180, 810, 820],
+        "overlay_type": "banner",
+        "geometry_confidence": 0.95,
+        "needs_review": False,
+    }, event)
+
+    assert geometry["recommended_cover_bbox"] == [710, 180, 810, 820]
+    assert geometry["representative_box_2d"] == geometry["recommended_cover_bbox"]
+    assert set(provider._geometry_schema()["required"]) == {
+        "event_id", "text_bbox", "container_bbox", "recommended_cover_bbox",
+        "overlay_type", "geometry_confidence", "needs_review",
+    }
+
+
+def test_direct_video_geometry_rejects_cover_not_containing_container():
+    provider = GeminiDirectVideoOCRProvider()
+
+    with pytest.raises(ProviderError, match="must contain"):
+        provider._validate_geometry({
+            "event_id": "e1",
+            "text_bbox": [740, 300, 780, 700],
+            "container_bbox": [720, 200, 800, 800],
+            "recommended_cover_bbox": [730, 250, 790, 750],
+            "overlay_type": "banner",
+            "geometry_confidence": 0.95,
+            "needs_review": False,
+        }, {"event_id": "e1"})
+
+
 def test_direct_video_rejects_incomplete_or_duplicate_classifications():
     provider = GeminiDirectVideoOCRProvider()
     candidates = [

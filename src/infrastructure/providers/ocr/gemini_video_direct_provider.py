@@ -1269,7 +1269,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     def _batch_prompt(stage: str, items: Sequence[Dict[str, Any]]) -> str:
         instructions = {
             "segment": "For every candidate, return stable subtitle events. Do not transcribe or translate.",
-            "geometry": "For every event, refine only the subtitle geometry. Do not transcribe or translate.",
+            "geometry": (
+                "For every event, return text_bbox, container_bbox, and recommended_cover_bbox. "
+                "recommended_cover_bbox must cover all source text plus its banner/bubble, border, "
+                "outline, shadow, and safe padding. It may be asymmetrically wider than text_bbox, "
+                "but must remain localized and exclude people, unrelated objects, logos, and scene text. "
+                "Use normalized [ymin, xmin, ymax, xmax] coordinates from 0 to 1000. "
+                "Return overlay_type, geometry_confidence, and needs_review. Do not transcribe or translate."
+            ),
             "transcribe": "For every event, transcribe only text within its supplied bbox. Do not translate.",
         }
         return (
@@ -1648,14 +1655,30 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         if payload.get("event_id") != event["event_id"]:
             raise ProviderError("V4 event ID mismatch.")
         try:
-            box = self._validate_box(payload.get("representative_box_2d"))
-        except ProviderError:
-            box = event.get("representative_box_2d")
-
-        # safety: no oversized cover
-        area = self._box_area(box)
-        if area > 450000:
-            box = event.get("representative_box_2d")
+            text_box = self._validate_box(payload.get("text_bbox"))
+            container_box = self._validate_box(payload.get("container_bbox"))
+            cover_box = self._validate_box(payload.get("recommended_cover_bbox"))
+        except ProviderError as exc:
+            raise ProviderError("V4 Gemini-only geometry is incomplete or invalid.") from exc
+        if (
+            cover_box[0] > text_box[0] or cover_box[1] > text_box[1]
+            or cover_box[2] < text_box[2] or cover_box[3] < text_box[3]
+            or cover_box[0] > container_box[0] or cover_box[1] > container_box[1]
+            or cover_box[2] < container_box[2] or cover_box[3] < container_box[3]
+        ):
+            raise ProviderError(
+                "V4 recommended cover must contain Gemini text and container boxes."
+            )
+        if self._box_area(cover_box) > 450000:
+            raise ProviderError("V4 recommended cover exceeds safety policy.")
+        confidence = payload.get("geometry_confidence")
+        if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ProviderError("V4 geometry confidence is invalid.")
+        overlay_type = payload.get("overlay_type")
+        if overlay_type not in {"banner", "bubble", "plain_text", "other"}:
+            raise ProviderError("V4 overlay type is invalid.")
+        if not isinstance(payload.get("needs_review"), bool):
+            raise ProviderError("V4 needs_review must be boolean.")
 
         valid_keyframes = []
         for kf in payload.get("box_keyframes", []):
@@ -1675,7 +1698,13 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
 
         return {
             "event_id": event["event_id"],
-            "representative_box_2d": box,
+            "text_bbox": text_box,
+            "container_bbox": container_box,
+            "recommended_cover_bbox": cover_box,
+            "representative_box_2d": cover_box,
+            "overlay_type": overlay_type,
+            "geometry_confidence": float(confidence),
+            "needs_review": payload["needs_review"],
             "box_keyframes": valid_keyframes,
         }
 
@@ -2000,9 +2029,18 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "type": "object",
             "properties": {
                 "event_id": {"type": "string"},
-                "representative_box_2d": {
+                "text_bbox": {
                     "type": "array", "items": {"type": "number"},
                 },
+                "container_bbox": {
+                    "type": "array", "items": {"type": "number"},
+                },
+                "recommended_cover_bbox": {
+                    "type": "array", "items": {"type": "number"},
+                },
+                "overlay_type": {"type": "string", "enum": ["banner", "bubble", "plain_text", "other"]},
+                "geometry_confidence": {"type": "number"},
+                "needs_review": {"type": "boolean"},
                 "box_keyframes": {
                     "type": "array",
                     "items": {
@@ -2014,7 +2052,9 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     },
                 },
             },
-            "required": ["event_id", "representative_box_2d"],
+            "required": ["event_id", "text_bbox", "container_bbox",
+                         "recommended_cover_bbox", "overlay_type",
+                         "geometry_confidence", "needs_review"],
         }
 
     @staticmethod
