@@ -62,7 +62,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         max_quota_retries_per_stage: int = 1,
         honor_retry_after: bool = True,
         fail_fast_on_daily_quota: bool = True,
-        min_request_spacing_seconds: float = 1.0,
+        min_request_spacing_seconds: float = 5.0,
+        direct_video_active_rpm: int = 15,
         quota_jitter_seconds: float = 0.5,
         unknown_429_backoff_seconds: float = 5.0,
         fps_certification_ttl_seconds: float = 86400.0,
@@ -108,7 +109,14 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         self.max_quota_retries_per_stage = max_quota_retries_per_stage
         self.honor_retry_after = honor_retry_after
         self.fail_fast_on_daily_quota = fail_fast_on_daily_quota
-        self.min_request_spacing_seconds = min_request_spacing_seconds
+        if direct_video_active_rpm <= 0:
+            raise ValueError("direct_video_active_rpm must be positive.")
+        self.direct_video_active_rpm = direct_video_active_rpm
+        self.base_request_spacing_seconds = 60.0 / direct_video_active_rpm
+        self.min_request_spacing_seconds = max(
+            self.base_request_spacing_seconds,
+            min_request_spacing_seconds,
+        )
         self.quota_jitter_seconds = quota_jitter_seconds
         self.unknown_429_backoff_seconds = unknown_429_backoff_seconds
         self.fps_certification_ttl_seconds = fps_certification_ttl_seconds
@@ -747,8 +755,9 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             raise ProviderError(f"DAILY_QUOTA_EXHAUSTED: stage={stage} (RESUMABLE)") from exc
         if retries >= self.max_quota_retries_per_stage:
             raise ProviderError(f"QUOTA_BLOCKED: stage={stage} (RESUMABLE)") from exc
-        wait = exc.retry_after if self.honor_retry_after else None
-        wait = 1.0 if wait is None else max(0.0, wait)
+        wait = exc.retry_after if (self.honor_retry_after and exc.retry_after is not None) else None
+        if wait is None or wait <= 0.0:
+            wait = self.min_request_spacing_seconds
         if wait > self.max_quota_wait_seconds:
             raise ProviderError(
                 f"QUOTA_BLOCKED: stage={stage} bounded_wait={wait:.1f}s "

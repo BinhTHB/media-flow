@@ -26,6 +26,8 @@ class RuntimeConfig:
     max_concurrency: int = 1
     max_retries: int = 3
     validate_models: bool = False
+    ledger_path: Optional[str] = "debug/gemini_request_ledger.json"
+    min_request_spacing_seconds: float = 0.0
 
 
 class GeminiRuntime:
@@ -46,6 +48,8 @@ class GeminiRuntime:
                 "rpd_cap": self._config.rpd_cap,
                 "max_concurrency": self._config.max_concurrency,
                 "max_retries": self._config.max_retries,
+                "ledger_path": self._config.ledger_path,
+                "min_request_spacing_seconds": self._config.min_request_spacing_seconds,
             }
         )
         self._scheduler = RequestScheduler(**scheduler_options)

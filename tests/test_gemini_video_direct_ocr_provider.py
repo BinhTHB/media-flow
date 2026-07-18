@@ -953,3 +953,123 @@ def test_safe_slot_audit_waits_before_generate(monkeypatch):
 
     assert sleeps == [4.0]
     assert provider.artifacts["safe_slot_audit"]["rolling_requests"] == 1
+
+
+def test_config_loader_reads_direct_video_model_and_rpm_from_config_yml(tmp_path):
+    from src.interfaces.config.config_loader import ConfigLoader
+
+    config_path = tmp_path / "config.yml"
+    config_path.write_text(
+        "gemini:\n"
+        "  api_key: test_api_key_for_config_loader_1234567890\n"
+        "  direct_video_model: gemini-3.1-flash-lite\n"
+        "  direct_video_active_rpm: 15\n"
+        "  direct_video_rpm_safety_ratio: 0.80\n"
+        "  direct_video_min_request_spacing_seconds: 5.0\n"
+        "  direct_video_max_in_flight_requests: 1\n",
+        encoding="utf-8",
+    )
+    loader = ConfigLoader()
+    loader.secrets_path = str(config_path)
+
+    config = loader.load()
+
+    assert config.gemini.direct_video_model == "gemini-3.1-flash-lite"
+    assert config.gemini.direct_video_active_rpm == 15
+    assert config.gemini.direct_video_min_request_spacing_seconds == 5.0
+    assert config.gemini.direct_video_max_in_flight_requests == 1
+
+
+def test_provider_uses_configured_rpm_not_fallback_60():
+    from src.infrastructure.gemini.runtime import GeminiRuntime, RuntimeConfig
+
+    runtime = GeminiRuntime.create(RuntimeConfig(rpm_cap=15, ledger_path=None))
+    provider = GeminiDirectVideoOCRProvider(
+        runtime=runtime,
+        direct_video_active_rpm=15,
+        min_request_spacing_seconds=1.0,
+    )
+
+    assert provider.runtime.scheduler.rpm_cap == 15
+    assert provider.runtime.scheduler.rpm_cap != 60
+
+
+def test_rpm_15_creates_four_second_base_spacing():
+    provider = GeminiDirectVideoOCRProvider(
+        direct_video_active_rpm=15,
+        min_request_spacing_seconds=1.0,
+    )
+
+    assert provider.base_request_spacing_seconds == 4.0
+    assert provider.min_request_spacing_seconds == 4.0
+
+
+def test_safety_config_raises_effective_spacing_to_five_seconds():
+    provider = GeminiDirectVideoOCRProvider(
+        direct_video_active_rpm=15,
+        min_request_spacing_seconds=5.0,
+    )
+
+    assert provider.base_request_spacing_seconds == 4.0
+    assert provider.min_request_spacing_seconds == 5.0
+
+
+def test_persistent_request_ledger_is_reused_across_scheduler_instances(tmp_path):
+    from src.infrastructure.gemini.request_scheduler import RequestScheduler
+
+    ledger_path = tmp_path / "gemini_request_ledger.json"
+    first = RequestScheduler(
+        rpm_cap=15,
+        clock=lambda: 100.0,
+        sleeper=lambda _: None,
+        ledger_path=str(ledger_path),
+    )
+    first.acquire(tokens=12, model="gemini-3.1-flash-lite")
+    first.release()
+
+    resumed = RequestScheduler(
+        rpm_cap=15,
+        clock=lambda: 100.0,
+        sleeper=lambda _: None,
+        ledger_path=str(ledger_path),
+    )
+    state = resumed.ledger_state()
+
+    assert state["rolling_requests"] == 1
+    assert state["rolling_tokens"] == 12
+
+
+def test_preflight_and_v1_share_generate_rpm_ledger(tmp_path):
+    from src.infrastructure.gemini.request_scheduler import RequestScheduler
+
+    ledger_path = tmp_path / "gemini_request_ledger.json"
+    scheduler = RequestScheduler(
+        rpm_cap=15,
+        clock=lambda: 100.0,
+        sleeper=lambda _: None,
+        ledger_path=str(ledger_path),
+    )
+    scheduler.acquire(model="gemini-3.1-flash-lite")  # preflight
+    scheduler.release()
+    scheduler.acquire(model="gemini-3.1-flash-lite")  # V1
+    scheduler.release()
+
+    assert scheduler.ledger_state()["rolling_requests"] == 2
+
+
+def test_count_tokens_and_upload_are_not_generate_requests(tmp_path):
+    from src.infrastructure.gemini.request_scheduler import RequestScheduler
+
+    scheduler = RequestScheduler(
+        rpm_cap=15,
+        clock=lambda: 100.0,
+        sleeper=lambda _: None,
+        ledger_path=str(tmp_path / "gemini_request_ledger.json"),
+    )
+    scheduler.record_count_tokens()
+    scheduler.record_upload()
+    state = scheduler.ledger_state()
+
+    assert state["rolling_requests"] == 0
+    assert state["count_tokens_requests"] == 1
+    assert state["upload_requests"] == 1

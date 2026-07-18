@@ -67,6 +67,9 @@ class GeminiConfig:
     direct_video_media_resolution: str = "high"
     direct_video_clip_padding_seconds: float = 0.40
     direct_video_upload_mode: str = "files_api"
+    direct_video_active_rpm: int = 15
+    direct_video_rpm_safety_ratio: float = 0.80
+    direct_video_max_in_flight_requests: int = 1
     direct_video_tpm_safety_ratio: float = 0.85
     direct_video_max_requests_per_job: int = 0
     direct_video_max_retry_per_stage: int = 1
@@ -124,6 +127,12 @@ class GeminiConfig:
             raise ValueError("Gemini cache_namespace must not be empty.")
         if self.direct_video_model != "gemini-3.1-flash-lite":
             raise ValueError("G.5 direct video requires gemini-3.1-flash-lite.")
+        if self.direct_video_active_rpm <= 0:
+            raise ValueError("direct_video_active_rpm must be positive.")
+        if not 0 < self.direct_video_rpm_safety_ratio <= 1:
+            raise ValueError("direct_video_rpm_safety_ratio must be in (0, 1].")
+        if self.direct_video_max_in_flight_requests < 1:
+            raise ValueError("direct_video_max_in_flight_requests must be positive.")
         if any(fps <= 0 for fps in (
             self.direct_video_discovery_fps, self.direct_video_classification_fps,
             self.direct_video_segmentation_fps, self.direct_video_geometry_fps,

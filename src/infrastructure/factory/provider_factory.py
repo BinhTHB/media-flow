@@ -91,11 +91,16 @@ class ProviderFactory:
                         "file_manager_enabled",
                         options.get("file_manager_enabled", True),
                     ),
-                    rpm_cap=getattr(config, "rpm_cap", options.get("rpm_cap", 60)),
+                    rpm_cap=getattr(config, "direct_video_active_rpm", getattr(config, "rpm_cap", 15)),
                     tpm_cap=getattr(config, "tpm_cap", options.get("tpm_cap")),
                     rpd_cap=getattr(config, "rpd_cap", options.get("rpd_cap")),
-                    max_concurrency=getattr(config, "max_concurrency", options.get("max_concurrency", 1)),
-                    max_retries=getattr(config, "max_retries", options.get("max_retries", 3)),
+                    max_concurrency=getattr(config, "direct_video_max_in_flight_requests", getattr(config, "max_concurrency", 1)),
+                    max_retries=0,
+                    ledger_path=getattr(config, "ledger_path", options.get("ledger_path", "debug/gemini_request_ledger.json")),
+                    min_request_spacing_seconds=max(
+                        60.0 / getattr(config, "direct_video_active_rpm", 15),
+                        getattr(config, "direct_video_min_request_spacing_seconds", 5.0),
+                    ),
                 )
             )
         return self._gemini_runtime
@@ -124,6 +129,14 @@ class ProviderFactory:
                 options.setdefault("stage_d_model", config.verification_model)
                 options.setdefault("window_size", config.region_window_frame_count)
                 options.setdefault("window_overlap", config.region_window_frame_count - config.region_window_stride)
+            if provider_name == "gemini_video_direct" and self.gemini_config:
+                config = self.gemini_config
+                options.setdefault("model", config.direct_video_model)
+                options.setdefault("direct_video_active_rpm", config.direct_video_active_rpm)
+                options.setdefault(
+                    "direct_video_min_request_spacing_seconds",
+                    config.direct_video_min_request_spacing_seconds,
+                )
             options["runtime"] = self._get_gemini_runtime(options)
             primary = self.registry.create("ocr", provider_name, options)
             fallback_config = self.provider_fallback_config

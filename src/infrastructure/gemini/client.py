@@ -184,6 +184,8 @@ class GeminiClient:
             data=json.dumps(body).encode("utf-8"),
             timeout=self._timeout,
         )
+        if self._scheduler is not None:
+            self._scheduler.record_count_tokens()
         if not isinstance(raw, dict) or not isinstance(raw.get("totalTokens"), int):
             raise GeminiValidationError("Malformed Gemini countTokens response.")
         return raw["totalTokens"]
@@ -195,6 +197,8 @@ class GeminiClient:
                 data = handle.read()
         except OSError as exc:
             raise GeminiValidationError(f"Could not read upload file '{path}': {exc}") from exc
+        if self._scheduler is not None:
+            self._scheduler.record_upload()
         return self._transport.send(
             "POST",
             self._files_url(),

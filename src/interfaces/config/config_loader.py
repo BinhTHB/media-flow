@@ -72,6 +72,7 @@ class ConfigLoader:
             else None
         )
         gemini_raw = providers.get("translation", {}).get("gemini", {})
+        direct_video_raw = {**gemini_raw, **gemini_secrets}
         quality_raw = providers_raw.get("subtitle_quality", {})
         placement_raw = providers_raw.get("subtitle_placement", {})
         styles = styles_raw.get("styles", {})
@@ -154,134 +155,146 @@ class ConfigLoader:
             ),
             direct_video_model=os.environ.get(
                 "GEMINI_DIRECT_VIDEO_MODEL",
-                gemini_overrides.get("direct_video_model", gemini_raw.get("direct_video_model", GeminiConfig.direct_video_model)),
+                gemini_overrides.get("direct_video_model", direct_video_raw.get("direct_video_model", GeminiConfig.direct_video_model)),
+            ),
+            direct_video_active_rpm=self._env_int(
+                "GEMINI_DIRECT_VIDEO_ACTIVE_RPM",
+                gemini_overrides.get("direct_video_active_rpm", direct_video_raw.get("direct_video_active_rpm", GeminiConfig.direct_video_active_rpm)),
+            ),
+            direct_video_rpm_safety_ratio=self._env_float(
+                "GEMINI_DIRECT_VIDEO_RPM_SAFETY_RATIO",
+                gemini_overrides.get("direct_video_rpm_safety_ratio", direct_video_raw.get("direct_video_rpm_safety_ratio", GeminiConfig.direct_video_rpm_safety_ratio)),
+            ),
+            direct_video_max_in_flight_requests=self._env_int(
+                "GEMINI_DIRECT_VIDEO_MAX_IN_FLIGHT_REQUESTS",
+                gemini_overrides.get("direct_video_max_in_flight_requests", direct_video_raw.get("direct_video_max_in_flight_requests", GeminiConfig.direct_video_max_in_flight_requests)),
             ),
             direct_video_discovery_fps=self._env_float(
                 "GEMINI_DIRECT_VIDEO_DISCOVERY_FPS",
-                gemini_overrides.get("direct_video_discovery_fps", gemini_raw.get("direct_video_discovery_fps", 6)),
+                gemini_overrides.get("direct_video_discovery_fps", direct_video_raw.get("direct_video_discovery_fps", 6)),
             ),
             direct_video_classification_fps=self._env_float(
                 "GEMINI_DIRECT_VIDEO_CLASSIFICATION_FPS",
-                gemini_overrides.get("direct_video_classification_fps", gemini_raw.get("direct_video_classification_fps", 6)),
+                gemini_overrides.get("direct_video_classification_fps", direct_video_raw.get("direct_video_classification_fps", 6)),
             ),
             direct_video_segmentation_fps=self._env_float(
                 "GEMINI_DIRECT_VIDEO_SEGMENTATION_FPS",
-                gemini_overrides.get("direct_video_segmentation_fps", gemini_raw.get("direct_video_segmentation_fps", 12)),
+                gemini_overrides.get("direct_video_segmentation_fps", direct_video_raw.get("direct_video_segmentation_fps", 12)),
             ),
             direct_video_geometry_fps=self._env_float(
                 "GEMINI_DIRECT_VIDEO_GEOMETRY_FPS",
-                gemini_overrides.get("direct_video_geometry_fps", gemini_raw.get("direct_video_geometry_fps", 12)),
+                gemini_overrides.get("direct_video_geometry_fps", direct_video_raw.get("direct_video_geometry_fps", 12)),
             ),
             direct_video_transcription_fps=self._env_float(
                 "GEMINI_DIRECT_VIDEO_TRANSCRIPTION_FPS",
-                gemini_overrides.get("direct_video_transcription_fps", gemini_raw.get("direct_video_transcription_fps", 12)),
+                gemini_overrides.get("direct_video_transcription_fps", direct_video_raw.get("direct_video_transcription_fps", 12)),
             ),
             direct_video_media_resolution=os.environ.get(
                 "GEMINI_DIRECT_VIDEO_MEDIA_RESOLUTION",
-                gemini_overrides.get("direct_video_media_resolution", gemini_raw.get("direct_video_media_resolution", "high")),
+                gemini_overrides.get("direct_video_media_resolution", direct_video_raw.get("direct_video_media_resolution", "high")),
             ),
             direct_video_clip_padding_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_CLIP_PADDING_SECONDS",
-                gemini_overrides.get("direct_video_clip_padding_seconds", gemini_raw.get("direct_video_clip_padding_seconds", 0.40)),
+                gemini_overrides.get("direct_video_clip_padding_seconds", direct_video_raw.get("direct_video_clip_padding_seconds", 0.40)),
             ),
             direct_video_upload_mode=os.environ.get(
                 "GEMINI_DIRECT_VIDEO_UPLOAD_MODE",
-                gemini_overrides.get("direct_video_upload_mode", gemini_raw.get("direct_video_upload_mode", "files_api")),
+                gemini_overrides.get("direct_video_upload_mode", direct_video_raw.get("direct_video_upload_mode", "files_api")),
             ),
             direct_video_tpm_safety_ratio=self._env_float(
                 "GEMINI_DIRECT_VIDEO_TPM_SAFETY_RATIO",
-                gemini_overrides.get("direct_video_tpm_safety_ratio", gemini_raw.get("direct_video_tpm_safety_ratio", 0.85)),
+                gemini_overrides.get("direct_video_tpm_safety_ratio", direct_video_raw.get("direct_video_tpm_safety_ratio", 0.85)),
             ),
             direct_video_max_requests_per_job=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_REQUESTS_PER_JOB",
-                gemini_overrides.get("direct_video_max_requests_per_job", gemini_raw.get("direct_video_max_requests_per_job", 0)),
+                gemini_overrides.get("direct_video_max_requests_per_job", direct_video_raw.get("direct_video_max_requests_per_job", 0)),
             ),
             direct_video_max_retry_per_stage=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_RETRY_PER_STAGE",
-                gemini_overrides.get("direct_video_max_retry_per_stage", gemini_raw.get("direct_video_max_retry_per_stage", 1)),
+                gemini_overrides.get("direct_video_max_retry_per_stage", direct_video_raw.get("direct_video_max_retry_per_stage", 1)),
             ),
             direct_video_max_raw_candidates=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_RAW_CANDIDATES",
-                gemini_overrides.get("direct_video_max_raw_candidates", gemini_raw.get("direct_video_max_raw_candidates", 30)),
+                gemini_overrides.get("direct_video_max_raw_candidates", direct_video_raw.get("direct_video_max_raw_candidates", 30)),
             ),
             direct_video_max_parseable_raw_candidates=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_PARSEABLE_RAW_CANDIDATES",
-                gemini_overrides.get("direct_video_max_parseable_raw_candidates", gemini_raw.get("direct_video_max_parseable_raw_candidates", 200)),
+                gemini_overrides.get("direct_video_max_parseable_raw_candidates", direct_video_raw.get("direct_video_max_parseable_raw_candidates", 200)),
             ),
             direct_video_max_deduplicated_candidates=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_DEDUPLICATED_CANDIDATES",
-                gemini_overrides.get("direct_video_max_deduplicated_candidates", gemini_raw.get("direct_video_max_deduplicated_candidates", 10)),
+                gemini_overrides.get("direct_video_max_deduplicated_candidates", direct_video_raw.get("direct_video_max_deduplicated_candidates", 10)),
             ),
             direct_video_max_accepted_subtitle_tracks=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_ACCEPTED_SUBTITLE_TRACKS",
-                gemini_overrides.get("direct_video_max_accepted_subtitle_tracks", gemini_raw.get("direct_video_max_accepted_subtitle_tracks", 10)),
+                gemini_overrides.get("direct_video_max_accepted_subtitle_tracks", direct_video_raw.get("direct_video_max_accepted_subtitle_tracks", 10)),
             ),
             direct_video_max_events_per_track=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_EVENTS_PER_TRACK",
-                gemini_overrides.get("direct_video_max_events_per_track", gemini_raw.get("direct_video_max_events_per_track", 20)),
+                gemini_overrides.get("direct_video_max_events_per_track", direct_video_raw.get("direct_video_max_events_per_track", 20)),
             ),
             direct_video_max_total_stage_requests=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_TOTAL_STAGE_REQUESTS",
-                gemini_overrides.get("direct_video_max_total_stage_requests", gemini_raw.get("direct_video_max_total_stage_requests", 100)),
+                gemini_overrides.get("direct_video_max_total_stage_requests", direct_video_raw.get("direct_video_max_total_stage_requests", 100)),
             ),
             direct_video_max_counted_input_tokens_per_job=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_COUNTED_INPUT_TOKENS_PER_JOB",
-                gemini_overrides.get("direct_video_max_counted_input_tokens_per_job", gemini_raw.get("direct_video_max_counted_input_tokens_per_job", 500000)),
+                gemini_overrides.get("direct_video_max_counted_input_tokens_per_job", direct_video_raw.get("direct_video_max_counted_input_tokens_per_job", 500000)),
             ),
             direct_video_stage_timeout_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_STAGE_TIMEOUT_SECONDS",
-                gemini_overrides.get("direct_video_stage_timeout_seconds", gemini_raw.get("direct_video_stage_timeout_seconds", 360)),
+                gemini_overrides.get("direct_video_stage_timeout_seconds", direct_video_raw.get("direct_video_stage_timeout_seconds", 360)),
             ),
             direct_video_no_progress_timeout_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_NO_PROGRESS_TIMEOUT_SECONDS",
-                gemini_overrides.get("direct_video_no_progress_timeout_seconds", gemini_raw.get("direct_video_no_progress_timeout_seconds", 300)),
+                gemini_overrides.get("direct_video_no_progress_timeout_seconds", direct_video_raw.get("direct_video_no_progress_timeout_seconds", 300)),
             ),
             direct_video_job_timeout_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_JOB_TIMEOUT_SECONDS",
-                gemini_overrides.get("direct_video_job_timeout_seconds", gemini_raw.get("direct_video_job_timeout_seconds", 600)),
+                gemini_overrides.get("direct_video_job_timeout_seconds", direct_video_raw.get("direct_video_job_timeout_seconds", 600)),
             ),
             direct_video_max_quota_wait_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_MAX_QUOTA_WAIT_SECONDS",
-                gemini_overrides.get("direct_video_max_quota_wait_seconds", gemini_raw.get("direct_video_max_quota_wait_seconds", 120)),
+                gemini_overrides.get("direct_video_max_quota_wait_seconds", direct_video_raw.get("direct_video_max_quota_wait_seconds", 120)),
             ),
             direct_video_max_quota_retries_per_stage=self._env_int(
                 "GEMINI_DIRECT_VIDEO_MAX_QUOTA_RETRIES_PER_STAGE",
-                gemini_overrides.get("direct_video_max_quota_retries_per_stage", gemini_raw.get("direct_video_max_quota_retries_per_stage", 1)),
+                gemini_overrides.get("direct_video_max_quota_retries_per_stage", direct_video_raw.get("direct_video_max_quota_retries_per_stage", 1)),
             ),
             direct_video_honor_retry_after=self._env_bool(
                 "GEMINI_DIRECT_VIDEO_HONOR_RETRY_AFTER",
-                gemini_overrides.get("direct_video_honor_retry_after", gemini_raw.get("direct_video_honor_retry_after", True)),
+                gemini_overrides.get("direct_video_honor_retry_after", direct_video_raw.get("direct_video_honor_retry_after", True)),
             ),
             direct_video_fail_fast_on_daily_quota=self._env_bool(
                 "GEMINI_DIRECT_VIDEO_FAIL_FAST_ON_DAILY_QUOTA",
-                gemini_overrides.get("direct_video_fail_fast_on_daily_quota", gemini_raw.get("direct_video_fail_fast_on_daily_quota", True)),
+                gemini_overrides.get("direct_video_fail_fast_on_daily_quota", direct_video_raw.get("direct_video_fail_fast_on_daily_quota", True)),
             ),
             direct_video_min_request_spacing_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_MIN_REQUEST_SPACING_SECONDS",
-                gemini_overrides.get("direct_video_min_request_spacing_seconds", gemini_raw.get("direct_video_min_request_spacing_seconds", 1.0)),
+                gemini_overrides.get("direct_video_min_request_spacing_seconds", direct_video_raw.get("direct_video_min_request_spacing_seconds", 1.0)),
             ),
             direct_video_quota_jitter_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_QUOTA_JITTER_SECONDS",
-                gemini_overrides.get("direct_video_quota_jitter_seconds", gemini_raw.get("direct_video_quota_jitter_seconds", 0.5)),
+                gemini_overrides.get("direct_video_quota_jitter_seconds", direct_video_raw.get("direct_video_quota_jitter_seconds", 0.5)),
             ),
             direct_video_unknown_429_backoff_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_UNKNOWN_429_BACKOFF_SECONDS",
-                gemini_overrides.get("direct_video_unknown_429_backoff_seconds", gemini_raw.get("direct_video_unknown_429_backoff_seconds", 5.0)),
+                gemini_overrides.get("direct_video_unknown_429_backoff_seconds", direct_video_raw.get("direct_video_unknown_429_backoff_seconds", 5.0)),
             ),
             direct_video_fps_certification_ttl_seconds=self._env_float(
                 "GEMINI_DIRECT_VIDEO_FPS_CERTIFICATION_TTL_SECONDS",
-                gemini_overrides.get("direct_video_fps_certification_ttl_seconds", gemini_raw.get("direct_video_fps_certification_ttl_seconds", 86400.0)),
+                gemini_overrides.get("direct_video_fps_certification_ttl_seconds", direct_video_raw.get("direct_video_fps_certification_ttl_seconds", 86400.0)),
             ),
             direct_video_resume_enabled=self._env_bool(
                 "GEMINI_DIRECT_VIDEO_RESUME_ENABLED",
-                gemini_overrides.get("direct_video_resume_enabled", gemini_raw.get("direct_video_resume_enabled", True)),
+                gemini_overrides.get("direct_video_resume_enabled", direct_video_raw.get("direct_video_resume_enabled", True)),
             ),
             direct_video_checkpoint_schema_version=str(
-                gemini_overrides.get("direct_video_checkpoint_schema_version", gemini_raw.get("direct_video_checkpoint_schema_version", "1.0.0"))
+                gemini_overrides.get("direct_video_checkpoint_schema_version", direct_video_raw.get("direct_video_checkpoint_schema_version", "1.0.0"))
             ),
             direct_video_batch_size=self._env_int(
                 "GEMINI_DIRECT_VIDEO_BATCH_SIZE",
-                gemini_overrides.get("direct_video_batch_size", gemini_raw.get("direct_video_batch_size", 10)),
+                gemini_overrides.get("direct_video_batch_size", direct_video_raw.get("direct_video_batch_size", 10)),
             ),
         )
         fallback_raw = providers_raw.get("provider_fallback", {})
