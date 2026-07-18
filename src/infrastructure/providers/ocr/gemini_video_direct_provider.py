@@ -1274,10 +1274,17 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             raise ProviderError("FFmpeg could not extract a V4 geometry frame.")
         return result.stdout
 
-    def _image_geometry_prompt(self, frame_sets: Sequence[Dict[str, Any]]) -> str:
+    def _image_geometry_prompt(
+        self,
+        frame_sets: Sequence[Dict[str, Any]],
+        source_text_by_event: Optional[Dict[str, str]] = None,
+    ) -> str:
         mapping = [
             {
                 "event_id": item["event"]["event_id"],
+                "source_text_context": (
+                    (source_text_by_event or {}).get(item["event"]["event_id"], "")
+                ),
                 "frames": [
                     {
                         "frame_role": frame["frame_role"],
@@ -1296,6 +1303,8 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "subtitle or its background may already cover part of a person or object. "
             "Replacing it in approximately the same visual region does not create new damage.\n\n"
             "For every frame separately, identify only the event's main dialogue subtitle. "
+            "The supplied source_text_context identifies the subtitle to locate. Use it only "
+            "to locate the existing subtitle, never to correct or replace its transcription. "
             "Do not confuse it with warning labels, creator notes, logos, account labels, "
             "stickers, UI overlays, or unrelated scene text.\n\n"
             "1. Existing occlusion: identify the person/object area already covered by "
@@ -1990,6 +1999,20 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         confidence = payload.get("geometry_confidence")
         if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
             raise ProviderError("V4 image geometry confidence is invalid.")
+        safety_confidence = payload.get("safety_confidence")
+        if (
+            not isinstance(safety_confidence, (int, float))
+            or not 0 <= float(safety_confidence) <= 1
+        ):
+            raise ProviderError("V4 image safety confidence is invalid.")
+        aggregation_method = payload.get("aggregation_method")
+        if aggregation_method not in {"bounded_union"}:
+            raise ProviderError("V4 image aggregation method is invalid.")
+        top_level_review_reason = payload.get("review_reason")
+        if top_level_review_reason is not None and not isinstance(
+            top_level_review_reason, str
+        ):
+            raise ProviderError("V4 image review reason is invalid.")
         return {
             "event_id": event["event_id"],
             "text_bbox": observations[0]["source_text_bbox"] if observations and not review_reasons else None,
@@ -2000,6 +2023,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
             "fallback_bbox": self._validate_box(event["representative_box_2d"]),
             "fallback_used_for_render": False,
             "geometry_confidence": float(confidence),
+            "safety_confidence": float(safety_confidence),
             "replacement_safety": (
                 "UNSAFE_INCREMENTAL_OCCLUSION" if unsafe else
                 "REVIEW_REQUIRED" if review_reasons else
@@ -2009,9 +2033,12 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                 ) else "SAFE_EQUIVALENT_OCCLUSION"
             ),
             "needs_review": bool(payload.get("needs_review")) or bool(review_reasons),
-            "review_reason": ",".join(review_reasons) if review_reasons else None,
+            "review_reason": (
+                ",".join(review_reasons) if review_reasons
+                else top_level_review_reason
+            ),
             "frame_observations": observations,
-            "aggregation_method": "bounded_union",
+            "aggregation_method": aggregation_method,
             "box_keyframes": [],
         }
 
@@ -2407,12 +2434,18 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
                     "type": "array", "items": {"type": "number"},
                 },
                 "geometry_confidence": {"type": "number"},
+                "safety_confidence": {"type": "number"},
+                "aggregation_method": {
+                    "type": "string", "enum": ["bounded_union"],
+                },
                 "needs_review": {"type": "boolean"},
+                "review_reason": {"type": "string"},
             },
             "required": [
                 "event_id", "frame_observations",
                 "event_recommended_cover_bbox", "geometry_confidence",
-                "needs_review",
+                "safety_confidence", "aggregation_method", "needs_review",
+                "review_reason",
             ],
         }
 

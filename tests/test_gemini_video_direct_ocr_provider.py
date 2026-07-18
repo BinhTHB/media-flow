@@ -168,7 +168,10 @@ def _image_safety_payload(*observations):
         "frame_observations": list(observations),
         "event_recommended_cover_bbox": [700, 200, 800, 800],
         "geometry_confidence": 0.98,
+        "safety_confidence": 0.94,
+        "aggregation_method": "bounded_union",
         "needs_review": False,
+        "review_reason": None,
     }
 
 
