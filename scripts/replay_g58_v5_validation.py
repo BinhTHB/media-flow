@@ -87,14 +87,63 @@ def replay(manifest: dict[str, Any], source_language: str = "auto") -> dict[str,
     }
 
 
+def apply_checkpoint(manifest: dict[str, Any], report: dict[str, Any]) -> None:
+    if report.get("verdict") != "V5_VALIDATION_REPLAY_PASS":
+        raise ValueError("Only a passing offline replay can update the V5 checkpoint.")
+    artifacts = manifest.setdefault("artifacts", {})
+    checkpoints = artifacts.setdefault("checkpoints", {})
+    events = {
+        item["event_id"]: item
+        for item in checkpoints["temporal_events"]["events"]
+    }
+    geometry = {
+        item["event_id"]: item
+        for item in checkpoints["geometry"]["events"]
+    }
+    accepted = []
+    for item in report["accepted_events"]:
+        event_id = item["event_id"]
+        if event_id not in events or event_id not in geometry:
+            raise ValueError(f"Offline replay event has no timing/geometry: {event_id}")
+        accepted.append({**events[event_id], **geometry[event_id], **item})
+    normalized_hash = hashlib.sha256(
+        json.dumps(accepted, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    checkpoints["transcriptions"] = {
+        "events": accepted,
+        "request_status": "COMPLETED_REUSED",
+        "validation_status": "PASS",
+        "stage_status": "COMPLETED",
+        "raw_artifact_hash": report["raw_artifact_hash"],
+        "validator_version": report["validator_version"],
+        "normalized_artifact_hash": normalized_hash,
+    }
+    artifacts["transcriptions"] = {"events": accepted}
+    artifacts.setdefault("stage_status", {})["V5"] = {
+        "status": "COMPLETED_REUSED",
+        "network_request_completed": False,
+        "network_request_skipped": True,
+        "artifact_sha256": normalized_hash,
+        "request_status": "COMPLETED_REUSED",
+        "validation_status": "PASS",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-language", default="auto")
+    parser.add_argument("--apply-checkpoint", action="store_true")
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     report = replay(manifest, args.source_language)
+    if args.apply_checkpoint:
+        apply_checkpoint(manifest, report)
+        args.manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n",
                            encoding="utf-8")
