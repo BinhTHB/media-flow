@@ -245,14 +245,16 @@ def technical_qa(input_video: Path, output_video: Path, rendered: list[dict[str,
 
 
 def visual_qa_schema() -> dict[str, Any]:
-    return {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {"event_id": {"type": "string"}, "source_text_visible": {"type": "boolean"}, "banner_visible": {"type": "boolean"}, "has_duplicate": {"type": "boolean"}, "has_overflow": {"type": "boolean"}, "has_damage": {"type": "boolean"}, "status": {"type": "string", "enum": sorted(VISUAL_QA_STATUSES)}, "reason": {"type": "string"}}, "required": ["event_id", "source_text_visible", "banner_visible", "has_duplicate", "has_overflow", "has_damage", "status"]}}}, "required": ["results"]}
+    return {"type": "object", "properties": {"results": {"type": "array", "items": {"type": "object", "properties": {"event_id": {"type": "string"}, "source_text_visible": {"type": "boolean"}, "banner_visible": {"type": "boolean"}, "source_container_visible": {"type": "boolean"}, "container_style_mismatch": {"type": "boolean"}, "has_duplicate": {"type": "boolean"}, "replacement_text_overlap": {"type": "boolean"}, "has_overflow": {"type": "boolean"}, "has_damage": {"type": "boolean"}, "status": {"type": "string", "enum": sorted(VISUAL_QA_STATUSES)}, "reason": {"type": "string"}}, "required": ["event_id", "source_text_visible", "banner_visible", "has_duplicate", "has_overflow", "has_damage", "status"]}}}, "required": ["results"]}
 
 
 def validate_visual_qa_result(result: dict[str, Any]) -> dict[str, Any]:
     if result.get("status") not in VISUAL_QA_STATUSES:
         return {"status": "REVIEW_REQUIRED", "reason": "VISUAL_QA_UNCLEAR"}
-    if any(result.get(key) is True for key in ("source_text_visible", "banner_visible", "has_duplicate", "has_overflow", "has_damage")) or result["status"] == "FAIL":
+    if any(result.get(key) is True for key in ("source_text_visible", "has_duplicate", "replacement_text_overlap", "has_overflow", "has_damage")) or result["status"] == "FAIL":
         return {"status": "FAIL", "reason": str(result.get("reason") or "VISUAL_QA_FAIL")}
+    if result.get("container_style_mismatch") is True:
+        return {"status": "REVIEW_REQUIRED", "reason": str(result.get("reason") or "CONTAINER_STYLE_MISMATCH")}
     return {"status": result["status"], "reason": result.get("reason") if result["status"] == "REVIEW_REQUIRED" else None}
 
 

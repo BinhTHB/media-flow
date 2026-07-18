@@ -262,11 +262,12 @@ def test_technical_qa_resolution_mismatch(mock_probe, tmp_path):
 @pytest.mark.parametrize('result, expected_status', [
     ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': False, 'has_duplicate': False, 'has_overflow': False, 'has_damage': False}, 'PASS'),
     ({'status': 'PASS', 'source_text_visible': True, 'banner_visible': False, 'has_duplicate': False, 'has_overflow': False, 'has_damage': False}, 'FAIL'),
-    ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': True, 'has_duplicate': False, 'has_overflow': False, 'has_damage': False}, 'FAIL'),
+    ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': True, 'has_duplicate': False, 'has_overflow': False, 'has_damage': False}, 'PASS'),
     ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': False, 'has_duplicate': True, 'has_overflow': False, 'has_damage': False}, 'FAIL'),
     ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': False, 'has_duplicate': False, 'has_overflow': True, 'has_damage': False}, 'FAIL'),
     ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': False, 'has_duplicate': False, 'has_overflow': False, 'has_damage': True}, 'FAIL'),
     ({'status': 'REVIEW_REQUIRED', 'source_text_visible': False, 'banner_visible': False, 'has_duplicate': False, 'has_overflow': False, 'has_damage': False}, 'REVIEW_REQUIRED'),
+    ({'status': 'PASS', 'source_text_visible': False, 'banner_visible': False, 'container_style_mismatch': True, 'has_duplicate': False, 'has_overflow': False, 'has_damage': False}, 'REVIEW_REQUIRED'),
     ({'status': 'INVALID'}, 'REVIEW_REQUIRED'),
 ])
 def test_validate_visual_qa_result(result, expected_status):
