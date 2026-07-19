@@ -729,3 +729,13 @@ We unified and consolidated configurations and introduced a decoupled, factory-c
 - Registry mapping category -> name -> class is decoupled into dynamic factory functions registered at module initialization.
 - `ProviderRegistry.create(category, name, options)` instantiates providers dynamically.
 - `ProviderFactory` delegates entirely to `registry.create(...)`, removing all provider-specific class coupling and conditional creation blocks.
+
+## YOLO weights (`best.pt`)
+
+- Model: YOLO11n fine-tune cho text detection dùng trong hybrid subtitle
+  benchmark (`src/infrastructure/benchmark/hybrid_subtitle/`).
+- Nguồn/quy trình train: TODO — bổ sung nguồn weights chính xác.
+- Vị trí đặt file: `./best.pt` tại root repo. File này bị gitignore
+  (`*.pt`), tuyệt đối không commit.
+- Nếu thiếu `best.pt`, các test YOLO trong
+  `tests/test_hybrid_subtitle_benchmark.py` sẽ tự skip.
