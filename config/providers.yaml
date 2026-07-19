@@ -98,12 +98,6 @@ providers:
       iou: 0.70
       imgsz: 1024
       min_confidence: 0.30
-    hybrid_yolo:
-      weights: best.pt
-      conf: 0.05
-      iou: 0.70
-      imgsz: 1024
-      min_confidence: 0.30
 
   subtitle_placement_debug:
     pillow: {}
