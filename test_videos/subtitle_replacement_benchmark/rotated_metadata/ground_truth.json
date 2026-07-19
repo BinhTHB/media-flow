@@ -1,0 +1,75 @@
+{
+  "video_path": "rotated_metadata\\video.mp4",
+  "category": [
+    "rotated_metadata_video"
+  ],
+  "checkpoints": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5
+  ],
+  "expected_source_subtitle_bboxes": {
+    "caption_1": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    }
+  },
+  "expected_source_subtitle_bbox_per_timestamp": {
+    "0": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "0.5": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "1": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "1.5": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "2": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "2.5": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    }
+  },
+  "forbidden_regions_per_timestamp": {
+    "0": [],
+    "0.5": [],
+    "1": [],
+    "1.5": [],
+    "2": [],
+    "2.5": []
+  },
+  "forbidden_regions": [],
+  "expected_subtitle_track_position": "bottom",
+  "allowed_strategy": [
+    "expanded_line_bbox",
+    "local_band"
+  ],
+  "notes": "Synthetic mechanics benchmark; not evidence of real-world robustness."
+}

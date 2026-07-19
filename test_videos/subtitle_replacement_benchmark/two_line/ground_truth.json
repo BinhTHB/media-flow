@@ -1,0 +1,76 @@
+{
+  "video_path": "two_line\\video.mp4",
+  "category": [
+    "two_line_subtitle",
+    "subtitle_with_shadow"
+  ],
+  "checkpoints": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5
+  ],
+  "expected_source_subtitle_bboxes": {
+    "caption_1": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    }
+  },
+  "expected_source_subtitle_bbox_per_timestamp": {
+    "0": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    },
+    "0.5": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    },
+    "1": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    },
+    "1.5": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    },
+    "2": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    },
+    "2.5": {
+      "left": 90.0,
+      "top": 745.5,
+      "right": 450.0,
+      "bottom": 827.5
+    }
+  },
+  "forbidden_regions_per_timestamp": {
+    "0": [],
+    "0.5": [],
+    "1": [],
+    "1.5": [],
+    "2": [],
+    "2.5": []
+  },
+  "forbidden_regions": [],
+  "expected_subtitle_track_position": "two_line",
+  "allowed_strategy": [
+    "expanded_line_bbox",
+    "local_band"
+  ],
+  "notes": "Synthetic mechanics benchmark; not evidence of real-world robustness."
+}

@@ -1,0 +1,190 @@
+{
+  "video_path": "ui_overlay\\video.mp4",
+  "category": [
+    "ui_overlay"
+  ],
+  "checkpoints": [
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5
+  ],
+  "expected_source_subtitle_bboxes": {
+    "caption_1": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    }
+  },
+  "expected_source_subtitle_bbox_per_timestamp": {
+    "0": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "0.5": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "1": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "1.5": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "2": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    },
+    "2.5": {
+      "left": 90,
+      "top": 769,
+      "right": 450,
+      "bottom": 804
+    }
+  },
+  "forbidden_regions_per_timestamp": {
+    "0": [
+      {
+        "type": "ui_overlay",
+        "bbox": {
+          "left": 172,
+          "top": 28,
+          "right": 367,
+          "bottom": 51
+        }
+      }
+    ],
+    "0.5": [
+      {
+        "type": "ui_overlay",
+        "bbox": {
+          "left": 172,
+          "top": 28,
+          "right": 367,
+          "bottom": 51
+        }
+      }
+    ],
+    "1": [
+      {
+        "type": "ui_overlay",
+        "bbox": {
+          "left": 172,
+          "top": 28,
+          "right": 367,
+          "bottom": 51
+        }
+      }
+    ],
+    "1.5": [
+      {
+        "type": "ui_overlay",
+        "bbox": {
+          "left": 172,
+          "top": 28,
+          "right": 367,
+          "bottom": 51
+        }
+      }
+    ],
+    "2": [
+      {
+        "type": "ui_overlay",
+        "bbox": {
+          "left": 172,
+          "top": 28,
+          "right": 367,
+          "bottom": 51
+        }
+      }
+    ],
+    "2.5": [
+      {
+        "type": "ui_overlay",
+        "bbox": {
+          "left": 172,
+          "top": 28,
+          "right": 367,
+          "bottom": 51
+        }
+      }
+    ]
+  },
+  "forbidden_regions": [
+    {
+      "type": "ui_overlay",
+      "bbox": {
+        "left": 172,
+        "top": 28,
+        "right": 367,
+        "bottom": 51
+      }
+    },
+    {
+      "type": "ui_overlay",
+      "bbox": {
+        "left": 172,
+        "top": 28,
+        "right": 367,
+        "bottom": 51
+      }
+    },
+    {
+      "type": "ui_overlay",
+      "bbox": {
+        "left": 172,
+        "top": 28,
+        "right": 367,
+        "bottom": 51
+      }
+    },
+    {
+      "type": "ui_overlay",
+      "bbox": {
+        "left": 172,
+        "top": 28,
+        "right": 367,
+        "bottom": 51
+      }
+    },
+    {
+      "type": "ui_overlay",
+      "bbox": {
+        "left": 172,
+        "top": 28,
+        "right": 367,
+        "bottom": 51
+      }
+    },
+    {
+      "type": "ui_overlay",
+      "bbox": {
+        "left": 172,
+        "top": 28,
+        "right": 367,
+        "bottom": 51
+      }
+    }
+  ],
+  "expected_subtitle_track_position": "ui",
+  "allowed_strategy": [
+    "expanded_line_bbox",
+    "local_band"
+  ],
+  "notes": "Synthetic mechanics benchmark; not evidence of real-world robustness."
+}

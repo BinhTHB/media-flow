@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "dataset_tiers": {
+    "synthetic": "Generated mechanics checks.",
+    "sample_variants": "Derived from sample.mp4; not independent real videos.",
+    "real": "User-supplied diverse videos; currently empty."
+  },
+  "samples": [
+    {
+      "id": "bottom_stable",
+      "path": "bottom_stable\\video.mp4",
+      "categories": [
+        "bottom_stable_subtitle",
+        "white_subtitle"
+      ],
+      "ground_truth": "bottom_stable/ground_truth.json"
+    },
+    {
+      "id": "center",
+      "path": "center\\video.mp4",
+      "categories": [
+        "center_subtitle",
+        "yellow_subtitle"
+      ],
+      "ground_truth": "center/ground_truth.json"
+    },
+    {
+      "id": "top",
+      "path": "top\\video.mp4",
+      "categories": [
+        "top_subtitle"
+      ],
+      "ground_truth": "top/ground_truth.json"
+    },
+    {
+      "id": "moving",
+      "path": "moving\\video.mp4",
+      "categories": [
+        "moving_subtitle"
+      ],
+      "ground_truth": "moving/ground_truth.json"
+    },
+    {
+      "id": "two_line",
+      "path": "two_line\\video.mp4",
+      "categories": [
+        "two_line_subtitle",
+        "subtitle_with_shadow"
+      ],
+      "ground_truth": "two_line/ground_truth.json"
+    },
+    {
+      "id": "punctuation",
+      "path": "punctuation\\video.mp4",
+      "categories": [
+        "punctuation_noise"
+      ],
+      "ground_truth": "punctuation/ground_truth.json"
+    },
+    {
+      "id": "sticker",
+      "path": "sticker\\video.mp4",
+      "categories": [
+        "sticker_noise"
+      ],
+      "ground_truth": "sticker/ground_truth.json"
+    },
+    {
+      "id": "ui_overlay",
+      "path": "ui_overlay\\video.mp4",
+      "categories": [
+        "ui_overlay"
+      ],
+      "ground_truth": "ui_overlay/ground_truth.json"
+    },
+    {
+      "id": "watermark_scene",
+      "path": "watermark_scene\\video.mp4",
+      "categories": [
+        "watermark",
+        "scene_text",
+        "complex_background"
+      ],
+      "ground_truth": "watermark_scene/ground_truth.json"
+    },
+    {
+      "id": "landscape_bright",
+      "path": "landscape_bright\\video.mp4",
+      "categories": [
+        "landscape_video",
+        "bright_background"
+      ],
+      "ground_truth": "landscape_bright/ground_truth.json"
+    },
+    {
+      "id": "portrait",
+      "path": "portrait\\video.mp4",
+      "categories": [
+        "portrait_video"
+      ],
+      "ground_truth": "portrait/ground_truth.json"
+    },
+    {
+      "id": "rotated_metadata",
+      "path": "rotated_metadata\\video.mp4",
+      "categories": [
+        "rotated_metadata_video"
+      ],
+      "ground_truth": "rotated_metadata/ground_truth.json"
+    },
+    {
+      "id": "sample_bright_resize_crop",
+      "path": "sample_variants\\bright_resize_crop.mp4",
+      "categories": [
+        "complex_background"
+      ],
+      "ground_truth": "sample_variants/bright_resize_crop.ground_truth.json"
+    }
+  ]
+}

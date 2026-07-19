@@ -1,0 +1,19 @@
+{
+  "video_path": "sample_variants\\bright_resize_crop.mp4",
+  "category": [
+    "sample_variant"
+  ],
+  "checkpoints": [
+    1.0
+  ],
+  "expected_source_subtitle_bbox_per_timestamp": {},
+  "forbidden_regions_per_timestamp": {
+    "1": []
+  },
+  "expected_subtitle_track_position": "source-dependent",
+  "allowed_strategy": [
+    "expanded_line_bbox",
+    "local_band"
+  ],
+  "notes": "Derived from sample.mp4; not an independent real video."
+}

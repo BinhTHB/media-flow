@@ -1,0 +1,131 @@
+defaults:
+  video: mock
+  speech: mock
+  translation: mock
+  subtitle: mock
+  ocr: mock
+  storage: mock
+  frame_extraction: mock
+  subtitle_region_detector: mock
+  subtitle_placement_debug: pillow
+
+resource_policy:
+  profile: balanced
+  allow_inpaint_light: false
+  allow_full_frame_segmentation: false
+
+ffmpeg:
+  encoder: auto
+  decoder: auto
+  use_gpu_encode: true
+  use_gpu_decode: false
+  nvenc_codec: h264_nvenc
+  nvenc_preset: p5
+  nvenc_cq: 23
+  cpu_codec: libx264
+  cpu_preset: medium
+  pixel_format: yuv420p
+
+providers:
+  video:
+    mock: {}
+    ffmpeg:
+      output_dir: output
+      audio_filename: audio.wav
+
+  speech:
+    mock: {}
+    faster-whisper:
+      model_size: base
+      device: cuda
+      compute_type: float16
+
+  translation:
+    mock: {}
+    openai:
+      model: gpt-4o-mini
+      target_language: vi
+      max_retries: 3
+    gemini:
+      model: gemini-3.1-flash-lite
+      max_retries: 5
+      cache_enabled: true
+      cache_namespace: shared
+      scheduler: {}
+      file_manager_enabled: false
+      direct_video_max_raw_candidates: 30
+      direct_video_max_deduplicated_candidates: 10
+      direct_video_max_accepted_subtitle_tracks: 10
+      direct_video_max_events_per_track: 20
+      direct_video_max_total_stage_requests: 100
+      direct_video_max_counted_input_tokens_per_job: 500000
+      direct_video_stage_timeout_seconds: 120
+      direct_video_no_progress_timeout_seconds: 300
+      direct_video_job_timeout_seconds: 600
+      model: gemini-3.1-flash-lite
+      max_retries: 5
+      cache_enabled: true
+      cache_namespace: shared
+      scheduler: {}
+      file_manager_enabled: false
+
+  subtitle:
+    mock: {}
+
+  ocr:
+    mock: {}
+    paddle:
+      language: ch
+      use_gpu: true
+
+  storage:
+    mock: {}
+
+  frame_extraction:
+    mock: {}
+    ffmpeg:
+      interval: 1.0
+
+  subtitle_region_detector:
+    mock: {}
+    paddle:
+      language: ch
+      use_gpu: true
+      min_confidence: 0.70
+
+  subtitle_placement_debug:
+    pillow: {}
+
+subtitle_quality:
+  max_chars_per_line: 42
+  max_lines_per_subtitle: 2
+  min_duration: 0.8
+  max_duration: 6.0
+  merge_gap_threshold: 0.3
+  deduplicate: true
+  prefer_speech_over_ocr: true
+  remove_empty_segments: true
+  trim_whitespace: true
+  ocr_min_confidence: 0.70
+  ocr_max_abnormal_char_ratio: 0.25
+  ocr_repetition_window: 1.5
+  ocr_max_source_leakage: 0
+  min_coverage_ratio: 0.10
+  max_longest_gap: 999.0
+  min_caption_count: 1
+  ocr_grouping_max_gap: 1.5
+  enable_vietnamese_text_correction: false
+
+subtitle_placement:
+  padding_px: 24
+  preferred_relation: below_source
+  fallback_alignment: 2
+  fallback_margin_v: 15
+  min_region_confidence: 0.70
+  video_width: 1920
+  video_height: 1080
+  placement_mode: avoid_source_subtitle
+  safe_zone_top: 0.05
+  safe_zone_bottom: 0.95
+  safe_zone_left: 0.05
+  safe_zone_right: 0.95

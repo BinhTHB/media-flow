@@ -1,0 +1,9 @@
+[
+  {
+    "video_id": "sample1",
+    "input_video_path": "test_videos\\real_mini_benchmark\\sample1.mp4",
+    "category": "unknown_real_review_only",
+    "ground_truth_mode": "review_only",
+    "manual_review_required": true
+  }
+]

@@ -1,0 +1,26 @@
+{
+  "video_path": "replace-with-video.mp4",
+  "category": [
+    "bottom_stable_subtitle"
+  ],
+  "checkpoints": [
+    1.0
+  ],
+  "expected_source_subtitle_bbox_per_timestamp": {
+    "1": {
+      "left": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0
+    }
+  },
+  "forbidden_regions_per_timestamp": {
+    "1": []
+  },
+  "expected_subtitle_track_position": "bottom",
+  "allowed_strategy": [
+    "expanded_line_bbox",
+    "local_band"
+  ],
+  "notes": "Copy this file beside each real video and replace all placeholder values."
+}
