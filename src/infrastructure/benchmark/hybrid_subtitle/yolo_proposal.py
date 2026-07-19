@@ -22,7 +22,6 @@ class YoloTextProposalProvider:
         self._device = device
 
     def detect(self, video_path: str) -> List[Dict[str, Any]]:
-        import cv2
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise RuntimeError("Cannot open video: " + str(video_path))

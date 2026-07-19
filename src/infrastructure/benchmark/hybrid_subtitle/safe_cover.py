@@ -1,8 +1,8 @@
 from __future__ import annotations
 import logging
 from typing import Any, Dict, List
-import numpy as np
 import statistics
+from .core import median_box, percentile_box
 
 logger = logging.getLogger(__name__)
 
@@ -16,32 +16,15 @@ class SafeCoverRegionBuilder:
                           strategy: str = "percentile") -> List[float]:
         if not bboxes:
             return [0.0, 0.0, 0.0, 0.0]
-        x1s = [b[0] for b in bboxes]
-        y1s = [b[1] for b in bboxes]
-        x2s = [b[2] for b in bboxes]
-        y2s = [b[3] for b in bboxes]
-
+        m = self._margin
         if strategy == "per_frame":
-            exp_x1s = [x - self._margin for x in x1s]
-            exp_y1s = [y - self._margin for y in y1s]
-            exp_x2s = [x + self._margin for x in x2s]
-            exp_y2s = [y + self._margin for y in y2s]
-            return [statistics.median(exp_x1s), statistics.median(exp_y1s),
-                    statistics.median(exp_x2s), statistics.median(exp_y2s)]
-        elif strategy == "median":
-            return [
-                statistics.median(x1s) - self._margin,
-                statistics.median(y1s) - self._margin,
-                statistics.median(x2s) + self._margin,
-                statistics.median(y2s) + self._margin,
-            ]
-        else:
-            return [
-                float(np.percentile(x1s, 5)) - self._margin,
-                float(np.percentile(y1s, 5)) - self._margin,
-                float(np.percentile(x2s, 95)) + self._margin,
-                float(np.percentile(y2s, 95)) + self._margin,
-            ]
+            expanded = [[b[0] - m, b[1] - m, b[2] + m, b[3] + m] for b in bboxes]
+            return list(median_box(expanded))
+        if strategy == "median":
+            x1, y1, x2, y2 = median_box(bboxes)
+            return [x1 - m, y1 - m, x2 + m, y2 + m]
+        x1, y1, x2, y2 = percentile_box(bboxes, 5, 95)
+        return [x1 - m, y1 - m, x2 + m, y2 + m]
 
     def check_review_flag(self, bboxes: List[List[float]],
                           verdict_color: str = "green",

@@ -2,7 +2,7 @@ from __future__ import annotations
 import cv2, json, logging, os, time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from dataclasses import dataclass, field, asdict
+from .config import BenchmarkConfig
 from .video_utils import (
     VideoMetadata, probe_video, draw_bboxes, COLOR_MAP,
     safe_json_dump, jsonl_dump,
@@ -13,30 +13,12 @@ from .core import (
     validate_gemini_decision, proposal_metrics,
     ALLOWED_CATEGORIES,
 )
+from .gemini_verifier import LiveGeminiTrackVerifier
 from .yolo_proposal import YoloTextProposalProvider
 from .safe_cover import SafeCoverRegionBuilder
 from .gt_metrics import evaluate_tracks_vs_gt, compute_timing_mae
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class BenchmarkConfig:
-    yolo_weights: str = "best.pt"
-    yolo_conf: float = 0.05
-    yolo_iou: float = 0.70
-    yolo_imgsz: int = 1024
-    horizontal_gap_ratio: float = 2.0
-    track_iou_threshold: float = 0.25
-    track_max_gap_frames: int = 5
-    glyph_margin: float = 12.0
-    outline_margin: float = 4.0
-    shadow_margin: float = 2.0
-    motion_margin: float = 5.0
-    safe_cover_strategy: str = "percentile"
-    gemini_model: str = "gemini-3.1-flash-lite"
-    live_gemini: bool = False
-    max_rep_frames: int = 5
 
 
 def classify_track_by_position(median_bbox_xyxy, frame_height, rep_ids,
@@ -75,7 +57,7 @@ class HybridSubtitleBenchmarkRunner:
             shadow_margin=config.shadow_margin,
             motion_margin=config.motion_margin)
         if self._gemini and config.live_gemini:
-            self._verifier = _LiveGeminiVerifier(gemini_runtime_client, config.gemini_model)
+            self._verifier = LiveGeminiTrackVerifier(gemini_runtime_client, config.gemini_model)
         else:
             self._verifier = None
 
@@ -284,77 +266,3 @@ class HybridSubtitleBenchmarkRunner:
             "note": "Recall/Precision/F1 require reviewed manual GT annotations "
                     "in sample_id_manual_gt.json. No reviewed GT in this run.",
         }
-
-
-class _LiveGeminiVerifier:
-    """Wraps Gemini client for benchmark; reuses existing runtime infrastructure."""
-    def __init__(self, runtime_client, model: str):
-        self._client = runtime_client
-        self._model = model
-
-    def classify(self, track: Dict, rep_frames: List[Tuple[int, Any, str]],
-                 candidate_ids: List[str], cap) -> Dict:
-        if not rep_frames:
-            return {"track_id": track["track_id"], "decisions": [],
-                    "uncertain": True}
-        import base64, json as _json
-        content_parts = [{"text": self._build_prompt(candidate_ids, track)}]
-        for fi, bbox, role in rep_frames:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            # Draw candidate ID label near the bbox
-            label = f"{role}:{candidate_ids[rep_frames.index((fi, bbox, role))] if (fi, bbox, role) in rep_frames else ''}"
-            annotated = draw_bboxes(frame, [{"bbox_xyxy": bbox, "color_key": "yellow",
-                                           "label": f"{role[0].upper()}", "thickness": 2}], COLOR_MAP)
-            _, png_buf = cv2.imencode(".png", annotated, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-            content_parts.append({
-                "inline_data": {
-                    "mime_type": "image/png",
-                    "data": base64.b64encode(png_buf.tobytes()).decode("ascii")
-                }
-            })
-        try:
-            from src.infrastructure.gemini.contracts import GeminiRequest
-            req = GeminiRequest(
-                contents=content_parts,
-                model=self._model,
-                generation_config={"temperature": 0.1},
-                system_instruction=(
-                    "Geometry is provided by a detector. Do NOT modify or re-evaluate "
-                    "coordinates. Only classify candidate IDs. Return valid JSON. "
-                    "Allowed categories: dialogue_subtitle, narration_subtitle, "
-                    "sound_caption, karaoke_or_lyric_subtitle, scene_text, watermark, "
-                    "logo, ui_text, social_overlay, title_card, credits, decorative_text, unknown."
-                ),
-                request_id=track["track_id"],
-                source_kind="benchmark_subtitle_verifier",
-                api_surface="benchmark",
-            )
-            resp = self._client.generate_content(req, use_cache=True)
-            text = resp.text if hasattr(resp, "text") else ""
-            parsed = _json.loads(text)
-            validated = validate_gemini_decision(parsed, track["track_id"], set(candidate_ids))
-            return validated
-        except Exception as exc:
-            return {"track_id": track["track_id"], "decisions": [],
-                    "uncertain": True, "error": str(exc)[:200]}
-
-    def _build_prompt(self, candidate_ids: List[str], track: Dict) -> str:
-        import json as _json
-        return (
-            "Classify each candidate ID as subtitle or non-subtitle.\\n"
-            "Candidate IDs in this track (" + track["track_id"] + "):\\n"
-            + _json.dumps(candidate_ids) + "\\n\\n"
-            "Track frames: " + str(len(track["groups"])) + " frames "
-            "from frame " + str(track.get("start_frame")) + " to " + str(track.get("end_frame")) + ".\\n\\n"
-            "Return: {\\\"track_id\\\": \\\"" + track["track_id"] + "\\\", "
-            "\\\"decisions\\\": [{\\\"candidate_id\\\": \\\"<id>\\\", "
-            "\\\"is_subtitle\\\": true/false, \\\"category\\\": \\\"<category>\\\", "
-            "\\\"confidence\\\": 0.0-1.0, \\\"transcription\\\": null/str, "
-            "\\\"reason_code\\\": \\\"<short>\\\"}], \\\"uncertain\\\": true/false}"
-        )
-
-
-# raw_dets passed via closure in _annotate_videos

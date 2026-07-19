@@ -1,1 +1,0 @@
-# Writer script
