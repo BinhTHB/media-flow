@@ -1,0 +1,103 @@
+import os
+import pytest
+import cv2
+import numpy as np
+import tempfile
+
+from src.domain.entities.frame import Frame
+from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
+    HybridSubtitleRegionDetectorProvider,
+)
+from src.infrastructure.registry.provider_registry import ProviderRegistry
+
+requires_yolo_weights = pytest.mark.skipif(
+    not os.path.exists("best.pt"),
+    reason="requires local YOLO weights best.pt",
+)
+
+
+class FakeProposalProvider:
+    def __init__(self, bbox_xyxy, confidence=0.9):
+        self._bbox = bbox_xyxy
+        self._confidence = confidence
+
+    def detect_images(self, image_paths):
+        dets = []
+        for fi, p in enumerate(image_paths):
+            dets.append({
+                "frame_index": fi,
+                "timestamp_ms": round(fi * 1000.0, 1),
+                "candidate_id": f"F{fi:05d}_C01",
+                "bbox_xyxy": self._bbox,
+                "bbox_normalized": [
+                    self._bbox[0]/1280, self._bbox[1]/720,
+                    self._bbox[2]/1280, self._bbox[3]/720
+                ],
+                "confidence": self._confidence,
+                "class": "text",
+            })
+        return dets
+
+
+def test_detect_regions_empty_frames():
+    provider = HybridSubtitleRegionDetectorProvider(proposal_provider=FakeProposalProvider([100, 100, 200, 200]))
+    assert provider.detect_regions([]) == []
+
+
+def test_detect_regions_returns_normalized_bottom_region():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Create 3 real images (1280x720)
+        paths = []
+        for i in range(3):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=0.0, image_path=paths[0]),
+            Frame(timestamp=0.5, image_path=paths[1]),
+            Frame(timestamp=1.0, image_path=paths[2]),
+        ]
+
+        # bottom bbox: [300, 620, 900, 700]
+        fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
+        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+
+        regions = provider.detect_regions(frames)
+        assert len(regions) >= 1
+        r = regions[0]
+        assert 0.0 <= r.x <= 1.0
+        assert 0.0 <= r.y <= 1.0
+        assert r.y >= 0.5
+        assert r.end_time >= r.start_time
+        assert r.confidence == 0.9
+
+
+def test_scene_text_top_region_filtered():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        paths = []
+        for i in range(3):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=0.0, image_path=paths[0]),
+            Frame(timestamp=0.5, image_path=paths[1]),
+            Frame(timestamp=1.0, image_path=paths[2]),
+        ]
+
+        # top bbox: [300, 100, 900, 180] -> y2 = 180 -> 180/720 = 0.25 <= 0.65 -> not subtitle
+        fake_proposal = FakeProposalProvider([300.0, 100.0, 900.0, 180.0], 0.9)
+        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+
+        regions = provider.detect_regions(frames)
+        assert regions == []
+
+
+def test_registry_creates_hybrid_provider():
+    registry = ProviderRegistry()
+    provider = registry.create("subtitle_region_detector", "hybrid_yolo", {})
+    assert provider.__class__.__name__ == "HybridSubtitleRegionDetectorProvider"

@@ -58,6 +58,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.subtitle.ass_subtitle_provider import ASSSubtitleProvider
     from src.infrastructure.providers.subtitle.mock_subtitle_region_detector_provider import MockSubtitleRegionDetectorProvider
     from src.infrastructure.providers.subtitle.paddle_subtitle_region_detector_provider import PaddleOCRSubtitleRegionDetectorProvider
+    from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import HybridSubtitleRegionDetectorProvider
     from src.infrastructure.providers.subtitle.pillow_subtitle_placement_debug_provider import PillowSubtitlePlacementDebugProvider
     from src.infrastructure.providers.video.ffmpeg_video_provider import FFmpegVideoProvider
     from src.infrastructure.providers.video.mock_video_provider import MockVideoProvider
@@ -132,6 +133,17 @@ def register_default_providers(registry: ProviderRegistry) -> None:
             language=opt.get("language", "ch"),
             use_gpu=opt.get("use_gpu", True),
             min_confidence=float(opt.get("min_confidence", 0.70)),
+        ),
+    )
+    registry.register(
+        "subtitle_region_detector",
+        "hybrid_yolo",
+        lambda opt: HybridSubtitleRegionDetectorProvider(
+            weights=opt.get("weights", "best.pt"),
+            conf=opt.get("conf", 0.05),
+            iou=opt.get("iou", 0.70),
+            imgsz=opt.get("imgsz", 1024),
+            min_confidence=float(opt.get("min_confidence", 0.30)),
         ),
     )
 
