@@ -44,6 +44,20 @@ class ProviderRegistry:
         return sorted(self._factories.get(category, {}).keys())
 
 
+
+def _create_hybrid_yolo(options):
+    from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
+        HybridSubtitleRegionDetectorProvider,
+    )
+    return HybridSubtitleRegionDetectorProvider(
+        weights=options.get("weights", "best.pt"),
+        conf=options.get("conf", 0.05),
+        iou=options.get("iou", 0.70),
+        imgsz=options.get("imgsz", 1024),
+        min_confidence=float(options.get("min_confidence", 0.30)),
+    )
+
+
 def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.ocr.mock_ocr_provider import MockOCRProvider
     from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
@@ -58,7 +72,6 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.subtitle.ass_subtitle_provider import ASSSubtitleProvider
     from src.infrastructure.providers.subtitle.mock_subtitle_region_detector_provider import MockSubtitleRegionDetectorProvider
     from src.infrastructure.providers.subtitle.paddle_subtitle_region_detector_provider import PaddleOCRSubtitleRegionDetectorProvider
-    from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import HybridSubtitleRegionDetectorProvider
     from src.infrastructure.providers.subtitle.pillow_subtitle_placement_debug_provider import PillowSubtitlePlacementDebugProvider
     from src.infrastructure.providers.video.ffmpeg_video_provider import FFmpegVideoProvider
     from src.infrastructure.providers.video.mock_video_provider import MockVideoProvider
@@ -138,13 +151,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     registry.register(
         "subtitle_region_detector",
         "hybrid_yolo",
-        lambda opt: HybridSubtitleRegionDetectorProvider(
-            weights=opt.get("weights", "best.pt"),
-            conf=opt.get("conf", 0.05),
-            iou=opt.get("iou", 0.70),
-            imgsz=opt.get("imgsz", 1024),
-            min_confidence=float(opt.get("min_confidence", 0.30)),
-        ),
+        _create_hybrid_yolo,
     )
 
     # subtitle_placement_debug
