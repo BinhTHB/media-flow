@@ -8,6 +8,8 @@ from src.domain.entities.frame import Frame
 from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
     HybridSubtitleRegionDetectorProvider,
 )
+from src.domain.entities.subtitle_region import SubtitleRegion
+
 from src.infrastructure.registry.provider_registry import ProviderRegistry
 
 requires_yolo_weights = pytest.mark.skipif(
@@ -101,3 +103,52 @@ def test_registry_creates_hybrid_provider():
     registry = ProviderRegistry()
     provider = registry.create("subtitle_region_detector", "hybrid_yolo", {})
     assert provider.__class__.__name__ == "HybridSubtitleRegionDetectorProvider"
+
+
+@requires_yolo_weights
+def test_detect_regions_with_real_yolo_weights(tmp_path):
+    frames = []
+    for i in range(5):
+        image_path = tmp_path / f"frame_{i}.png"
+        image = np.zeros((720, 1280, 3), dtype=np.uint8)
+        cv2.putText(
+            image, "SUBTITLE TEXT", (300, 680),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2,
+        )
+        cv2.imwrite(str(image_path), image)
+        frames.append(Frame(timestamp=i * 0.5, image_path=str(image_path)))
+
+    regions = HybridSubtitleRegionDetectorProvider().detect_regions(frames)
+    assert all(region.__class__.__name__ == "SubtitleRegion" for region in regions)
+
+@requires_yolo_weights
+def test_detect_regions_real_yolo_guarded():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Create 5 real images with cv2.putText at the bottom
+        paths = []
+        for i in range(5):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            # draw white text at bottom
+            cv2.putText(img, "SUBTITLE TEST", (300, 680), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=i * 0.5, image_path=paths[i])
+            for i in range(5)
+        ]
+
+        # real YOLO provider
+        provider = HybridSubtitleRegionDetectorProvider()
+        regions = provider.detect_regions(frames)
+        assert isinstance(regions, list)
+        for r in regions:
+            assert isinstance(r, SubtitleRegion)
+            assert 0.0 <= r.x <= 1.0
+            assert 0.0 <= r.y <= 1.0
+            assert 0.0 <= r.width <= 1.0
+            assert 0.0 <= r.height <= 1.0
+            assert r.end_time >= r.start_time
+            assert 0.0 <= r.confidence <= 1.0
+
