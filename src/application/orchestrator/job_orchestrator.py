@@ -773,7 +773,8 @@ class JobOrchestrator:
                 job.output_video_path = self.render_video_uc.execute(
                     video_path=job.input_video,
                     subtitle_path=ass_path,
-                    output_path=self.artifact_provider.video_output_path(job.job_id),
+                    output_path=job.output_video_path
+                    or self.artifact_provider.video_output_path(job.job_id),
                 )
                 logger.done()
                 timings["render"] = round(time.monotonic() - started, 3)
