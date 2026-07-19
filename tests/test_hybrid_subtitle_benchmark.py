@@ -1,7 +1,6 @@
-﻿import os, sys, pytest, cv2, tempfile, json
+﻿import os, pytest, cv2, tempfile, json
 import numpy as np
 
-sys.path.insert(0, '.')
 from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
 from src.infrastructure.benchmark.hybrid_subtitle.grouping import TextCandidateGrouper
 
@@ -10,6 +9,11 @@ from src.infrastructure.benchmark.hybrid_subtitle.core import (
 )
 from src.infrastructure.benchmark.hybrid_subtitle.gt_metrics import evaluate_tracks_vs_gt
 from src.infrastructure.benchmark.hybrid_subtitle.runner import HybridSubtitleBenchmarkRunner, BenchmarkConfig
+
+requires_yolo_weights = pytest.mark.skipif(
+    not os.path.exists("best.pt"),
+    reason="requires local YOLO weights best.pt",
+)
 
 
 def create_synthetic_video(path: str, frames: list[np.ndarray], fps: float = 30.0):
@@ -21,6 +25,7 @@ def create_synthetic_video(path: str, frames: list[np.ndarray], fps: float = 30.
     writer.release()
 
 
+@requires_yolo_weights
 def test_yolo_multiple_text_and_cpu_fallback():
     # 1. Create a frame with multiple text regions
     frame1 = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -44,6 +49,7 @@ def test_yolo_multiple_text_and_cpu_fallback():
         assert frames_seen == sorted(frames_seen)
 
 
+@requires_yolo_weights
 def test_yolo_empty_frame_no_crash():
     frame = np.zeros((240, 320, 3), dtype=np.uint8)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -101,3 +107,17 @@ def test_metrics_no_gt_returns_not_computable():
     res = evaluate_tracks_vs_gt([], [])
     assert res["ground_truth_available"] is False
     assert "No ground truth" in res["note"]
+
+def test_fallback_heuristic_uses_normalized_coords():
+    from src.infrastructure.benchmark.hybrid_subtitle.runner import (
+        classify_track_by_position,
+    )
+    # bbox day o ~80% chieu cao frame 720p -> la subtitle
+    r = classify_track_by_position([100, 500, 600, 576], 720, ["C1"], "T001")
+    assert r["decisions"][0]["is_subtitle"] is True
+    # bbox o ~30% phia tren frame -> khong phai subtitle
+    r = classify_track_by_position([100, 100, 600, 216], 720, ["C1"], "T001")
+    assert r["decisions"][0]["is_subtitle"] is False
+    # thieu frame_height -> uncertain, khong duoc doan
+    r = classify_track_by_position([100, 500, 600, 576], 0, ["C1"], "T001")
+    assert r["uncertain"] is True

@@ -39,6 +39,24 @@ class BenchmarkConfig:
     max_rep_frames: int = 5
 
 
+def classify_track_by_position(median_bbox_xyxy, frame_height, rep_ids,
+                               track_id, bottom_ratio_threshold=0.65):
+    """Fallback heuristic thuan tuy theo vi tri. Toa do dau vao la PIXEL.
+    Khong duoc dung lam ground truth."""
+    if not median_bbox_xyxy or not frame_height or frame_height <= 0:
+        return {"track_id": track_id, "decisions": [],
+                "uncertain": True, "error": "no_median_bbox_or_frame_height"}
+    is_sub = (median_bbox_xyxy[3] / frame_height) > bottom_ratio_threshold
+    decisions = [{"candidate_id": cid, "is_subtitle": is_sub,
+                  "category": "dialogue_subtitle" if is_sub else "scene_text",
+                  "confidence": 0.75, "transcription": None,
+                  "reason_code": "position_bottom_heuristic" if is_sub
+                                 else "position_not_bottom"}
+                 for cid in rep_ids]
+    return {"track_id": track_id, "decisions": decisions,
+            "uncertain": False, "source": "fallback_heuristic"}
+
+
 class HybridSubtitleBenchmarkRunner:
     def __init__(self, config: BenchmarkConfig,
                  output_dir: str,
@@ -119,7 +137,7 @@ class HybridSubtitleBenchmarkRunner:
             if self._verifier and rep_frames:
                 result = self._verifier.classify(track, rep_frames, rep_ids, cap)
             else:
-                result = self._rule_classify(track, rep_ids)
+                result = self._rule_classify(track, rep_ids, H)
 
             result["track_id"] = track["track_id"]
             all_decisions.append(result)
@@ -180,20 +198,13 @@ class HybridSubtitleBenchmarkRunner:
             result.append((groups[n // 2]["frame_index"], groups[n // 2]["union_bbox_xyxy"], "middle"))
         return [(fi, bbox, role) for fi, bbox, role in result[:self.cfg.max_rep_frames]]
 
-    def _rule_classify(self, track: Dict, rep_ids: List[str]) -> Dict:
+    def _rule_classify(self, track: Dict, rep_ids: List[str],
+                       frame_height: float) -> Dict:
         """Fallback: position-only heuristic. Must not be used as ground truth."""
-        median = track.get("median_bbox_xyxy") or track.get("representative_bbox_xyxy") or []
-        if not median:
-            return {"track_id": track["track_id"], "decisions": [],
-                    "uncertain": True, "error": "no_median_bbox"}
-        is_sub = median[3] > 0.65  # bottom 35%
-        decisions = [{"candidate_id": cid, "is_subtitle": is_sub,
-                      "category": "dialogue_subtitle" if is_sub else "scene_text",
-                      "confidence": 0.75, "transcription": None,
-                      "reason_code": "position_bottom_heuristic" if is_sub else "position_not_bottom"}
-                     for cid in rep_ids]
-        return {"track_id": track["track_id"], "decisions": decisions,
-                "uncertain": False, "source": "fallback_heuristic"}
+        median = (track.get("median_bbox_xyxy")
+                  or track.get("representative_bbox_xyxy") or [])
+        return classify_track_by_position(median, frame_height, rep_ids,
+                                          track["track_id"])
 
     def _annotate_videos(self, video_path: str,
                           raw_dets: List[Dict],
