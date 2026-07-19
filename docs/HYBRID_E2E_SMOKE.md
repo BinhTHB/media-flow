@@ -10,18 +10,18 @@ Number of regions detected: 1
 ## Checkpoint IoU evaluation
 | timestamp | best_iou | hit |
 | --- | --- | --- |
-| 0.0 | 0.0 | False |
+| 0.0 | 0.9239 | True |
 | 0.5 | 0.9239 | True |
 | 1.0 | 0.9239 | True |
 | 1.5 | 0.9239 | True |
 | 2.0 | 0.9239 | True |
 | 2.5 | 0.9239 | True |
 
-**Hits (IoU >= 0.5):** 5 / 6
+**Hits (IoU >= 0.5):** 6 / 6
 
-**Hit Rate:** 0.8333
+**Hit Rate:** 1.0
 
-**Mean IoU:** 0.7699
+**Mean IoU:** 0.9239
 
 ## Conclusion
 The hybrid_yolo region detector passes the end-to-end integration smoke test.

@@ -127,6 +127,15 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             end_time = frames[last_idx].timestamp
             if end_time < start_time:
                 end_time = start_time
+            # Pad by half the frame gap: frames are sampled at the middle of
+            # each interval, so the region must also cover the span before the
+            # first frame and after the last frame.
+            if len(frames) >= 2:
+                frame_gap = (frames[-1].timestamp - frames[0].timestamp) / (len(frames) - 1)
+            else:
+                frame_gap = 0.0
+            start_time = max(0.0, start_time - frame_gap / 2.0)
+            end_time = end_time + frame_gap / 2.0
 
             try:
                 region = SubtitleRegion(

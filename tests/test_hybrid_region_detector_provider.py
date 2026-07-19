@@ -152,3 +152,34 @@ def test_detect_regions_real_yolo_guarded():
             assert r.end_time >= r.start_time
             assert 0.0 <= r.confidence <= 1.0
 
+def test_detect_regions_pads_half_frame_gap():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Create 3 real images (1280x720)
+        paths = []
+        for i in range(3):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=0.25, image_path=paths[0]),
+            Frame(timestamp=0.75, image_path=paths[1]),
+            Frame(timestamp=1.25, image_path=paths[2]),
+        ]
+
+        # bottom bbox: [300, 620, 900, 700]
+        fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
+        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+
+        regions = provider.detect_regions(frames)
+        assert len(regions) >= 1
+        r = regions[0]
+        assert 0.0 <= r.x <= 1.0
+        assert 0.0 <= r.y <= 1.0
+        assert r.y >= 0.5
+        assert r.end_time >= r.start_time
+        assert r.confidence == 0.9
+        assert r.start_time == 0.0
+        assert abs(r.end_time - 1.5) < 1e-6
+
