@@ -96,14 +96,15 @@ class ConfigLoader:
         quality = SubtitleQualityConfig(**quality_values)
 
         default_placement = PlacementConfig(
-                    padding_px=24,
-                    preferred_relation="override",
-                    fallback_alignment=2,
-                    fallback_margin_v=15,
-                    min_region_confidence=0.70,
-                    video_width=1920,
-                    video_height=1080,
-                )
+            padding_px=24,
+            preferred_relation="override",
+            fallback_alignment=2,
+            fallback_margin_v=15,
+            min_region_confidence=0.70,
+            video_width=1920,
+            video_height=1080,
+            placement_mode="replace_source_subtitle",
+        )
         placement_values = {
             key: placement_raw.get(key, getattr(default_placement, key))
             for key in PlacementConfig.__dataclass_fields__

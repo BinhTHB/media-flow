@@ -12,7 +12,7 @@ class PlacementConfig:
     video_width: int
     video_height: int
     estimated_height_px: int = 50
-    placement_mode: str = "avoid_source_subtitle"
+    placement_mode: str = "replace_source_subtitle"
     safe_zone_top: float = 0.05
     safe_zone_bottom: float = 0.95
     safe_zone_left: float = 0.05

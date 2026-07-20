@@ -534,6 +534,25 @@ def test_provider_registry_and_factory_create_mock_region_detector():
     assert factory_provider.__class__.__name__ == "MockSubtitleRegionDetectorProvider"
 
 
+def test_placement_config_default_is_replace_source_subtitle():
+    from src.domain.entities.placement_config import PlacementConfig
+
+    # Domain dataclass should default to replace_source_subtitle even when
+    # constructed with only the required positional fields (no placement_mode key).
+    # This guards against yaml-less or minimal-config paths falling back to avoid.
+    cfg = PlacementConfig(
+        padding_px=24,
+        preferred_relation="override",
+        fallback_alignment=2,
+        fallback_margin_v=15,
+        min_region_confidence=0.70,
+        video_width=1920,
+        video_height=1080,
+    )
+    assert cfg.placement_mode == "replace_source_subtitle"
+    assert cfg.preferred_relation == "override"
+
+
 def test_default_config_replaces_source_subtitle():
     # Verify default config has replace_source_subtitle + override
     from src.interfaces.config.config_loader import ConfigLoader

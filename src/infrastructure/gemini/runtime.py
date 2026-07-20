@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -9,6 +10,9 @@ from src.infrastructure.gemini.file_manager import FileManager
 from src.infrastructure.gemini.request_scheduler import RequestScheduler
 from src.infrastructure.gemini.response_cache import ResponseCache
 from src.infrastructure.gemini.usage_recorder import UsageRecorder
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -57,6 +61,11 @@ class GeminiRuntime:
             cache_dir=self._config.cache_dir,
             namespace=self._config.cache_namespace,
             enabled=self._config.cache_enabled,
+        )
+        logger.warning(
+            "Gemini response cache %s (dir=%s)",
+            "enabled" if self._cache.enabled else "disabled",
+            self._cache.path or self._config.cache_dir or "unset",
         )
         self._usage = UsageRecorder()
         self._files = FileManager(enabled=self._config.file_manager_enabled)

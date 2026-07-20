@@ -50,6 +50,7 @@ providers:
       model: gemini-3.1-flash-lite
       max_retries: 5
       cache_enabled: true
+      cache_dir: .cache/gemini
       cache_namespace: shared
       scheduler: {}
       file_manager_enabled: false
@@ -65,6 +66,7 @@ providers:
       model: gemini-3.1-flash-lite
       max_retries: 5
       cache_enabled: true
+      cache_dir: .cache/gemini
       cache_namespace: shared
       scheduler: {}
       file_manager_enabled: false

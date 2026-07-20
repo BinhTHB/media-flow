@@ -1,7 +1,7 @@
 """OCR that reuses hybrid YOLO and Gemini verifier transcriptions."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 
