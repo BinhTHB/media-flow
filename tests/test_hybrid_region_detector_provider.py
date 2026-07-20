@@ -17,7 +17,6 @@ requires_yolo_weights = pytest.mark.skipif(
     reason="requires local YOLO weights best.pt",
 )
 
-
 class FakeProposalProvider:
     def __init__(self, bbox_xyxy, confidence=0.9):
         self._bbox = bbox_xyxy
@@ -40,25 +39,12 @@ class FakeProposalProvider:
             })
         return dets
 
-
 def test_detect_regions_empty_frames():
     provider = HybridSubtitleRegionDetectorProvider(proposal_provider=FakeProposalProvider([100, 100, 200, 200]))
     assert provider.detect_regions([]) == []
 
-
-def test_provider_accepts_device_option():
-    provider = HybridSubtitleRegionDetectorProvider(
-        proposal_provider=FakeProposalProvider([100, 100, 200, 200]),
-        device="cuda",
-    )
-
-    assert provider._device == "cuda"
-
-
-
 def test_detect_regions_returns_normalized_bottom_region():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Create 3 real images (1280x720)
         paths = []
         for i in range(3):
             img_path = os.path.join(tmp_dir, f"frame_{i}.png")
@@ -72,7 +58,6 @@ def test_detect_regions_returns_normalized_bottom_region():
             Frame(timestamp=1.0, image_path=paths[2]),
         ]
 
-        # bottom bbox: [300, 620, 900, 700]
         fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
         provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
 
@@ -84,7 +69,6 @@ def test_detect_regions_returns_normalized_bottom_region():
         assert r.y >= 0.5
         assert r.end_time >= r.start_time
         assert r.confidence == 0.9
-
 
 def test_scene_text_top_region_filtered():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -101,19 +85,16 @@ def test_scene_text_top_region_filtered():
             Frame(timestamp=1.0, image_path=paths[2]),
         ]
 
-        # top bbox: [300, 100, 900, 180] -> y2 = 180 -> 180/720 = 0.25 <= 0.65 -> not subtitle
         fake_proposal = FakeProposalProvider([300.0, 100.0, 900.0, 180.0], 0.9)
         provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
 
         regions = provider.detect_regions(frames)
         assert regions == []
 
-
 def test_registry_creates_hybrid_provider():
     registry = ProviderRegistry()
     provider = registry.create("subtitle_region_detector", "hybrid_yolo", {})
     assert provider.__class__.__name__ == "HybridSubtitleRegionDetectorProvider"
-
 
 @requires_yolo_weights
 def test_detect_regions_with_real_yolo_weights(tmp_path):
@@ -134,12 +115,10 @@ def test_detect_regions_with_real_yolo_weights(tmp_path):
 @requires_yolo_weights
 def test_detect_regions_real_yolo_guarded():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Create 5 real images with cv2.putText at the bottom
         paths = []
         for i in range(5):
             img_path = os.path.join(tmp_dir, f"frame_{i}.png")
             img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            # draw white text at bottom
             cv2.putText(img, "SUBTITLE TEST", (300, 680), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
             cv2.imwrite(img_path, img)
             paths.append(img_path)
@@ -149,7 +128,6 @@ def test_detect_regions_real_yolo_guarded():
             for i in range(5)
         ]
 
-        # real YOLO provider
         provider = HybridSubtitleRegionDetectorProvider()
         regions = provider.detect_regions(frames)
         assert isinstance(regions, list)
@@ -164,7 +142,6 @@ def test_detect_regions_real_yolo_guarded():
 
 def test_detect_regions_pads_half_frame_gap():
     with tempfile.TemporaryDirectory() as tmp_dir:
-        # Create 3 real images (1280x720)
         paths = []
         for i in range(3):
             img_path = os.path.join(tmp_dir, f"frame_{i}.png")
@@ -178,7 +155,6 @@ def test_detect_regions_pads_half_frame_gap():
             Frame(timestamp=1.25, image_path=paths[2]),
         ]
 
-        # bottom bbox: [300, 620, 900, 700]
         fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
         provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
 
@@ -193,7 +169,12 @@ def test_detect_regions_pads_half_frame_gap():
         assert r.start_time == 0.0
         assert abs(r.end_time - 1.5) < 1e-6
 
-
+def test_provider_accepts_device_option():
+    provider = HybridSubtitleRegionDetectorProvider(
+        proposal_provider=FakeProposalProvider([100, 100, 200, 200]),
+        device="cuda",
+    )
+    assert provider._device == "cuda"
 
 class FakeDriftingProposalProvider:
     def __init__(self, bboxes, confidence=0.9):
@@ -217,7 +198,6 @@ class FakeDriftingProposalProvider:
                 "class": "text",
             })
         return dets
-
 
 def test_detect_regions_moving_track_emits_per_frame_regions():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -245,14 +225,10 @@ def test_detect_regions_moving_track_emits_per_frame_regions():
         provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
 
         regions = provider.detect_regions(frames)
-        # Should have 3 regions (one per group)
         assert len(regions) == 3
-        # Check coordinates
         assert abs(regions[0].x - 100.0/1280) < 1e-6
         assert abs(regions[1].x - 200.0/1280) < 1e-6
         assert abs(regions[2].x - 300.0/1280) < 1e-6
-
-        # Check times
         assert abs(regions[0].start_time - 0.0) < 1e-6
         assert abs(regions[0].end_time - 0.5) < 1e-6
         assert abs(regions[1].start_time - 0.5) < 1e-6
@@ -260,14 +236,12 @@ def test_detect_regions_moving_track_emits_per_frame_regions():
         assert abs(regions[2].start_time - 1.0) < 1e-6
         assert abs(regions[2].end_time - 1.5) < 1e-6
 
-
 class FakeVerifier:
     def __init__(self, decisions):
         self._decisions = decisions
 
     def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
         return {"track_id": track.track_id, "decisions": self._decisions, "uncertain": False}
-
 
 def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -306,68 +280,3 @@ def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
         )
         regions_with_v = provider_with_v.detect_regions(frames)
         assert len(regions_with_v) >= 1
-
-
-class FakeDriftingProposalProvider:
-    def __init__(self, bboxes, confidence=0.9):
-        self._bboxes = bboxes
-        self._confidence = confidence
-
-    def detect_images(self, image_paths):
-        dets = []
-        for fi, p in enumerate(image_paths):
-            bbox = self._bboxes[fi]
-            dets.append({
-                "frame_index": fi,
-                "timestamp_ms": round(fi * 1000.0, 1),
-                "candidate_id": f"F{fi:05d}_C01",
-                "bbox_xyxy": bbox,
-                "bbox_normalized": [
-                    bbox[0]/1280, bbox[1]/720,
-                    bbox[2]/1280, bbox[3]/720
-                ],
-                "confidence": self._confidence,
-                "class": "text",
-            })
-        return dets
-
-
-def test_detect_regions_moving_track_emits_per_frame_regions():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(3):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
-
-        frames = [
-            Frame(timestamp=0.25, image_path=paths[0]),
-            Frame(timestamp=0.75, image_path=paths[1]),
-            Frame(timestamp=1.25, image_path=paths[2]),
-        ]
-
-        # Drifting x coords, same y band at bottom
-        bboxes = [
-            [100.0, 600.0, 200.0, 650.0],
-            [400.0, 600.0, 500.0, 650.0],
-            [700.0, 600.0, 800.0, 650.0],
-        ]
-        fake_proposal = FakeDriftingProposalProvider(bboxes, 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
-
-        regions = provider.detect_regions(frames)
-        # Should have 3 regions
-        assert len(regions) == 3
-        # Check coordinates
-        assert abs(regions[0].x - 100/1280) < 1e-6
-        assert abs(regions[1].x - 400/1280) < 1e-6
-        assert abs(regions[2].x - 700/1280) < 1e-6
-
-        # Check times
-        assert abs(regions[0].start_time - 0.0) < 1e-6
-        assert abs(regions[0].end_time - 0.5) < 1e-6
-        assert abs(regions[1].start_time - 0.5) < 1e-6
-        assert abs(regions[1].end_time - 1.0) < 1e-6
-        assert abs(regions[2].start_time - 1.0) < 1e-6
-        assert abs(regions[2].end_time - 1.5) < 1e-6
