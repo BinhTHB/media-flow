@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json, logging, os
-from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
@@ -138,7 +137,10 @@ class GeminiTrackVerifier:
             lines.append("Each candidate's bounding box [x1, y1, x2, y2] in pixel "
                         "coordinates (top-left origin), in the same order as the IDs above:")
             lines.append(json.dumps(candidate_bboxes))
-            lines.append("Frames are annotated with a yellow rectangle and the candidate ID label.")
+            lines.append(
+                "Geometry is provided above as numeric bbox coordinates; "
+                "frames are not annotated."
+            )
         else:
             lines.append("Frames are shown in order.")
         lines.append("Return a JSON object matching this schema:")
