@@ -92,7 +92,7 @@ class GeminiTrackVerifier:
                 })
             from src.infrastructure.gemini.contracts import GeminiRequest
             req = GeminiRequest(
-                contents=content_parts,
+                contents=[{"parts": content_parts}],
                 model=self._model,
                 generation_config={"temperature": 0.1},
                 system_instruction=SYSTEM_PROMPT,
@@ -205,7 +205,7 @@ class GeminiTrackVerifier:
         try:
             from src.infrastructure.gemini.contracts import GeminiRequest
             req = GeminiRequest(
-                contents=content_parts,
+                contents=[{"parts": content_parts}],
                 model=self._model,
                 generation_config={"temperature": 0.1},
                 system_instruction=(
