@@ -259,3 +259,115 @@ def test_detect_regions_moving_track_emits_per_frame_regions():
         assert abs(regions[1].end_time - 1.0) < 1e-6
         assert abs(regions[2].start_time - 1.0) < 1e-6
         assert abs(regions[2].end_time - 1.5) < 1e-6
+
+
+class FakeVerifier:
+    def __init__(self, decisions):
+        self._decisions = decisions
+
+    def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
+        return {"track_id": track.track_id, "decisions": self._decisions, "uncertain": False}
+
+
+def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        paths = []
+        for i in range(3):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=0.0, image_path=paths[0]),
+            Frame(timestamp=0.5, image_path=paths[1]),
+            Frame(timestamp=1.0, image_path=paths[2]),
+        ]
+
+        # Middle-of-frame bbox: y2=380, H=720, ratio=0.528 <= 0.65
+        # Rule classify_track_by_position labels it scene_text -> is_subtitle=False -> rule rejects.
+        middle_bbox = [300.0, 300.0, 900.0, 380.0]
+
+        # Without verifier: rule rejects all -> 0 regions.
+        provider_no_verifier = HybridSubtitleRegionDetectorProvider(
+            proposal_provider=FakeProposalProvider(middle_bbox, 0.9),
+        )
+        regions_no_v = provider_no_verifier.detect_regions(frames)
+        assert len(regions_no_v) == 0
+
+        # With verifier that says it IS subtitle -> track accepted.
+        fake_decisions = [
+            {"candidate_id": "G00000_01", "is_subtitle": True, "category": "subtitle", "confidence": 0.9}
+        ]
+        fake_verifier = FakeVerifier(fake_decisions)
+        provider_with_v = HybridSubtitleRegionDetectorProvider(
+            proposal_provider=FakeProposalProvider(middle_bbox, 0.9),
+            semantic_verifier=fake_verifier,
+        )
+        regions_with_v = provider_with_v.detect_regions(frames)
+        assert len(regions_with_v) >= 1
+
+
+class FakeDriftingProposalProvider:
+    def __init__(self, bboxes, confidence=0.9):
+        self._bboxes = bboxes
+        self._confidence = confidence
+
+    def detect_images(self, image_paths):
+        dets = []
+        for fi, p in enumerate(image_paths):
+            bbox = self._bboxes[fi]
+            dets.append({
+                "frame_index": fi,
+                "timestamp_ms": round(fi * 1000.0, 1),
+                "candidate_id": f"F{fi:05d}_C01",
+                "bbox_xyxy": bbox,
+                "bbox_normalized": [
+                    bbox[0]/1280, bbox[1]/720,
+                    bbox[2]/1280, bbox[3]/720
+                ],
+                "confidence": self._confidence,
+                "class": "text",
+            })
+        return dets
+
+
+def test_detect_regions_moving_track_emits_per_frame_regions():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        paths = []
+        for i in range(3):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=0.25, image_path=paths[0]),
+            Frame(timestamp=0.75, image_path=paths[1]),
+            Frame(timestamp=1.25, image_path=paths[2]),
+        ]
+
+        # Drifting x coords, same y band at bottom
+        bboxes = [
+            [100.0, 600.0, 200.0, 650.0],
+            [400.0, 600.0, 500.0, 650.0],
+            [700.0, 600.0, 800.0, 650.0],
+        ]
+        fake_proposal = FakeDriftingProposalProvider(bboxes, 0.9)
+        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+
+        regions = provider.detect_regions(frames)
+        # Should have 3 regions
+        assert len(regions) == 3
+        # Check coordinates
+        assert abs(regions[0].x - 100/1280) < 1e-6
+        assert abs(regions[1].x - 400/1280) < 1e-6
+        assert abs(regions[2].x - 700/1280) < 1e-6
+
+        # Check times
+        assert abs(regions[0].start_time - 0.0) < 1e-6
+        assert abs(regions[0].end_time - 0.5) < 1e-6
+        assert abs(regions[1].start_time - 0.5) < 1e-6
+        assert abs(regions[1].end_time - 1.0) < 1e-6
+        assert abs(regions[2].start_time - 1.0) < 1e-6
+        assert abs(regions[2].end_time - 1.5) < 1e-6

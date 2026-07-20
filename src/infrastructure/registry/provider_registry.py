@@ -49,6 +49,9 @@ def _create_hybrid_yolo(options):
     from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
         HybridSubtitleRegionDetectorProvider,
     )
+    # gemini_verify is documented in providers.yaml but intentionally not wired
+    # this round (live Gemini quota is exhausted).  Always pass None so the
+    # rule-based path remains in effect.
     return HybridSubtitleRegionDetectorProvider(
         weights=options.get("weights", "best.pt"),
         conf=options.get("conf", 0.05),
@@ -56,6 +59,7 @@ def _create_hybrid_yolo(options):
         imgsz=options.get("imgsz", 1024),
         min_confidence=float(options.get("min_confidence", 0.30)),
         device=options.get("device", "cpu"),
+        semantic_verifier=None,
     )
 
 

@@ -41,7 +41,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  bottom_ratio_threshold: float = 0.65,
                  min_confidence: float = 0.30,
                  proposal_provider: Optional[Any] = None,
-                 device: str = "cpu") -> None:
+                 device: str = "cpu",
+                 semantic_verifier: Optional[Any] = None) -> None:
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -53,6 +54,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._min_confidence = min_confidence
         self._proposal = proposal_provider  # lazy-init trong detect_regions
         self._device = device
+        self._semantic_verifier = semantic_verifier
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
@@ -102,16 +104,15 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         regions: List[SubtitleRegion] = []
         for track in tracks:
             rep_ids = representative_group_ids(track, 5)
-            median_bbox = track.get("median_bbox_xyxy") or []
-            result = classify_track_by_position(
-                median_bbox, H, rep_ids, track["track_id"], self._bottom_ratio_threshold
-            )
-            if result.get("uncertain"):
-                continue
-            decisions = result.get("decisions", [])
-            if not decisions:
-                continue
-            if not any(d.get("is_subtitle") for d in decisions):
+
+            # Verifier-first: when a semantic verifier is injected, it decides
+            # for every track and the rule heuristic is ignored for that track.
+            if self._semantic_verifier is not None:
+                accepted = self._verifier_accepts_track(track, frames, H)
+            else:
+                accepted = self._rule_accepts_track(track, rep_ids, H)
+
+            if not accepted:
                 continue
 
             conf = _clamp01(track.get("mean_detector_confidence", 0.0))
@@ -184,3 +185,52 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             regions.append(region)
 
         return regions
+
+    def _rule_accepts_track(self, track, rep_ids, H) -> bool:
+        median_bbox = track.get("median_bbox_xyxy") or []
+        result = classify_track_by_position(
+            median_bbox, H, rep_ids, track["track_id"], self._bottom_ratio_threshold
+        )
+        if result.get("uncertain"):
+            return False
+        decisions = result.get("decisions", [])
+        if not decisions:
+            return False
+        return any(d.get("is_subtitle") for d in decisions)
+
+    def _verifier_accepts_track(self, track, frames, H) -> bool:
+        try:
+            groups = track["groups"]
+            if len(groups) <= 3:
+                rep_groups = groups
+            else:
+                rep_groups = [groups[0], groups[len(groups) // 2], groups[-1]]
+
+            candidate_ids = [g["candidate_group_id"] for g in rep_groups]
+            candidate_bboxes = [g["union_bbox_xyxy"] for g in rep_groups]
+            frame_bgr = []
+            for g in rep_groups:
+                frame = cv2.imread(frames[g["frame_index"]].image_path)
+                if frame is None:
+                    continue
+                frame_bgr.append(frame)
+
+            if not frame_bgr:
+                # Could not load any frame; fall back to rule-based.
+                return self._rule_accepts_track(track, representative_group_ids(track, 5), H)
+
+            class TrackWrapper:
+                def __init__(self, track_id):
+                    self.track_id = track_id
+
+            # Adapt the track dict to an object with track_id for classify_track signature compatibility
+            track_obj = TrackWrapper(track["track_id"])
+
+            decisions = self._semantic_verifier.classify_track(
+                track_obj, frame_bgr, candidate_ids, candidate_bboxes
+            )
+            decision_list = decisions.get("decisions", [])
+            return any(d.get("is_subtitle") for d in decision_list)
+        except Exception:
+            # Fall back to rule-based on any verifier failure
+            return self._rule_accepts_track(track, representative_group_ids(track, 5), H)

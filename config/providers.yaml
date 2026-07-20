@@ -99,6 +99,7 @@ providers:
       imgsz: 1024
       min_confidence: 0.30
       device: cpu
+      gemini_verify: false
 
   subtitle_placement_debug:
     pillow: {}
