@@ -12,7 +12,6 @@ htmlcov/
 
 # Virtual environments
 .venv/
-.venv-ocr-gpu/
 venv/
 env/
 ENV/
@@ -74,6 +73,7 @@ exports/
 results/
 review_frames/
 subtitles/generated/
+/input/
 
 *.mp4
 *.mov
