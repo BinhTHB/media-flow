@@ -324,3 +324,38 @@ def test_detect_regions_track_without_temporal_union_falls_back():
             regions = provider.detect_regions(frames)
 
         assert len(regions) == 1
+
+
+def test_registry_wires_semantic_verifier_with_fake_runtime():
+    class DummyClient:
+        pass
+
+    class FakeRuntime:
+        def get_client(self, model=None, **kwargs):
+            return DummyClient()
+
+    registry = ProviderRegistry()
+
+    # Case 1: gemini_verify=True and runtime provided -> semantic_verifier wired
+    provider_with_v = registry.create(
+        "subtitle_region_detector",
+        "hybrid_yolo",
+        {"gemini_verify": True, "runtime": FakeRuntime()},
+    )
+    assert provider_with_v._semantic_verifier is not None
+
+    # Case 2: gemini_verify=False -> semantic_verifier is None
+    provider_off = registry.create(
+        "subtitle_region_detector",
+        "hybrid_yolo",
+        {"gemini_verify": False, "runtime": FakeRuntime()},
+    )
+    assert provider_off._semantic_verifier is None
+
+    # Case 3: gemini_verify=True but runtime is None -> semantic_verifier is None
+    provider_no_runtime = registry.create(
+        "subtitle_region_detector",
+        "hybrid_yolo",
+        {"gemini_verify": True, "runtime": None},
+    )
+    assert provider_no_runtime._semantic_verifier is None

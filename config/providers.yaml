@@ -100,6 +100,7 @@ providers:
       min_confidence: 0.30
       device: cpu
       gemini_verify: false
+      gemini_model: gemini-3.1-flash-lite
 
   subtitle_placement_debug:
     pillow: {}
