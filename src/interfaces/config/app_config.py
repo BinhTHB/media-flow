@@ -189,14 +189,15 @@ class AppConfig:
     providers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     subtitle_quality: SubtitleQualityConfig = field(default_factory=SubtitleQualityConfig)
     subtitle_placement: PlacementConfig = field(default_factory=lambda: PlacementConfig(
-        padding_px=24,
-        preferred_relation="below_source",
-        fallback_alignment=2,
-        fallback_margin_v=15,
-        min_region_confidence=0.70,
-        video_width=1920,
-        video_height=1080,
-    ))
+            padding_px=24,
+            preferred_relation="override",
+            fallback_alignment=2,
+            fallback_margin_v=15,
+            min_region_confidence=0.70,
+            video_width=1920,
+            video_height=1080,
+            placement_mode="replace_source_subtitle",
+        ))
     styles: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     output: OutputConfig = field(default_factory=OutputConfig)

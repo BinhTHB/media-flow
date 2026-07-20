@@ -136,13 +136,13 @@ subtitle_quality:
 
 subtitle_placement:
   padding_px: 24
-  preferred_relation: below_source
+  preferred_relation: override
   fallback_alignment: 2
   fallback_margin_v: 15
   min_region_confidence: 0.70
   video_width: 1920
   video_height: 1080
-  placement_mode: avoid_source_subtitle
+  placement_mode: replace_source_subtitle
   safe_zone_top: 0.05
   safe_zone_bottom: 0.95
   safe_zone_left: 0.05

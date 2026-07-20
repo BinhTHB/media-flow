@@ -690,9 +690,10 @@ class JobOrchestrator:
                 logger = FeatureLogger("Subtitle")
                 logger.start()
                 replacement_required = (
-                    self.calculate_subtitle_placement_uc.placement_service.config.placement_mode
-                    == "replace_source_subtitle"
-                )
+                                    job.features.subtitle_placement
+                                    and self.calculate_subtitle_placement_uc.placement_service.config.placement_mode
+                                    == "replace_source_subtitle"
+                                )
                 display_segments = (
                     [segment for segment in segments if segment.source == "ocr"]
                     if replacement_required

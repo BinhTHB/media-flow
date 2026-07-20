@@ -508,7 +508,8 @@ def test_config_loader_loads_subtitle_placement_defaults():
     placement = ConfigLoader().load().subtitle_placement
 
     assert placement.padding_px == 24
-    assert placement.preferred_relation == "below_source"
+    assert placement.preferred_relation == "override"
+    assert placement.placement_mode == "replace_source_subtitle"
     assert placement.fallback_alignment == 2
     assert placement.fallback_margin_v == 15
     assert placement.min_region_confidence == 0.70
@@ -531,3 +532,18 @@ def test_provider_registry_and_factory_create_mock_region_detector():
 
     assert registry_provider.__class__.__name__ == "MockSubtitleRegionDetectorProvider"
     assert factory_provider.__class__.__name__ == "MockSubtitleRegionDetectorProvider"
+
+
+def test_default_config_replaces_source_subtitle():
+    # Verify default config has replace_source_subtitle + override
+    from src.interfaces.config.config_loader import ConfigLoader
+    from src.interfaces.config.app_config import AppConfig
+
+    loader = ConfigLoader()
+    config = loader.load(overrides={})
+    assert config.subtitle_placement.placement_mode == "replace_source_subtitle"
+    assert config.subtitle_placement.preferred_relation == "override"
+
+    app_config = AppConfig()
+    assert app_config.subtitle_placement.placement_mode == "replace_source_subtitle"
+    assert app_config.subtitle_placement.preferred_relation == "override"
