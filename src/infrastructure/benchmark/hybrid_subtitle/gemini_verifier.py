@@ -30,7 +30,6 @@ SYSTEM_PROMPT = (
     "Return JSON only. Candidate IDs must come from the input."
 )
 
-
 class RepresentativeFrameSelector:
     def __init__(self, max_frames: int = 5):
         self._max = max_frames
@@ -39,48 +38,78 @@ class RepresentativeFrameSelector:
                confidences: List[float]) -> List[Tuple[int, List[float], str]]:
         if not track_frames:
             return []
-        # Frame indices are sorted; we want representative samples
         result = []
         first_fi = track_frames[0]
         last_fi = track_frames[-1]
         first_bbox = track_bboxes[0] if track_bboxes else None
         last_bbox = track_bboxes[-1] if track_bboxes else None
-
-        # Always first
         result.append((first_fi, first_bbox, "first"))
-        # Always last (if not the same frame)
         if last_fi != first_fi:
             result.append((last_fi, last_bbox, "last"))
-        # Middle
         if len(track_frames) >= 3:
             mid_idx = len(track_frames) // 2
             result.append((track_frames[mid_idx], track_bboxes[mid_idx], "middle"))
-        # Highest confidence frame
         if confidences and len(confidences) > 1:
             best_idx = max(range(len(confidences)), key=lambda i: confidences[i])
             best_fi = track_frames[best_idx]
             if not any(r[0] == best_fi for r in result):
                 result.append((best_fi, track_bboxes[best_idx], "highest_conf"))
-        # Take first 5
         return result[:self._max]
 
 
-class GeminiSubtitleSemanticVerifier:
+class GeminiTrackVerifier:
+    """Unified Gemini verifier for subtitle tracks.
+
+    Exposes both public methods with their original signatures so existing call
+    sites keep working.  The verifier must never produce geometry:
+    validate_gemini_decision rejects bbox keys in responses.
+    """
+
     def __init__(self, runtime_client, model: str = DEFAULT_GEMINI_MODEL):
         self._client = runtime_client
         self._model = model
 
+    # ----- classify_track (original GeminiSubtitleSemanticVerifier path) -----
+
     def classify_track(self, track, frame_bgr: List[Any],
                        candidate_ids: List[str],
                        candidate_bboxes: List[List[float]]) -> Dict[str, Any]:
-        """Frame_bgr is a list of frames already annotated with candidate IDs.
-        candidate_ids is the list of IDs shown in those frames.
-        Returns the Gemini decision dict for this track.
-        """
+        """Classify track using pre-decoded BGR frames."""
         if not frame_bgr:
             return {"track_id": track.track_id, "decisions": [], "uncertain": True}
 
-        user_prompt = (
+        user_prompt = self._build_user_prompt(candidate_ids)
+        try:
+            import base64
+            content_parts = [{"text": user_prompt}]
+            for frame in frame_bgr:
+                _, png = cv2.imencode(".png", frame)
+                content_parts.append({
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": base64.b64encode(png.tobytes()).decode("ascii")
+                    }
+                })
+            from src.infrastructure.gemini.contracts import GeminiRequest
+            req = GeminiRequest(
+                contents=content_parts,
+                model=self._model,
+                generation_config={"temperature": 0.1},
+                system_instruction=SYSTEM_PROMPT,
+                request_id=track.track_id,
+                source_kind="benchmark_subtitle_verifier",
+                api_surface="benchmark",
+            )
+            resp = self._client.generate_content(req, use_cache=True)
+            text = resp.text if hasattr(resp, "text") else ""
+            return self._parse_response_text(text, track.track_id, candidate_ids, resp)
+        except Exception as exc:
+            logger.error("Gemini classification failed for %s: %s", track.track_id, exc)
+            return {"track_id": track.track_id, "decisions": [],
+                    "uncertain": True, "error": str(exc)[:200]}
+
+    def _build_user_prompt(self, candidate_ids: List[str]) -> str:
+        return (
             "Classify the following candidate IDs in the provided video frames.\n\n"
             "Candidate IDs: " + json.dumps(candidate_ids) + "\n\n"
             "Frames are shown in order. Return a JSON object matching this schema:\n"
@@ -100,45 +129,9 @@ class GeminiSubtitleSemanticVerifier:
             "}\n"
         )
 
-        try:
-            # Encode frames to base64 inline (small PNG bytes)
-            import base64
-            content_parts = [{"text": user_prompt}]
-            for frame in frame_bgr:
-                _, png = cv2.imencode(".png", frame)
-                content_parts.append({
-                    "inline_data": {
-                        "mime_type": "image/png",
-                        "data": base64.b64encode(png.tobytes()).decode("ascii")
-                    }
-                })
-
-            request_payload = {
-                "contents": [{"role": "user", "parts": content_parts}],
-                "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-                "generationConfig": {"temperature": 0.1},
-            }
-            from src.infrastructure.gemini.contracts import GeminiRequest
-            req = GeminiRequest(
-                contents=request_payload["contents"],
-                model=self._model,
-                generation_config=request_payload["generationConfig"],
-                system_instruction=SYSTEM_PROMPT,
-                request_id=track.track_id,
-                source_kind="benchmark_subtitle_verifier",
-                api_surface="benchmark",
-            )
-            resp = self._client.generate_content(req, use_cache=True)
-            text = resp.text if hasattr(resp, "text") else ""
-            return self._parse_response(text, track.track_id, candidate_ids, resp)
-        except Exception as exc:
-            logger.error("Gemini classification failed for %s: %s", track.track_id, exc)
-            return {"track_id": track.track_id, "decisions": [],
-                    "uncertain": True, "error": str(exc)[:200]}
-
-    def _parse_response(self, text: str, track_id: str,
-                        valid_ids: List[str], resp: Any) -> Dict[str, Any]:
-        """Parse and validate Gemini response, rejecting unknown candidate IDs."""
+    def _parse_response_text(self, text: str, track_id: str,
+                              valid_ids: List[str], resp: Any) -> Dict[str, Any]:
+        """Parse and validate Gemini response; reject geometry via validate_gemini_decision."""
         from src.infrastructure.gemini.structured_output import parse_json
         try:
             data = parse_json(text)
@@ -161,7 +154,17 @@ class GeminiSubtitleSemanticVerifier:
         for d in decisions:
             cid = d.get("candidate_id")
             if cid not in valid_set:
-                continue  # Reject unknown IDs
+                continue
+            # validate_gemini_decision enforces no geometry; call it per-decision
+            # to keep the contract explicit.
+            try:
+                validate_gemini_decision(
+                    {"track_id": track_id, "decisions": [d]},
+                    track_id,
+                    valid_set,
+                )
+            except ValueError:
+                continue
             if d.get("category") not in ALLOWED_CATEGORIES:
                 d["category"] = "unknown"
             validated.append(d)
@@ -171,34 +174,27 @@ class GeminiSubtitleSemanticVerifier:
             "decisions": validated,
             "uncertain": uncertain,
             "model": getattr(resp, "model", None) if resp else None,
-            "cache_hit": getattr(resp, "cache_hit", False) if resp else False,
+            "cache_hit": getattr(resp, "cache_hit", False) if resp else None,
             "finish_reason": getattr(resp, "finish_reason", None) if resp else None,
         }
 
-
-# TODO: hop nhat voi GeminiSubtitleSemanticVerifier o phase sau.
-class LiveGeminiTrackVerifier:
-    """Wraps Gemini client for benchmark; reuses existing runtime infrastructure."""
-    def __init__(self, runtime_client, model: str):
-        self._client = runtime_client
-        self._model = model
+    # ----- classify (original LiveGeminiTrackVerifier path) -----
 
     def classify(self, track: Dict, rep_frames: List[Tuple[int, Any, str]],
                  candidate_ids: List[str], cap) -> Dict:
+        """Classify track using representative frames read from video capture."""
         if not rep_frames:
             return {"track_id": track["track_id"], "decisions": [],
                     "uncertain": True}
-        import base64, json as _json
+        import base64
         content_parts = [{"text": self._build_prompt(candidate_ids, track)}]
         for fi, bbox, role in rep_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
             ret, frame = cap.read()
             if not ret:
                 continue
-            # Draw candidate ID label near the bbox
-            label = f"{role}:{candidate_ids[rep_frames.index((fi, bbox, role))] if (fi, bbox, role) in rep_frames else ''}"
             annotated = draw_bboxes(frame, [{"bbox_xyxy": bbox, "color_key": "yellow",
-                                           "label": f"{role[0].upper()}", "thickness": 2}], COLOR_MAP)
+                                            "label": f"{role[0].upper()}", "thickness": 2}], COLOR_MAP)
             _, png_buf = cv2.imencode(".png", annotated, [cv2.IMWRITE_PNG_COMPRESSION, 6])
             content_parts.append({
                 "inline_data": {
@@ -225,7 +221,7 @@ class LiveGeminiTrackVerifier:
             )
             resp = self._client.generate_content(req, use_cache=True)
             text = resp.text if hasattr(resp, "text") else ""
-            parsed = _json.loads(text)
+            parsed = json.loads(text)
             validated = validate_gemini_decision(parsed, track["track_id"], set(candidate_ids))
             return validated
         except Exception as exc:
@@ -233,16 +229,20 @@ class LiveGeminiTrackVerifier:
                     "uncertain": True, "error": str(exc)[:200]}
 
     def _build_prompt(self, candidate_ids: List[str], track: Dict) -> str:
-        import json as _json
         return (
             "Classify each candidate ID as subtitle or non-subtitle.\\n"
             "Candidate IDs in this track (" + track["track_id"] + "):\\n"
-            + _json.dumps(candidate_ids) + "\\n\\n"
+            + json.dumps(candidate_ids) + "\\n\\n"
             "Track frames: " + str(len(track["groups"])) + " frames "
             "from frame " + str(track.get("start_frame")) + " to " + str(track.get("end_frame")) + ".\\n\\n"
-            "Return: {\\\"track_id\\\": \\\"" + track["track_id"] + "\\\", "
-            "\\\"decisions\\\": [{\\\"candidate_id\\\": \\\"<id>\\\", "
-            "\\\"is_subtitle\\\": true/false, \\\"category\\\": \\\"<category>\\\", "
-            "\\\"confidence\\\": 0.0-1.0, \\\"transcription\\\": null/str, "
-            "\\\"reason_code\\\": \\\"<short>\\\"}], \\\"uncertain\\\": true/false}"
+            "Return: {\"track_id\": \"" + track["track_id"] + "\", "
+            "\"decisions\": [{\"candidate_id\": \"<id>\", "
+            "\"is_subtitle\": true/false, \"category\": \"<category>\", "
+            "\"confidence\": 0.0-1.0, \"transcription\": null/str, "
+            "\"reason_code\": \"<short>\"}], \"uncertain\": true/false}"
         )
+
+
+# Backward-compatible aliases so existing call sites keep working.
+GeminiSubtitleSemanticVerifier = GeminiTrackVerifier
+LiveGeminiTrackVerifier = GeminiTrackVerifier
