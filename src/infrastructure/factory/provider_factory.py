@@ -123,7 +123,7 @@ class ProviderFactory:
 
     def create_ocr_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         provider_name, options = self._merged_options("ocr", name, overrides)
-        if provider_name in {"gemini_vision", "gemini_vision_multistage", "gemini_video_direct"}:
+        if provider_name in {"gemini_vision", "gemini_vision_multistage", "gemini_video_direct", "hybrid_gemini"}:
             if provider_name == "gemini_vision_multistage" and self.gemini_config:
                 config = self.gemini_config
                 options.setdefault("stage_a_model", config.region_detection_model)

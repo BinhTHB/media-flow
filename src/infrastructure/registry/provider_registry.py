@@ -45,6 +45,29 @@ class ProviderRegistry:
 
 
 
+def _create_hybrid_gemini_ocr(options):
+    from src.infrastructure.benchmark.hybrid_subtitle.config import DEFAULT_GEMINI_MODEL
+    from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiTrackVerifier
+    from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
+    from src.infrastructure.providers.ocr.hybrid_gemini_ocr_provider import HybridGeminiOCRProvider
+
+    runtime = options.get("runtime")
+    model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
+    verifier = GeminiTrackVerifier(runtime.get_client(model=model), model=model) if runtime else None
+    proposal = YoloTextProposalProvider(
+        weights_path=options.get("weights", "best.pt"),
+        conf=options.get("conf", 0.05),
+        iou=options.get("iou", 0.70),
+        imgsz=options.get("imgsz", 1024),
+        device=options.get("device", "cpu"),
+    )
+    return HybridGeminiOCRProvider(
+        proposal_provider=proposal,
+        semantic_verifier=verifier,
+        min_confidence=float(options.get("min_confidence", 0.30)),
+    )
+
+
 def _create_hybrid_yolo(options):
     from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
         HybridSubtitleRegionDetectorProvider,
@@ -185,6 +208,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
         language=opt.get("language", "ch"),
         use_gpu=opt.get("use_gpu", True),
     ))
+    registry.register("ocr", "hybrid_gemini", _create_hybrid_gemini_ocr)
     registry.register("ocr", "gemini_vision", lambda opt: GeminiVisionOCRProvider(
         runtime=opt.get("runtime"),
         model=opt.get("model", "gemini-3.1-flash-lite"),

@@ -77,6 +77,15 @@ providers:
     paddle:
       language: ch
       use_gpu: true
+    hybrid_gemini:
+      weights: best.pt
+      conf: 0.05
+      iou: 0.70
+      imgsz: 1024
+      min_confidence: 0.30
+      device: cpu
+      gemini_model: gemini-3.1-flash-lite
+      gemini_verify: true
 
   storage:
     mock: {}
