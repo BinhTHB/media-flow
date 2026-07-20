@@ -193,3 +193,69 @@ def test_detect_regions_pads_half_frame_gap():
         assert r.start_time == 0.0
         assert abs(r.end_time - 1.5) < 1e-6
 
+
+
+class FakeDriftingProposalProvider:
+    def __init__(self, bboxes, confidence=0.9):
+        self._bboxes = bboxes
+        self._confidence = confidence
+
+    def detect_images(self, image_paths):
+        dets = []
+        for fi, p in enumerate(image_paths):
+            bbox = self._bboxes[fi]
+            dets.append({
+                "frame_index": fi,
+                "timestamp_ms": round(fi * 1000.0, 1),
+                "candidate_id": f"F{fi:05d}_C01",
+                "bbox_xyxy": bbox,
+                "bbox_normalized": [
+                    bbox[0]/1280, bbox[1]/720,
+                    bbox[2]/1280, bbox[3]/720
+                ],
+                "confidence": self._confidence,
+                "class": "text",
+            })
+        return dets
+
+
+def test_detect_regions_moving_track_emits_per_frame_regions():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        paths = []
+        for i in range(3):
+            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
+            img = np.zeros((720, 1280, 3), dtype=np.uint8)
+            cv2.imwrite(img_path, img)
+            paths.append(img_path)
+
+        frames = [
+            Frame(timestamp=0.25, image_path=paths[0]),
+            Frame(timestamp=0.75, image_path=paths[1]),
+            Frame(timestamp=1.25, image_path=paths[2]),
+        ]
+
+        # Drifting x coords that stay in same track (adjacent IoU > 0.25)
+        # but first-last IoU < 0.30 to trigger per-frame region emission.
+        bboxes = [
+            [100.0, 600.0, 300.0, 650.0],
+            [200.0, 600.0, 400.0, 650.0],
+            [300.0, 600.0, 500.0, 650.0],
+        ]
+        fake_proposal = FakeDriftingProposalProvider(bboxes, 0.9)
+        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+
+        regions = provider.detect_regions(frames)
+        # Should have 3 regions (one per group)
+        assert len(regions) == 3
+        # Check coordinates
+        assert abs(regions[0].x - 100.0/1280) < 1e-6
+        assert abs(regions[1].x - 200.0/1280) < 1e-6
+        assert abs(regions[2].x - 300.0/1280) < 1e-6
+
+        # Check times
+        assert abs(regions[0].start_time - 0.0) < 1e-6
+        assert abs(regions[0].end_time - 0.5) < 1e-6
+        assert abs(regions[1].start_time - 0.5) < 1e-6
+        assert abs(regions[1].end_time - 1.0) < 1e-6
+        assert abs(regions[2].start_time - 1.0) < 1e-6
+        assert abs(regions[2].end_time - 1.5) < 1e-6

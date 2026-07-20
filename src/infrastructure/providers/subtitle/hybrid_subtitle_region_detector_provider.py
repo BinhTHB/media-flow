@@ -10,6 +10,7 @@ from src.application.ports.subtitle_region_detector_provider import (
 from src.domain.entities.frame import Frame
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.infrastructure.benchmark.hybrid_subtitle.core import (
+    box_iou,
     group_frame_candidates,
     build_tracks,
     representative_group_ids,
@@ -117,7 +118,43 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             if conf < self._min_confidence:
                 continue
 
-            # temporal union bbox for region
+            # Frame cadence (frames are sampled at the middle of each interval).
+            if len(frames) >= 2:
+                frame_gap = (frames[-1].timestamp - frames[0].timestamp) / (len(frames) - 1)
+            else:
+                frame_gap = 0.0
+
+            # Detect moving track: if first and last frame bboxes diverge, emit
+            # one region per frame instead of a single union that spans all frames.
+            first_bbox = track["groups"][0]["union_bbox_xyxy"]
+            last_bbox = track["groups"][-1]["union_bbox_xyxy"]
+            moving = len(track["groups"]) >= 2 and box_iou(first_bbox, last_bbox) < 0.30
+
+            if moving:
+                for g in track["groups"]:
+                    bbox = g["union_bbox_xyxy"]
+                    if not bbox:
+                        continue
+                    x1, y1, x2, y2 = bbox
+                    ts = frames[g["frame_index"]].timestamp
+                    start_time = max(0.0, ts - frame_gap / 2.0)
+                    end_time = ts + frame_gap / 2.0
+                    try:
+                        region = SubtitleRegion(
+                            start_time=start_time,
+                            end_time=end_time,
+                            x=_clamp01(x1 / W),
+                            y=_clamp01(y1 / H),
+                            width=_clamp01((x2 - x1) / W),
+                            height=_clamp01((y2 - y1) / H),
+                            confidence=conf,
+                        )
+                    except Exception:
+                        continue
+                    regions.append(region)
+                continue
+
+            # Stable track: emit a single region spanning the full track.
             union = track.get("temporal_union_bbox_xyxy") or median_bbox
             if not union:
                 continue
@@ -129,13 +166,6 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             end_time = frames[last_idx].timestamp
             if end_time < start_time:
                 end_time = start_time
-            # Pad by half the frame gap: frames are sampled at the middle of
-            # each interval, so the region must also cover the span before the
-            # first frame and after the last frame.
-            if len(frames) >= 2:
-                frame_gap = (frames[-1].timestamp - frames[0].timestamp) / (len(frames) - 1)
-            else:
-                frame_gap = 0.0
             start_time = max(0.0, start_time - frame_gap / 2.0)
             end_time = end_time + frame_gap / 2.0
 
