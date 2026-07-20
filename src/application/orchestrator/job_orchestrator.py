@@ -714,6 +714,15 @@ class JobOrchestrator:
                     timings["placement"] = round(time.monotonic() - started, 3)
                     if controls.run_render:
                         return job
+                if replacement_required and display_segments and regions:
+                    region_start = min(r.start_time for r in regions)
+                    region_end = max(r.end_time for r in regions)
+                    first_seg = min(display_segments, key=lambda s: s.start)
+                    last_seg = max(display_segments, key=lambda s: s.end)
+                    if region_start < first_seg.start:
+                        first_seg.start = region_start
+                    if region_end > last_seg.end:
+                        last_seg.end = region_end
                 placements = self.calculate_subtitle_placement_uc.execute(
                     regions, display_segments, self.subtitle_style
                 )
