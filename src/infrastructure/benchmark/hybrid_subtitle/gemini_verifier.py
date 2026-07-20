@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
 from .config import DEFAULT_GEMINI_MODEL
-from .video_utils import draw_bboxes, COLOR_MAP
 from .core import validate_gemini_decision
 
 logger = logging.getLogger(__name__)
@@ -235,15 +234,14 @@ class GeminiTrackVerifier:
             return {"track_id": track["track_id"], "decisions": [],
                     "uncertain": True}
         import base64
-        content_parts = [{"text": self._build_prompt(candidate_ids, track)}]
+        candidate_bboxes = [bbox for _, bbox, _ in rep_frames]
+        content_parts = [{"text": self._build_prompt(candidate_ids, track, candidate_bboxes)}]
         for fi, bbox, role in rep_frames:
             cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
             ret, frame = cap.read()
             if not ret:
                 continue
-            annotated = draw_bboxes(frame, [{"bbox_xyxy": bbox, "color_key": "yellow",
-                                            "label": f"{role[0].upper()}", "thickness": 2}], COLOR_MAP)
-            _, png_buf = cv2.imencode(".png", annotated, [cv2.IMWRITE_PNG_COMPRESSION, 6])
+            _, png_buf = cv2.imencode(".png", frame, [cv2.IMWRITE_PNG_COMPRESSION, 6])
             content_parts.append({
                 "inline_data": {
                     "mime_type": "image/png",
@@ -276,11 +274,16 @@ class GeminiTrackVerifier:
             return {"track_id": track["track_id"], "decisions": [],
                     "uncertain": True, "error": str(exc)[:200]}
 
-    def _build_prompt(self, candidate_ids: List[str], track: Dict) -> str:
+    def _build_prompt(self, candidate_ids: List[str], track: Dict,
+                      candidate_bboxes: List[List[float]]) -> str:
         return (
             "Classify each candidate ID as subtitle or non-subtitle.\\n"
             "Candidate IDs in this track (" + track["track_id"] + "):\\n"
             + json.dumps(candidate_ids) + "\\n\\n"
+            "Each candidate bounding box [x1, y1, x2, y2] in pixel coordinates "
+            "(top-left origin), in the same order as the IDs: "
+            + json.dumps(candidate_bboxes) + "\\n"
+            "Frames are not annotated.\\n\\n"
             "Track frames: " + str(len(track["groups"])) + " frames "
             "from frame " + str(track.get("start_frame")) + " to " + str(track.get("end_frame")) + ".\\n\\n"
             "Return: {\"track_id\": \"" + track["track_id"] + "\", "

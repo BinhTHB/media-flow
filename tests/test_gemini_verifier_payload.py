@@ -1,3 +1,5 @@
+import base64
+import cv2
 import numpy as np
 
 from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiTrackVerifier
@@ -112,3 +114,25 @@ def test_classify_requests_well_formed_contents_envelope():
     assert req.model == "gemini-3.1-flash-lite"
     # the second classify path validates via validate_gemini_decision
     assert "decisions" in result
+
+
+def test_classify_sends_clean_frames_and_bbox_geometry():
+    client = FakeGeminiClient()
+    verifier = GeminiTrackVerifier(client, model="gemini-3.1-flash-lite")
+    frame = np.full((80, 140, 3), 17, dtype=np.uint8)
+    track = {"track_id": "T2", "groups": [{"candidate_group_id": "C1"}]}
+
+    class _Cap:
+        def set(self, *args, **kwargs):
+            pass
+
+        def read(self):
+            return True, frame.copy()
+
+    verifier.classify(track, [(0, [10, 20, 30, 40], "first")], ["C1"], _Cap())
+
+    parts = client.captured.contents[0]["parts"]
+    assert "[10, 20, 30, 40]" in parts[0]["text"]
+    payload = parts[1]["inline_data"]["data"]
+    decoded = cv2.imdecode(np.frombuffer(base64.b64decode(payload), dtype=np.uint8), cv2.IMREAD_COLOR)
+    assert np.array_equal(decoded, frame)
