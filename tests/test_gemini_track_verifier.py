@@ -179,6 +179,55 @@ def test_classify_track_announces_geometry_to_verifier():
     )
 
 
+def test_verifier_has_counters():
+    """RED: GeminiTrackVerifier must expose counters for diagnostics
+    (tracks_in, requests_sent, cache_hits, responses_parsed_ok,
+    parse_failures, fail_open_count).
+    """
+    from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import (
+        GeminiTrackVerifier,
+    )
+
+    fake_resp = FakeGeminiResponse(json.dumps({
+        "track_id": "T001", "decisions": [], "uncertain": False
+    }))
+    client = FakeRuntimeClient([fake_resp])
+    verifier = GeminiTrackVerifier(client, "gemini-2.5-flash")
+
+    for attr in ("tracks_received", "requests_sent", "cache_hits",
+                 "responses_parsed_ok", "parse_failures", "fail_open_count"):
+        assert hasattr(verifier, attr), (
+            f"GeminiTrackVerifier must have counter '{attr}' for diagnostics; "
+            "without it we cannot distinguish parse-fail from quiet-drop (H1)."
+        )
+
+
+def test_parse_failure_increments_counter():
+    """Verify: parse failures increment parse_failures counter (H1 diagnostics)."""
+    from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import (
+        GeminiTrackVerifier,
+    )
+
+    # Valid JSON but missing "decisions" key → schema_invalid path
+    bad_resp = FakeGeminiResponse('{"track_id": "T001"}')
+    client = FakeRuntimeClient([bad_resp])
+    verifier = GeminiTrackVerifier(client, "gemini-2.5-flash")
+
+    mock_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    result = verifier.classify_track(
+        MockTrackObj("T001"),
+        frame_bgr=[mock_frame],
+        candidate_ids=["F00000_C01"],
+        candidate_bboxes=[[100, 600, 300, 650]],
+    )
+    assert result.get("uncertain") is True
+    assert hasattr(verifier, "parse_failures")
+    assert getattr(verifier, "parse_failures") >= 1, (
+        "parse_failures counter must increment on schema_invalid; "
+        "without it parse failures are invisible (H1 root cause)."
+    )
+
+
 def test_aliases_point_to_same_class():
     assert GeminiSubtitleSemanticVerifier is GeminiTrackVerifier
     assert LiveGeminiTrackVerifier is GeminiTrackVerifier

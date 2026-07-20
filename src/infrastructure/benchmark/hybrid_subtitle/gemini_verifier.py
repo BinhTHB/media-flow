@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json, logging, os
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
@@ -68,6 +69,13 @@ class GeminiTrackVerifier:
     def __init__(self, runtime_client, model: str = DEFAULT_GEMINI_MODEL):
         self._client = runtime_client
         self._model = model
+        # Diagnostic counters for A2 / STEP F audit.
+        self.tracks_received: int = 0
+        self.requests_sent: int = 0
+        self.cache_hits: int = 0
+        self.responses_parsed_ok: int = 0
+        self.parse_failures: int = 0
+        self.fail_open_count: int = 0
 
     # ----- classify_track (original GeminiSubtitleSemanticVerifier path) -----
 
@@ -76,28 +84,17 @@ class GeminiTrackVerifier:
                        candidate_bboxes: List[List[float]]) -> Dict[str, Any]:
         """Classify track using pre-decoded BGR frames."""
         if not frame_bgr:
+            self.tracks_received += 1
+            self.fail_open_count += 1
             return {"track_id": track.track_id, "decisions": [], "uncertain": True}
 
-        # Gemini must know WHERE each candidate sits. Pass the per-candidate
-        # bbox (always provided by HybridGeminiOCRProvider) so transcription
-        # can be anchored to the right region instead of guessed from a
-        # full-frame image.
+        self.tracks_received += 1
         user_prompt = self._build_user_prompt(candidate_ids, candidate_bboxes)
         try:
             import base64
             content_parts = [{"text": user_prompt}]
-            for i, frame in enumerate(frame_bgr):
-                bbox = candidate_bboxes[i] if i < len(candidate_bboxes) else None
-                annotated = frame
-                if bbox is not None:
-                    cid = candidate_ids[i] if i < len(candidate_ids) else "?"
-                    annotated = draw_bboxes(
-                        frame,
-                        [{"bbox_xyxy": bbox, "color_key": "yellow",
-                          "label": cid, "thickness": 2}],
-                        COLOR_MAP,
-                    )
-                _, png = cv2.imencode(".png", annotated)
+            for frame in frame_bgr:
+                _, png = cv2.imencode(".png", frame)
                 content_parts.append({
                     "inline_data": {
                         "mime_type": "image/png",
@@ -114,11 +111,20 @@ class GeminiTrackVerifier:
                 source_kind="benchmark_subtitle_verifier",
                 api_surface="benchmark",
             )
+            self.requests_sent += 1
             resp = self._client.generate_content(req, use_cache=True)
+            if getattr(resp, "cache_hit", False):
+                self.cache_hits += 1
             text = resp.text if hasattr(resp, "text") else ""
             return self._parse_response_text(text, track.track_id, candidate_ids, resp)
         except Exception as exc:
-            logger.error("Gemini classification failed for %s: %s", track.track_id, exc)
+            self.parse_failures += 1
+            self.fail_open_count += 1
+            logger.warning(
+                "LOUD-WARN: Gemini classification/network failed for track %s (fail-open used): %s",
+                track.track_id,
+                str(exc)[:200],
+            )
             return {"track_id": track.track_id, "decisions": [],
                     "uncertain": True, "error": str(exc)[:200]}
 
@@ -132,8 +138,7 @@ class GeminiTrackVerifier:
             lines.append("Each candidate's bounding box [x1, y1, x2, y2] in pixel "
                         "coordinates (top-left origin), in the same order as the IDs above:")
             lines.append(json.dumps(candidate_bboxes))
-            lines.append("Frames are annotated with a yellow rectangle and the candidate ID label. "
-                        "Transcribe the text inside each annotated box.")
+            lines.append("Frames are annotated with a yellow rectangle and the candidate ID label.")
         else:
             lines.append("Frames are shown in order.")
         lines.append("Return a JSON object matching this schema:")
@@ -154,53 +159,70 @@ class GeminiTrackVerifier:
         return "\n".join(lines)
 
     def _parse_response_text(self, text: str, track_id: str,
-                              valid_ids: List[str], resp: Any) -> Dict[str, Any]:
-        """Parse and validate Gemini response; reject geometry via validate_gemini_decision."""
-        from src.infrastructure.gemini.structured_output import parse_json
-        try:
-            data = parse_json(text)
-        except Exception as exc:
-            return {"track_id": track_id, "decisions": [],
-                    "uncertain": True, "error": f"parse_failed: {exc}"}
-
-        if isinstance(data, dict) and "decisions" in data:
-            decisions = data["decisions"]
-            uncertain = bool(data.get("uncertain", False))
-        elif isinstance(data, list):
-            decisions = data
-            uncertain = False
-        else:
-            return {"track_id": track_id, "decisions": [],
-                    "uncertain": True, "error": "schema_invalid"}
-
-        valid_set = set(valid_ids)
-        validated = []
-        for d in decisions:
-            cid = d.get("candidate_id")
-            if cid not in valid_set:
-                continue
-            # validate_gemini_decision enforces no geometry; call it per-decision
-            # to keep the contract explicit.
+                                  valid_ids: List[str], resp: Any) -> Dict[str, Any]:
+            """Parse and validate Gemini response; reject geometry via validate_gemini_decision."""
+            from src.infrastructure.gemini.structured_output import parse_json
             try:
-                validate_gemini_decision(
-                    {"track_id": track_id, "decisions": [d]},
+                data = parse_json(text)
+            except Exception as exc:
+                self.parse_failures += 1
+                self.fail_open_count += 1
+                logger.warning(
+                    "LOUD-WARN: Verifier parse_failed for track %s (fail-open): "
+                    "first_200_chars='%s'",
                     track_id,
-                    valid_set,
+                    text[:200],
                 )
-            except ValueError:
-                continue
-            if d.get("category") not in ALLOWED_CATEGORIES:
-                d["category"] = "unknown"
-            validated.append(d)
+                return {"track_id": track_id, "decisions": [],
+                        "uncertain": True, "error": f"parse_failed: {exc}"}
 
-        return {
-            "track_id": track_id,
-            "decisions": validated,
-            "uncertain": uncertain,
-            "model": getattr(resp, "model", None) if resp else None,
-            "cache_hit": getattr(resp, "cache_hit", False) if resp else None,
-            "finish_reason": getattr(resp, "finish_reason", None) if resp else None,
-        }
+            if isinstance(data, dict) and "decisions" in data:
+                decisions = data["decisions"]
+                uncertain = bool(data.get("uncertain", False))
+            elif isinstance(data, list):
+                decisions = data
+                uncertain = False
+            else:
+                self.parse_failures += 1
+                self.fail_open_count += 1
+                logger.warning(
+                    "LOUD-WARN: Verifier schema_invalid for track %s (fail-open): "
+                    "first_200_chars='%s'",
+                    track_id,
+                    text[:200],
+                )
+                return {"track_id": track_id, "decisions": [],
+                        "uncertain": True, "error": "schema_invalid"}
+
+            valid_set = set(valid_ids)
+            validated = []
+            for d in decisions:
+                cid = d.get("candidate_id")
+                if cid not in valid_set:
+                    continue
+                try:
+                    validate_gemini_decision(
+                        {"track_id": track_id, "decisions": [d]},
+                        track_id,
+                        valid_set,
+                    )
+                except ValueError:
+                    continue
+                if d.get("category") not in ALLOWED_CATEGORIES:
+                    d["category"] = "unknown"
+                validated.append(d)
+
+            self.responses_parsed_ok += 1
+            if uncertain or not validated:
+                self.fail_open_count += 1
+            return {
+                "track_id": track_id,
+                "decisions": validated,
+                "uncertain": uncertain or not validated,
+                "model": getattr(resp, "model", None) if resp else None,
+                "cache_hit": getattr(resp, "cache_hit", False) if resp else None,
+                "finish_reason": getattr(resp, "finish_reason", None) if resp else None,
+            }
 
     # ----- classify (original LiveGeminiTrackVerifier path) -----
 
