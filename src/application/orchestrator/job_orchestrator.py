@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import time
@@ -37,6 +38,9 @@ from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.application.services.artifact_cache_validator import ArtifactCacheValidator
 from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
+
+audit_logger = logging.getLogger(__name__)
+
 
 class JobOrchestrator:
     def __init__(self, dependencies: OrchestratorDependencies):
@@ -705,6 +709,13 @@ class JobOrchestrator:
                     )
                     quality_metrics["render_replacement_status"] = "NOT_RUN"
                     job.error_message = "NO_ACCEPTED_SUBTITLE_INTERVALS"
+                    audit_logger.warning(
+                        "LOUD-WARN: Subtitle placement requested (replacement_required=True) "
+                        "but NO OCR subtitle segments survived the verifier filter for job %s. "
+                        "Output will contain NO burned-in subtitle replacement. "
+                        "Check verifier filter thresholds and source OCR quality.",
+                        job.job_id,
+                    )
                     self.artifact_provider.write_json(
                         self.artifact_provider.final_timeline_path(job.job_id),
                         self.final_timeline_builder.build(

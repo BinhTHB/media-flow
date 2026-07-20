@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, List
 
 from src.application.ports.ocr_provider import OCRProvider
@@ -8,12 +9,13 @@ from src.domain.entities.frame import Frame
 from src.domain.entities.segment import Segment
 from src.infrastructure.gemini.exceptions import (
     GeminiAPIError,
-    GeminiError,
     GeminiModelValidationError,
     GeminiNetworkError,
     GeminiRateLimitError,
     GeminiValidationError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _fallback_trigger(error: Exception) -> str | None:
@@ -59,6 +61,14 @@ class _FallbackProvider:
             trigger = _fallback_trigger(error)
             if trigger is None:
                 raise
+            logger.warning(
+                "LOUD-WARN: Primary provider '%s' failed (trigger=%s, error=%s). "
+                "Falling back to '%s'.",
+                self.primary_name,
+                trigger,
+                type(error).__name__,
+                self.fallback_name,
+            )
             try:
                 result = self.fallback_call()
             except Exception:

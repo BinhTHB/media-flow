@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from collections import deque
@@ -10,6 +11,8 @@ from typing import Any, Callable, Deque, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from src.infrastructure.gemini.exceptions import GeminiSchedulerError, ProviderRateLimitError
+
+logger = logging.getLogger(__name__)
 
 Clock = Callable[[], float]
 Sleeper = Callable[[float], None]
@@ -118,8 +121,13 @@ class RequestScheduler:
             temporary = self._ledger_path.with_suffix(".tmp")
             temporary.write_text(json.dumps(payload), encoding="utf-8")
             os.replace(temporary, self._ledger_path)
-        except OSError:
-            pass
+        except OSError as err:
+            logger.warning(
+                "LOUD-WARN: RequestScheduler could not persist ledger to %s: %s. "
+                "RPM/TPM accounting may be inaccurate for this session.",
+                self._ledger_path,
+                err,
+            )
 
     def acquire(self, tokens: int = 0, *, model: Optional[str] = None,
                 is_escalation: bool = False) -> None:

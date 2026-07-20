@@ -30,8 +30,12 @@ def ffprobe_metadata(path: str) -> Dict[str, Any]:
             capture_output=True, text=True, check=True)
         payload = json.loads(r.stdout)
     except Exception as exc:
-        logger.warning("ffprobe failed %s: %s", path, exc)
-        return {}
+        msg = (
+            f"CRITICAL-FAIL: ffprobe metadata extraction failed for path '{path}'. "
+            f"Aborting. Details: {exc}"
+        )
+        logger.error(msg)
+        raise RuntimeError(msg) from exc
     streams = payload.get("streams")
     if not streams:
         return {}
