@@ -46,6 +46,16 @@ def test_detect_regions_empty_frames():
     assert provider.detect_regions([]) == []
 
 
+def test_provider_accepts_device_option():
+    provider = HybridSubtitleRegionDetectorProvider(
+        proposal_provider=FakeProposalProvider([100, 100, 200, 200]),
+        device="cuda",
+    )
+
+    assert provider._device == "cuda"
+
+
+
 def test_detect_regions_returns_normalized_bottom_region():
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Create 3 real images (1280x720)

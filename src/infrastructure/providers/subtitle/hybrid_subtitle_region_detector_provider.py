@@ -39,7 +39,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  track_max_gap_frames: int = 5,
                  bottom_ratio_threshold: float = 0.65,
                  min_confidence: float = 0.30,
-                 proposal_provider: Optional[Any] = None) -> None:
+                 proposal_provider: Optional[Any] = None,
+                 device: str = "cpu") -> None:
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -50,6 +51,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._bottom_ratio_threshold = bottom_ratio_threshold
         self._min_confidence = min_confidence
         self._proposal = proposal_provider  # lazy-init trong detect_regions
+        self._device = device
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
@@ -63,7 +65,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 conf=self._conf,
                 iou=self._iou,
                 imgsz=self._imgsz,
-                device="cpu",
+                device=self._device,
             )
 
         # 1) detect images

@@ -98,6 +98,7 @@ providers:
       iou: 0.70
       imgsz: 1024
       min_confidence: 0.30
+      device: cpu
 
   subtitle_placement_debug:
     pillow: {}
