@@ -9,9 +9,9 @@ from src.domain.entities.feature_config import FeatureConfig
 from src.domain.entities.job_status import JobStatus
 from src.shared.exceptions import ValidationError
 
-def test_application_builder_builds_full_graph():
+def test_application_builder_builds_full_graph(tmp_path):
     builder = ApplicationBuilder(
-        output_dir="test_output",
+        output_dir=str(tmp_path / "test_output"),
         video_provider="mock",
         speech_provider="mock",
         translation_provider="mock",
@@ -23,12 +23,12 @@ def test_application_builder_builds_full_graph():
     
     assert isinstance(app, MediaFlowApplication)
     assert isinstance(app.context, ApplicationContext)
-    assert app.context.artifact_manager.base_dir == "test_output"
+    assert app.context.artifact_manager.base_dir == str(tmp_path / "test_output")
     assert app.orchestrator is not None
 
-def test_media_flow_application_run():
+def test_media_flow_application_run(tmp_path):
     builder = ApplicationBuilder(
-        output_dir="test_output",
+        output_dir=str(tmp_path / "test_output"),
         video_provider="mock",
         speech_provider="mock",
         translation_provider="mock",

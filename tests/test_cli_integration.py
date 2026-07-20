@@ -3,7 +3,8 @@ import subprocess
 import json
 import pytest
 
-def test_cli_mock_flow():
+def test_cli_mock_flow(tmp_path):
+    output_dir = tmp_path / "test_output"
     # Run the demo with mock flow
     cmd = [
         "python", "src/interfaces/cli/demo.py", "dummy_video.mp4",
@@ -14,7 +15,7 @@ def test_cli_mock_flow():
         "--subtitle-provider", "mock",
         "--ocr-provider", "mock",
         "--frame-provider", "mock",
-        "--output-dir", "test_output",
+        "--output-dir", str(output_dir),
         "--job-id", "job_test_1"
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
@@ -26,28 +27,7 @@ def test_cli_mock_flow():
     assert len(data["segments"]) > 0
     assert data["status"] == "completed"
     
-    # Verify outputs written in test_output/job_test_1
-    assert os.path.exists("test_output/job_test_1/audio/audio.wav")
-    assert os.path.exists("test_output/job_test_1/transcripts/transcript.json")
-    assert os.path.exists("test_output/job_test_1/transcripts/translated.json")
-    assert os.path.exists("test_output/job_test_1/subtitles/subtitle.srt")
-    
-    # Clean up
-    for f in ["audio/audio.wav", "transcripts/transcript.json", "transcripts/translated.json", "subtitles/subtitle.srt"]:
-        try:
-            os.remove(f"test_output/job_test_1/{f}")
-        except OSError:
-            pass
-    for d in ["audio", "transcripts", "subtitles", "videos", "logs"]:
-        try:
-            os.rmdir(f"test_output/job_test_1/{d}")
-        except OSError:
-            pass
-    try:
-        os.rmdir("test_output/job_test_1")
-    except OSError:
-        pass
-    try:
-        os.rmdir("test_output")
-    except OSError:
-        pass
+    assert (output_dir / "job_test_1" / "audio" / "audio.wav").exists()
+    assert (output_dir / "job_test_1" / "transcripts" / "transcript.json").exists()
+    assert (output_dir / "job_test_1" / "transcripts" / "translated.json").exists()
+    assert (output_dir / "job_test_1" / "subtitles" / "subtitle.srt").exists()

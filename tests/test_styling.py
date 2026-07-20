@@ -83,6 +83,8 @@ def test_ffmpeg_uses_the_explicit_ass_path(monkeypatch, tmp_path):
     def mock_run(cmd, **kwargs):
         if cmd[:2] == ["ffmpeg", "-version"]:
             return subprocess.CompletedProcess(cmd, 0)
+        if cmd[-1].startswith("-"):
+            return subprocess.CompletedProcess(cmd, 0)
         calls.append(cmd)
         with open(cmd[-1], "w", encoding="utf-8") as f:
             f.write("rendered")
@@ -111,6 +113,8 @@ def test_ffmpeg_falls_back_to_srt(monkeypatch, tmp_path):
 
     def mock_run(cmd, **kwargs):
         if cmd[:2] == ["ffmpeg", "-version"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd[-1].startswith("-"):
             return subprocess.CompletedProcess(cmd, 0)
         calls.append(cmd)
         with open(cmd[-1], "w", encoding="utf-8") as f:
