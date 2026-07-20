@@ -68,7 +68,7 @@ generated/
 # Media outputs
 output/
 outputs/
-artifacts/
+/artifacts/
 rendered/
 exports/
 results/
