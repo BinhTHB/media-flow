@@ -359,3 +359,79 @@ def test_registry_wires_semantic_verifier_with_fake_runtime():
         {"gemini_verify": True, "runtime": None},
     )
     assert provider_no_runtime._semantic_verifier is None
+
+
+def test_low_confidence_proposal_cannot_swallow_subtitle_group(tmp_path):
+    class PerFrameProposal:
+        def detect_images(self, image_paths):
+            boxes_by_frame = [
+                [[300.0, 200.0, 500.0, 240.0, 0.90]],
+                [
+                    [300.0, 300.0, 500.0, 340.0, 0.90],
+                    [2.0, 100.0, 1270.0, 400.0, 0.05],
+                ],
+                [[300.0, 400.0, 500.0, 440.0, 0.90]],
+            ]
+            detections = []
+            for frame_index, boxes in enumerate(boxes_by_frame):
+                for candidate_index, (x1, y1, x2, y2, confidence) in enumerate(boxes, 1):
+                    detections.append({
+                        "frame_index": frame_index,
+                        "timestamp_ms": frame_index * 500,
+                        "candidate_id": f"F{frame_index:05d}_C{candidate_index:02d}",
+                        "bbox_xyxy": [x1, y1, x2, y2],
+                        "bbox_normalized": [x1 / 1280, y1 / 720, x2 / 1280, y2 / 720],
+                        "confidence": confidence,
+                        "class": "text",
+                    })
+            return detections
+
+    class AcceptingVerifier:
+        def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
+            return {
+                "track_id": track.track_id,
+                "decisions": [
+                    {
+                        "candidate_id": candidate_id,
+                        "is_subtitle": True,
+                        "category": "dialogue_subtitle",
+                        "confidence": 0.9,
+                    }
+                    for candidate_id in candidate_ids
+                ],
+                "uncertain": False,
+            }
+
+    frames = []
+    for index, timestamp in enumerate((0.0, 0.5, 1.0)):
+        image_path = tmp_path / f"frame_{index}.png"
+        cv2.imwrite(str(image_path), np.zeros((720, 1280, 3), dtype=np.uint8))
+        frames.append(Frame(timestamp=timestamp, image_path=str(image_path)))
+
+    regions = HybridSubtitleRegionDetectorProvider(
+        proposal_provider=PerFrameProposal(),
+        semantic_verifier=AcceptingVerifier(),
+    ).detect_regions(frames)
+
+    target = [300 / 1280, 300 / 720, 500 / 1280, 340 / 720]
+    active = [region for region in regions if region.start_time <= 0.5 <= region.end_time]
+    assert active
+    assert max(
+        _normalized_iou(
+            [region.x, region.y, region.x + region.width, region.y + region.height],
+            target,
+        )
+        for region in active
+    ) >= 0.5
+
+
+def _normalized_iou(left, right):
+    x1 = max(left[0], right[0])
+    y1 = max(left[1], right[1])
+    x2 = min(left[2], right[2])
+    y2 = min(left[3], right[3])
+    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    left_area = (left[2] - left[0]) * (left[3] - left[1])
+    right_area = (right[2] - right[0]) * (right[3] - right[1])
+    union = left_area + right_area - intersection
+    return intersection / union if union else 0.0

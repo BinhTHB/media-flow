@@ -75,6 +75,11 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         image_paths = [f.image_path for f in frames]
         dets = self._proposal.detect_images(image_paths)
 
+        # Discard proposals below the minimum confidence threshold before grouping.
+        # Otherwise giant low-confidence noise boxes (e.g. 0.053) sort first and swallow
+        # valid subtitle word boxes during baseline grouping.
+        dets = [d for d in dets if float(d.get("confidence", 0.0)) >= self._min_confidence]
+
         # 2) group per frame
         by_frame: Dict[int, List[Dict]] = {}
         for d in dets:
