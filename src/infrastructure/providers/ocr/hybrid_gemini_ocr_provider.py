@@ -77,11 +77,22 @@ class HybridGeminiOCRProvider(OCRProvider):
         if text is None:
             return None
         first, last = groups[0]["frame_index"], groups[-1]["frame_index"]
+        if first == last:
+            # Normalization drops a single-frame track when its end equals start.
+            # Derive cadence from the available frames to give it a real duration.
+            cadence = (
+                (frames[-1].timestamp - frames[0].timestamp) / (len(frames) - 1)
+                if len(frames) >= 2
+                else 1.0
+            )
+            end = frames[first].timestamp + cadence
+        else:
+            end = frames[last].timestamp
         box = track["temporal_union_bbox_xyxy"]
         return Segment(
             id=f"ocr_{track['track_id']}",
             start=frames[first].timestamp,
-            end=frames[last].timestamp,
+            end=end,
             text=text,
             source="ocr",
             bbox={"left": box[0], "top": box[1], "right": box[2], "bottom": box[3]},
