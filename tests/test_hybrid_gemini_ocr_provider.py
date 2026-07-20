@@ -67,6 +67,7 @@ def test_hybrid_gemini_ocr_emits_segments_for_transcribed_subtitles():
         assert isinstance(seg, Segment)
         assert seg.text == "Hello World Subtitle"
         assert seg.source == "ocr"
+        assert seg.confidence == 0.9
         assert seg.start <= 1.0
 
 

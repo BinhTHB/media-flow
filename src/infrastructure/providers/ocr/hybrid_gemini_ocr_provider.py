@@ -73,7 +73,8 @@ class HybridGeminiOCRProvider(OCRProvider):
         verdict = self._semantic_verifier.classify_track(
             _TrackRef(track["track_id"]), images, candidate_ids, candidate_bboxes
         )
-        text = _subtitle_transcription(verdict.get("decisions", []))
+        res = _subtitle_transcription_and_confidence(verdict.get("decisions", []))
+        text, confidence = res
         if text is None:
             return None
         first, last = groups[0]["frame_index"], groups[-1]["frame_index"]
@@ -95,6 +96,7 @@ class HybridGeminiOCRProvider(OCRProvider):
             end=end,
             text=text,
             source="ocr",
+            confidence=confidence,
             bbox={"left": box[0], "top": box[1], "right": box[2], "bottom": box[3]},
             metadata={"provider": self.__class__.__name__, "track_id": track["track_id"]},
         )
@@ -105,9 +107,9 @@ class _TrackRef:
         self.track_id = track_id
 
 
-def _subtitle_transcription(decisions: List[Dict[str, Any]]) -> Optional[str]:
+def _subtitle_transcription_and_confidence(decisions: List[Dict[str, Any]]) -> Tuple[Optional[str], float]:
     for decision in decisions:
         text = decision.get("transcription") if decision.get("is_subtitle") else None
         if isinstance(text, str) and text.strip():
-            return text.strip()
-    return None
+            return text.strip(), float(decision.get("confidence", 0.0))
+    return None, 0.0
