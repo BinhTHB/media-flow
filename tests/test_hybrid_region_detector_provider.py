@@ -280,3 +280,47 @@ def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
         )
         regions_with_v = provider_with_v.detect_regions(frames)
         assert len(regions_with_v) >= 1
+
+
+from unittest import mock
+
+
+def test_detect_regions_track_without_temporal_union_falls_back():
+    """Regression: track dict with no temporal_union_bbox_xyxy must fall back
+    to median_bbox_xyxy without raising NameError."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        img_path = os.path.join(tmp_dir, "frame.png")
+        img = np.zeros((720, 1280, 3), dtype=np.uint8)
+        cv2.imwrite(img_path, img)
+        frames = [Frame(timestamp=0.25, image_path=img_path)]
+
+        # Patch build_tracks in the ADAPTER namespace so detect_regions
+        # receives a track without temporal_union_bbox_xyxy.
+        patched_track = {
+            "track_id": "T001",
+            "median_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
+            "mean_detector_confidence": 0.9,
+            "groups": [
+                {
+                    "frame_index": 0,
+                    "candidate_group_id": "G00000_01",
+                    "union_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
+                }
+            ],
+        }
+
+        def fake_build_tracks(groups, **kwargs):
+            return [patched_track]
+
+        fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
+
+        with mock.patch(
+            "src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider.build_tracks",
+            side_effect=fake_build_tracks,
+        ):
+            provider = HybridSubtitleRegionDetectorProvider(
+                proposal_provider=fake_proposal,
+            )
+            regions = provider.detect_regions(frames)
+
+        assert len(regions) == 1

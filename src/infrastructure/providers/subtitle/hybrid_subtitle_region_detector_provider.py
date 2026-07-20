@@ -156,7 +156,11 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 continue
 
             # Stable track: emit a single region spanning the full track.
-            union = track.get("temporal_union_bbox_xyxy") or median_bbox
+            union = (
+                track.get("temporal_union_bbox_xyxy")
+                or track.get("median_bbox_xyxy")
+                or []
+            )
             if not union:
                 continue
             x1, y1, x2, y2 = union
