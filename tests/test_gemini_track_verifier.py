@@ -20,8 +20,10 @@ class FakeRuntimeClient:
     def __init__(self, responses: list):
         self._responses = responses
         self._index = 0
+        self.requests = []
 
     def generate_content(self, req, use_cache: bool = True):
+        self.requests.append(req)
         if self._index < len(self._responses):
             resp = self._responses[self._index]
             self._index += 1
@@ -145,6 +147,37 @@ def test_bbox_key_rejected_in_response():
         cap=FakeVideoCapture(),
     )
     assert result["decisions"] == []
+
+def test_classify_track_announces_geometry_to_verifier():
+    """RED: classify_track must pass bbox info to Gemini so it can localize text.
+
+    Round-12 verifier (without geometry) produced fragments like 'súng', 'người',
+    'truyền độ' because Gemini had no spatial anchor for each candidate ID.
+    Once bboxes are passed (always available via HybridGeminiOCRProvider),
+    the prompt must include them so the verifier localizes transcription.
+    """
+    fake_resp = FakeGeminiResponse(json.dumps({
+        "track_id": "T001", "decisions": [], "uncertain": False
+    }))
+    client = FakeRuntimeClient([fake_resp])
+    verifier = GeminiTrackVerifier(client, "gemini-2.5-flash")
+
+    mock_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    verifier.classify_track(
+        MockTrackObj("T001"),
+        frame_bgr=[mock_frame],
+        candidate_ids=["F00000_C01"],
+        candidate_bboxes=[[100, 600, 300, 650]],
+    )
+
+    assert client.requests, "verifier should have made a request"
+    request = client.requests[0]
+    user_prompt = request.contents[0]["parts"][0]["text"]
+    assert "100" in user_prompt, (
+        "Prompt must include bbox coords so Gemini can localize each candidate; "
+        f"got prompt: {user_prompt[:200]}"
+    )
+
 
 def test_aliases_point_to_same_class():
     assert GeminiSubtitleSemanticVerifier is GeminiTrackVerifier

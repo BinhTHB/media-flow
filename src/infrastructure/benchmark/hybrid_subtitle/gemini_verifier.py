@@ -78,12 +78,26 @@ class GeminiTrackVerifier:
         if not frame_bgr:
             return {"track_id": track.track_id, "decisions": [], "uncertain": True}
 
-        user_prompt = self._build_user_prompt(candidate_ids)
+        # Gemini must know WHERE each candidate sits. Pass the per-candidate
+        # bbox (always provided by HybridGeminiOCRProvider) so transcription
+        # can be anchored to the right region instead of guessed from a
+        # full-frame image.
+        user_prompt = self._build_user_prompt(candidate_ids, candidate_bboxes)
         try:
             import base64
             content_parts = [{"text": user_prompt}]
-            for frame in frame_bgr:
-                _, png = cv2.imencode(".png", frame)
+            for i, frame in enumerate(frame_bgr):
+                bbox = candidate_bboxes[i] if i < len(candidate_bboxes) else None
+                annotated = frame
+                if bbox is not None:
+                    cid = candidate_ids[i] if i < len(candidate_ids) else "?"
+                    annotated = draw_bboxes(
+                        frame,
+                        [{"bbox_xyxy": bbox, "color_key": "yellow",
+                          "label": cid, "thickness": 2}],
+                        COLOR_MAP,
+                    )
+                _, png = cv2.imencode(".png", annotated)
                 content_parts.append({
                     "inline_data": {
                         "mime_type": "image/png",
@@ -108,26 +122,36 @@ class GeminiTrackVerifier:
             return {"track_id": track.track_id, "decisions": [],
                     "uncertain": True, "error": str(exc)[:200]}
 
-    def _build_user_prompt(self, candidate_ids: List[str]) -> str:
-        return (
-            "Classify the following candidate IDs in the provided video frames.\n\n"
-            "Candidate IDs: " + json.dumps(candidate_ids) + "\n\n"
-            "Frames are shown in order. Return a JSON object matching this schema:\n"
-            "{\n"
-            "  \"track_id\": \"<same track_id>\",\n"
-            "  \"decisions\": [\n"
-            "    {\n"
-            "      \"candidate_id\": \"<from input list>\",\n"
-            "      \"is_subtitle\": true/false,\n"
-            "      \"category\": \"<one of allowed categories>\",\n"
-            "      \"confidence\": 0.0-1.0,\n"
-            "      \"transcription\": null or string,\n"
-            "      \"reason_code\": \"<short reason>\"\n"
-            "    }\n"
-            "  ],\n"
-            "  \"uncertain\": true/false\n"
-            "}\n"
-        )
+    def _build_user_prompt(self, candidate_ids: List[str],
+                            candidate_bboxes: Optional[List[List[float]]] = None) -> str:
+        lines = [
+            "Classify the following candidate IDs in the provided video frames.",
+            f"Candidate IDs: {json.dumps(candidate_ids)}",
+        ]
+        if candidate_bboxes:
+            lines.append("Each candidate's bounding box [x1, y1, x2, y2] in pixel "
+                        "coordinates (top-left origin), in the same order as the IDs above:")
+            lines.append(json.dumps(candidate_bboxes))
+            lines.append("Frames are annotated with a yellow rectangle and the candidate ID label. "
+                        "Transcribe the text inside each annotated box.")
+        else:
+            lines.append("Frames are shown in order.")
+        lines.append("Return a JSON object matching this schema:")
+        lines.append("{")
+        lines.append('  "track_id": "<same track_id>",')
+        lines.append('  "decisions": [')
+        lines.append("    {")
+        lines.append('      "candidate_id": "<from input list>",')
+        lines.append('      "is_subtitle": true/false,')
+        lines.append('      "category": "<one of allowed categories>",')
+        lines.append('      "confidence": 0.0-1.0,')
+        lines.append('      "transcription": null or string,')
+        lines.append('      "reason_code": "<short reason>"')
+        lines.append("    }")
+        lines.append("  ],")
+        lines.append('  "uncertain": true/false')
+        lines.append("}")
+        return "\n".join(lines)
 
     def _parse_response_text(self, text: str, track_id: str,
                               valid_ids: List[str], resp: Any) -> Dict[str, Any]:
