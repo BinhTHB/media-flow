@@ -63,3 +63,15 @@ def test_gemini_factory_injects_one_runtime():
 
     assert isinstance(first._runtime, GeminiRuntime)
     assert first._runtime is second._runtime
+
+
+def test_cli_parser_accepts_gemini_translation_provider():
+    import argparse
+    from src.interfaces.cli.demo import build_parser
+    from src.interfaces.composition.application_builder import ApplicationBuilder
+
+    args = build_parser().parse_args(["dummy.mp4", "--translation-provider", "gemini"])
+    assert args.translation_provider == "gemini"
+
+    builder = ApplicationBuilder.from_cli_args(args)
+    assert builder.translation_provider == "gemini"

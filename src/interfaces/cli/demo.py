@@ -7,7 +7,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.
 
 from src.interfaces.composition.application_builder import ApplicationBuilder
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AI Video Translator CLI Demo")
     parser.add_argument("video_path", type=str, help="Path to input video file")
     parser.add_argument("--source-lang", type=str, default="zh", help="Source language (zh|en|auto)")
@@ -67,7 +67,7 @@ def main():
 
     parser.add_argument("--video-provider", type=str, help="Video provider (mock|ffmpeg)")
     parser.add_argument("--speech-provider", type=str, help="Speech provider (gemini_audio|faster-whisper|mock)")
-    parser.add_argument("--translation-provider", type=str, help="Translation provider (mock|openai)")
+    parser.add_argument("--translation-provider", type=str, help="Translation provider (mock|openai|gemini)")
     parser.add_argument("--subtitle-provider", type=str, help="Subtitle provider (mock|ass)")
     parser.add_argument("--ocr-provider", type=str, help="OCR provider (gemini_vision|paddle|mock)")
     parser.add_argument("--subtitle-region-detector", type=str, help="Region detector provider (mock|paddle)")
@@ -98,6 +98,11 @@ def main():
     parser.add_argument("--shadow", type=float, help="Shadow offset override")
     parser.add_argument("--margin-v", type=int, help="Vertical margin override")
 
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     builder = ApplicationBuilder.from_cli_args(args)
