@@ -190,6 +190,47 @@ def test_match_regions_selects_highest_confidence_overlap_and_none_when_unmatche
     ]
 
 
+def test_match_regions_prefers_spatial_overlap():
+    """SubtitlePlacementService must select regions that have spatial
+    overlap with the subtitle track's bbox rather than just highest confidence."""
+    service = SubtitlePlacementService(_config())
+    # Subtitle is at bottom: [900, 960]
+    subtitle = Segment(
+        id="sub_bottom",
+        start=1.0,
+        end=2.0,
+        text="bottom text",
+        source="ocr",
+        confidence=0.9,
+        bbox={"left": 100, "right": 500, "top": 900, "bottom": 960},
+    )
+    # Region 1: middle of screen (y=0.4, h=0.2 -> [432, 648]), high confidence 0.95
+    region_mid = _region(
+        start_time=1.0,
+        end_time=2.0,
+        x=0.1,
+        y=0.4,
+        width=0.5,
+        height=0.2,
+        confidence=0.95,
+    )
+    # Region 2: bottom of screen (y=0.8, h=0.1 -> [864, 972]), lower confidence 0.85 (intersects [900, 960])
+    region_bot = _region(
+        start_time=1.0,
+        end_time=2.0,
+        x=0.1,
+        y=0.8,
+        width=0.5,
+        height=0.1,
+        confidence=0.85,
+    )
+
+    matched = service.match_regions_to_subtitles(
+        [region_mid, region_bot], [subtitle]
+    )
+    assert matched == [(subtitle, region_bot)]
+
+
 def test_compute_placement_below_source_uses_top_alignment_and_region_center_x():
     config = _config(preferred_relation="below_source")
     placement = SubtitlePlacementService(config).compute_placement(_region(), 0)

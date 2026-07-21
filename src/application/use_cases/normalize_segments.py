@@ -144,7 +144,10 @@ class NormalizeSegmentsUseCase:
             s.end = min(s.end, video_duration) if video_duration is not None else s.end
             if s.end <= s.start:
                 continue
-            s.end = min(s.end, s.start + self.config.max_duration)
+            if not (replacement_required and s.source == "ocr"):
+                # Replacement mode: OCR display segments must cover the source
+                # subtitle for its full on-screen span; never clamp to max_duration.
+                s.end = min(s.end, s.start + self.config.max_duration)
             if s.end - s.start < self.config.min_duration:
                 if video_duration is not None:
                     s.end = min(s.start + self.config.min_duration, video_duration)
@@ -408,6 +411,16 @@ class NormalizeSegmentsUseCase:
                 if replacement_required and prev.source != s.source:
                     resolved.append(s)
                     continue
+                if (
+                    replacement_required
+                    and prev.source == "ocr"
+                    and s.source == "ocr"
+                    and not self._bboxes_intersect(prev.bbox, s.bbox)
+                ):
+                    # Spatially disjoint OCR tracks may overlap in time:
+                    # they cover different screen regions simultaneously.
+                    resolved.append(s)
+                    continue
                 # If nested overlap, we must resolve by score (cannot split outer)
                 if s.end <= prev.end:
                     if self._caption_score(s, get_text) > self._caption_score(prev, get_text):
@@ -464,6 +477,18 @@ class NormalizeSegmentsUseCase:
                 resolved.append(s)
 
         return resolved
+
+    @staticmethod
+    def _bboxes_intersect(a, b) -> bool:
+        if not a or not b:
+            # Unknown geometry: assume conflict (preserve old behavior).
+            return True
+        return not (
+            a["right"] <= b["left"]
+            or b["right"] <= a["left"]
+            or a["bottom"] <= b["top"]
+            or b["bottom"] <= a["top"]
+        )
 
     @staticmethod
     def _caption_score(segment: Segment, get_text) -> tuple[float, float, int]:

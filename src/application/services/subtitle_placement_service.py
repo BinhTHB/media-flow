@@ -19,18 +19,45 @@ class SubtitlePlacementService:
     ) -> List[Tuple[Segment, Optional[SubtitleRegion]]]:
         matched: List[Tuple[Segment, Optional[SubtitleRegion]]] = []
         for subtitle in subtitles:
+            candidates = [
+                region
+                for region in regions
+                if subtitle.start < region.end_time
+                and subtitle.end > region.start_time
+            ]
+            if subtitle.bbox:
+                # Prefer regions that spatially overlap the subtitle's own
+                # track bbox; a long-lived track must be masked where it is
+                # actually rendered, not wherever confidence is highest.
+                spatial = [
+                    region
+                    for region in candidates
+                    if self._region_intersects_bbox(region, subtitle.bbox)
+                ]
+                if spatial:
+                    candidates = spatial
             best_region: Optional[SubtitleRegion] = None
             best_confidence = -1.0
-            for region in regions:
-                overlaps = (
-                    subtitle.start < region.end_time
-                    and subtitle.end > region.start_time
-                )
-                if overlaps and region.confidence > best_confidence:
+            for region in candidates:
+                if region.confidence > best_confidence:
                     best_confidence = region.confidence
                     best_region = region
             matched.append((subtitle, best_region))
         return matched
+
+    def _region_intersects_bbox(
+        self, region: SubtitleRegion, bbox: dict
+    ) -> bool:
+        left = region.x * self.config.video_width
+        right = (region.x + region.width) * self.config.video_width
+        top = region.y * self.config.video_height
+        bottom = (region.y + region.height) * self.config.video_height
+        return not (
+            right <= bbox["left"]
+            or bbox["right"] <= left
+            or bottom <= bbox["top"]
+            or bbox["bottom"] <= top
+        )
 
     def compute_placement(
         self,

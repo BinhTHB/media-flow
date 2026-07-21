@@ -1,3 +1,4 @@
+import logging
 from typing import List, Optional
 from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_placement import SubtitlePlacement
@@ -80,7 +81,16 @@ class ASSGenerator:
         header = generate_ass_header(style, play_res_x, play_res_y)
         events = []
         for index, seg in enumerate(segments):
-            text = seg.translated_text if seg.translated_text else seg.text
+            if seg.translated_text:
+                text = seg.translated_text
+            else:
+                logging.getLogger(__name__).warning(
+                    "LOUD-WARN [ASSGenerator]: segment %s has EMPTY translated_text; "
+                    "falling back to source text %r. Translation did not run or failed.",
+                    seg.id,
+                    seg.text[:40],
+                )
+                text = seg.text
             start = _format_time(seg.start)
             end = _format_time(seg.end)
             escaped = _escape_text(text)

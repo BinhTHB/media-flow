@@ -482,6 +482,63 @@ def test_vietnamese_text_quality_report_only_does_not_change_text():
     assert report["corrected_text"] == text
     assert report["actual_action"] == "flag"
 
+def test_normalize_ocr_span_not_clamped_in_replacement_mode():
+    """H-SPAN: In replacement mode, OCR segments must NOT have their span
+    clamped to max_duration (6s). T001 1.5-23.5s must survive intact."""
+    uc = NormalizeSegmentsUseCase()
+    result = uc.execute(
+        [
+            Segment(
+                id="ocr_long",
+                start=1.5,
+                end=23.5,  # 22s span > max_duration(6s)
+                text="súng",
+                source="ocr",
+                confidence=0.9,
+            ),
+        ],
+        is_translated=False,
+        video_duration=24.28,
+        replacement_required=True,
+    )
+    assert len(result) == 1
+    assert result[0].end >= 23.0  # NOT clamped to start+6
+
+
+def test_resolve_overlaps_preserves_disjoint_bbox_ocr_tracks():
+    """H-OVERLAP: Two OCR tracks that overlap in time but have disjoint
+    screen bboxes must both survive (they cover different regions)."""
+    uc = NormalizeSegmentsUseCase()
+    result = uc.execute(
+        [
+            Segment(
+                id="ocr_bottom",
+                start=1.0,
+                end=5.0,
+                text="sub đáy",
+                source="ocr",
+                confidence=0.9,
+                bbox={"left": 10, "right": 500, "top": 900, "bottom": 960},  # bottom
+            ),
+            Segment(
+                id="ocr_top",
+                start=2.0,
+                end=4.0,  # overlaps with ocr_bottom
+                text="chữ trôi",
+                source="ocr",
+                confidence=0.8,
+                bbox={"left": 10, "right": 500, "top": 200, "bottom": 260},  # disjoint above
+            ),
+        ],
+        is_translated=False,
+        video_duration=6.0,
+        replacement_required=True,
+    )
+    ids = {s.id for s in result}
+    assert "ocr_bottom" in ids, "disjoint bottom OCR must be preserved"
+    assert "ocr_top" in ids, "disjoint top OCR must be preserved"
+
+
 def test_vietnamese_text_quality_correction_mode_applies_suggestion():
     report = VietnameseTextQualityAuditor.apply(
         "Viên cảnh xác bắt ngờ.", enabled=True
