@@ -77,3 +77,22 @@ def test_recorder_callback_wires():
         assert entry["job_id"] == "job-test-42"
         assert entry["purpose"] == "ocr_verifier"
         assert entry["status"] == "success"
+
+
+def test_runtime_uses_configured_ledger_and_job_id(tmp_path):
+    from src.infrastructure.gemini.runtime import GeminiRuntime, RuntimeConfig
+
+    ledger = tmp_path / "ledger_job-round20.jsonl"
+    runtime = GeminiRuntime.create(RuntimeConfig(api_key="fake", ledger_path=str(ledger)))
+    runtime.set_job_id("job-round20")
+    runtime.usage_recorder.record(UsageRecord(
+        model="gemini-3.1-flash-lite",
+        source_kind="translation",
+        job_id="job-round20",
+        success=True,
+    ))
+
+    entry = json.loads(ledger.read_text(encoding="utf-8").strip())
+    assert entry["job_id"] == "job-round20"
+    assert entry["purpose"] == "translation"
+    assert runtime.get_client()._job_id == "job-round20"

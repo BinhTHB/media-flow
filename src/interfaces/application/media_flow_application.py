@@ -13,6 +13,8 @@ class MediaFlowApplication:
         self.context = context
 
     def run(self, job: VideoJob) -> VideoJob:
+        if self.context.gemini_runtime is not None:
+            self.context.gemini_runtime.set_job_id(job.job_id)
         return self.orchestrator.execute(job)
 
     def run_video(

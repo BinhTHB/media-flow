@@ -59,8 +59,9 @@ def _create_ledger_callback(ledger_path: str, job_id: str):
             with _lock:
                 with open(_ledger_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(entry) + "\n")
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("LOUD-WARN: Failed to write to request ledger at %s: %s", _ledger_path, str(e))
     return callback
 
 
@@ -98,15 +99,32 @@ class GeminiRuntime:
             "enabled" if self._cache.enabled else "disabled",
             self._cache.path or self._config.cache_dir or "unset",
         )
-        ledger_path = os.path.join("artifacts", "round19", "ledger.jsonl")
-        ledger_callback = _create_ledger_callback(ledger_path, job_id)
-        self._usage = UsageRecorder(usage_callback=ledger_callback)
+        self._usage = UsageRecorder(
+            usage_callback=_create_ledger_callback(self._ledger_path_for(job_id), job_id)
+        )
         self._files = FileManager(enabled=self._config.file_manager_enabled)
         self._clients: Dict[str, GeminiClient] = {}
 
     @classmethod
     def create(cls, config: Optional[RuntimeConfig] = None, job_id: str = "default") -> "GeminiRuntime":
         return cls(config, job_id=job_id)
+
+    def set_job_id(self, job_id: str) -> None:
+        """Set per-job identifier and recreate ledger callback to write to the per-job ledger file."""
+        self._job_id = job_id
+        self._usage = UsageRecorder(
+            usage_callback=_create_ledger_callback(self._ledger_path_for(job_id), job_id)
+        )
+        self._clients.clear()
+
+    def _ledger_path_for(self, job_id: str) -> str:
+        """Derive ledger file path from RuntimeConfig, redirecting generic/legacy paths to per-job files."""
+        cfg_path = self._config.ledger_path or ""
+        if not cfg_path or cfg_path == "debug/gemini_request_ledger.json" or "round19" in cfg_path:
+            base = os.path.join("artifacts", "round20")
+            os.makedirs(base, exist_ok=True)
+            return os.path.join(base, f"ledger_{job_id}.jsonl")
+        return cfg_path
 
     @property
     def scheduler(self) -> RequestScheduler:

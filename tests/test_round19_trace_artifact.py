@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "artifacts" / "round19" / "build_trace_artifact.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build_trace_artifact.py"
 
 
 def load_module():
