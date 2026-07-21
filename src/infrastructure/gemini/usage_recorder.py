@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from src.infrastructure.gemini.contracts import (
     MODE_ROLE_PRIMARY,
@@ -27,14 +27,22 @@ class UsageRecord:
     schema_version: Optional[str] = None
     api_surface: Optional[str] = None
     media_sha256: Optional[str] = None
+    job_id: Optional[str] = None
+    success: bool = True
+    error_msg: Optional[str] = None
 
 
 class UsageRecorder:
-    """Thread-safe usage recorder. Stores only safe provenance metadata (no secrets)."""
+    """Thread-safe usage recorder. Stores only safe provenance metadata (no secrets).
 
-    def __init__(self) -> None:
+    Optional usage_callback is invoked (non-blocking, re-raised silently) after each record.
+    Use it to write append-only per-job ledger entries.
+    """
+
+    def __init__(self, usage_callback: Optional[Callable[[UsageRecord], None]] = None) -> None:
         self._lock = threading.RLock()
         self._records: List[UsageRecord] = []
+        self._usage_callback = usage_callback
         self._by_model: Dict[str, Dict[str, int]] = defaultdict(lambda: {
             "requests": 0,
             "prompt_tokens": 0,
@@ -60,6 +68,31 @@ class UsageRecorder:
                 agg["retries"] += record.retry_count
             if record.is_escalation:
                 agg["escalations"] += 1
+        # Invoke callback outside the lock so it can't deadlock
+        if self._usage_callback is not None:
+            try:
+                self._usage_callback(record)
+            except Exception:
+                pass  # Never break pipeline
+
+    def record_error(
+        self,
+        model: str,
+        request_id: Optional[str],
+        source_kind: Optional[str],
+        job_id: Optional[str],
+        error_msg: str,
+    ) -> None:
+        """Record a failed request that never reached the model (network, timeout, etc.)."""
+        record = UsageRecord(
+            model=model,
+            request_id=request_id,
+            source_kind=source_kind,
+            job_id=job_id,
+            success=False,
+            error_msg=error_msg[:200],
+        )
+        self.record(record)
 
     def record_rate_limit(self, model: str) -> None:
         with self._lock:

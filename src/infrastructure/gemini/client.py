@@ -50,8 +50,9 @@ class GeminiClient:
                  usage_recorder: Optional[UsageRecorder] = None,
                  file_manager: Optional[FileManager] = None,
                  role: str = MODE_ROLE_PRIMARY, timeout: float = 60.0,
-                 validate_models: bool = False) -> None:
+                 validate_models: bool = False, job_id: Optional[str] = None) -> None:
         self._model = model
+        self._job_id = job_id
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._transport: GeminiTransport = transport or _UrllibTransport()
@@ -308,6 +309,7 @@ class GeminiClient:
             schema_version=request.schema_version,
             api_surface=request.api_surface,
             media_sha256=request.media_sha256,
+            job_id=self._job_id,
         ))
 
 

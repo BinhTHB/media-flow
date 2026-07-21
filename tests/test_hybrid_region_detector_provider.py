@@ -39,6 +39,27 @@ class FakeProposalProvider:
             })
         return dets
 
+
+class GeometryAcceptingVerifier:
+    """Deterministic semantic confirmation for geometry-only tests."""
+
+    def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
+        return {
+            "track_id": track.track_id,
+            "decisions": [
+                {
+                    "candidate_id": candidate_id,
+                    "is_subtitle": True,
+                    "category": "dialogue_subtitle",
+                    "confidence": 0.95,
+                }
+                for candidate_id in candidate_ids
+            ],
+            "model": "geometry-test-verifier",
+            "uncertain": False,
+        }
+
+
 def test_detect_regions_empty_frames():
     provider = HybridSubtitleRegionDetectorProvider(proposal_provider=FakeProposalProvider([100, 100, 200, 200]))
     assert provider.detect_regions([]) == []
@@ -59,7 +80,10 @@ def test_detect_regions_returns_normalized_bottom_region():
         ]
 
         fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+        provider = HybridSubtitleRegionDetectorProvider(
+            proposal_provider=fake_proposal,
+            semantic_verifier=GeometryAcceptingVerifier(),
+        )
 
         regions = provider.detect_regions(frames)
         assert len(regions) >= 1
@@ -86,8 +110,8 @@ def test_scene_text_top_region_filtered():
         ]
 
         fake_proposal = FakeProposalProvider([300.0, 100.0, 900.0, 180.0], 0.9)
+        # Without verifier: fail-closed, so no region is produced.
         provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
-
         regions = provider.detect_regions(frames)
         assert regions == []
 
@@ -156,7 +180,10 @@ def test_detect_regions_pads_half_frame_gap():
         ]
 
         fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
+        provider = HybridSubtitleRegionDetectorProvider(
+            proposal_provider=fake_proposal,
+            semantic_verifier=GeometryAcceptingVerifier(),
+        )
 
         regions = provider.detect_regions(frames)
         assert len(regions) >= 1
@@ -222,8 +249,10 @@ def test_detect_regions_moving_track_emits_per_frame_regions():
             [300.0, 600.0, 500.0, 650.0],
         ]
         fake_proposal = FakeDriftingProposalProvider(bboxes, 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
-
+        provider = HybridSubtitleRegionDetectorProvider(
+            proposal_provider=fake_proposal,
+            semantic_verifier=GeometryAcceptingVerifier(),
+        )
         regions = provider.detect_regions(frames)
         assert len(regions) == 3
         assert abs(regions[0].x - 100.0/1280) < 1e-6
@@ -320,6 +349,7 @@ def test_detect_regions_track_without_temporal_union_falls_back():
         ):
             provider = HybridSubtitleRegionDetectorProvider(
                 proposal_provider=fake_proposal,
+                semantic_verifier=GeometryAcceptingVerifier(),
             )
             regions = provider.detect_regions(frames)
 

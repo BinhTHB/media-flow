@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -9,7 +10,7 @@ from src.infrastructure.gemini.contracts import DEFAULT_MODEL, MODE_ROLE_PRIMARY
 from src.infrastructure.gemini.file_manager import FileManager
 from src.infrastructure.gemini.request_scheduler import RequestScheduler
 from src.infrastructure.gemini.response_cache import ResponseCache
-from src.infrastructure.gemini.usage_recorder import UsageRecorder
+from src.infrastructure.gemini.usage_recorder import UsageRecorder, UsageRecord
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,35 @@ class RuntimeConfig:
     min_request_spacing_seconds: float = 0.0
 
 
+def _create_ledger_callback(ledger_path: str, job_id: str):
+    import os, json, time, threading
+    _ledger_path = ledger_path
+    _job_id = job_id
+    _lock = threading.Lock()
+    def callback(record: UsageRecord):
+        if record.job_id is None:
+            return
+        try:
+            os.makedirs(os.path.dirname(_ledger_path), exist_ok=True)
+            entry = {
+                "timestamp": time.time(),
+                "job_id": record.job_id,
+                "purpose": record.source_kind or "unknown",
+                "model": record.model,
+                "live_or_cache": "cache" if record.cache_hit else "live",
+                "request_id_or_hash": record.request_id or "",
+                "status": "success" if record.success else "error",
+                "tokens": record.total_tokens,
+                "error_msg": record.error_msg or "",
+            }
+            with _lock:
+                with open(_ledger_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass
+    return callback
+
+
 class GeminiRuntime:
     """Application-scoped runtime that owns shared Gemini infrastructure components.
 
@@ -42,8 +72,9 @@ class GeminiRuntime:
     together (per the shared-project-quota strategy).
     """
 
-    def __init__(self, config: Optional[RuntimeConfig] = None) -> None:
+    def __init__(self, config: Optional[RuntimeConfig] = None, job_id: str = "default") -> None:
         self._config = config or RuntimeConfig()
+        self._job_id = job_id
         scheduler_options = dict(self._config.scheduler)
         scheduler_options.update(
             {
@@ -67,13 +98,15 @@ class GeminiRuntime:
             "enabled" if self._cache.enabled else "disabled",
             self._cache.path or self._config.cache_dir or "unset",
         )
-        self._usage = UsageRecorder()
+        ledger_path = os.path.join("artifacts", "round19", "ledger.jsonl")
+        ledger_callback = _create_ledger_callback(ledger_path, job_id)
+        self._usage = UsageRecorder(usage_callback=ledger_callback)
         self._files = FileManager(enabled=self._config.file_manager_enabled)
         self._clients: Dict[str, GeminiClient] = {}
 
     @classmethod
-    def create(cls, config: Optional[RuntimeConfig] = None) -> "GeminiRuntime":
-        return cls(config)
+    def create(cls, config: Optional[RuntimeConfig] = None, job_id: str = "default") -> "GeminiRuntime":
+        return cls(config, job_id=job_id)
 
     @property
     def scheduler(self) -> RequestScheduler:
@@ -106,6 +139,7 @@ class GeminiRuntime:
                 file_manager=self._files,
                 role=role,
                 validate_models=self._config.validate_models,
+                job_id=self._job_id,
             )
             self._clients[cache_key] = client
             if self._files.enabled and not self._files.supports_remote_upload:

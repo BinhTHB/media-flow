@@ -67,6 +67,11 @@ def generate_ass_header(
     lines.append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text")
     return "\n".join(lines)
 
+def _has_mask_provenance(region: "SubtitleRegion") -> bool:
+    """A region is eligible for production masking only when it carries classifier provenance."""
+    return bool(getattr(region, "classification_id", None)) and bool(getattr(region, "is_subtitle", None)) and bool(getattr(region, "classifier_model", None))
+
+
 class ASSGenerator:
     @staticmethod
     def generate(
@@ -84,6 +89,15 @@ class ASSGenerator:
 
         if mask_regions:
             for r in mask_regions:
+                # Gate: production mask regions must carry explicit confirmation provenance.
+                if not _has_mask_provenance(r):
+                    logging.getLogger(__name__).warning(
+                        "LOUD-WARN [ASSGenerator]: discarding mask_region without verified classifier provenance. "
+                        "Region details: start=%.3f, end=%.3f, x=%.3f, y=%.3f",
+                        r.start_time, r.end_time, r.x, r.y
+                    )
+                    continue
+
                 # Che đen đặc, padding 8px
                 pad = 8
                 left = max(0.0, r.x * play_res_x - pad)
@@ -102,7 +116,7 @@ class ASSGenerator:
                     rf"{{\an7\pos({round(left)},{round(top)})"
                     rf"\p1\1c&H000000&\1a&H00&}}"
                     f"m 0 0 l {width} 0 l {width} {height} l 0 {height}"
-                    r"{\p0}"
+                    rf"{{\p0}} ; provenance={r.classification_id}"
                 )
 
         for index, seg in enumerate(segments):

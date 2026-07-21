@@ -85,7 +85,7 @@ providers:
       iou: 0.70
       imgsz: 1024
       min_confidence: 0.30
-      device: cpu
+      device: cuda
       gemini_model: gemini-3.1-flash-lite
       gemini_verify: true
 
@@ -109,7 +109,7 @@ providers:
       iou: 0.70
       imgsz: 1024
       min_confidence: 0.30
-      device: cpu
+      device: cuda
       gemini_verify: true
       gemini_model: gemini-3.1-flash-lite
 

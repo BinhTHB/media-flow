@@ -1,5 +1,7 @@
 from __future__ import annotations
 import logging
+import os
+import re
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -118,18 +120,32 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         if not tracks:
             return []
 
+        # Map decoded frame indexes to timestamp-bearing frames. A ProposalBundle is
+        # authoritative for sparse strides; legacy extracted frames stay sequential.
+        if self.proposal_bundle is not None:
+            frames_by_index = {
+                decoded.frame_index: Frame(
+                    timestamp=decoded.timestamp_sec,
+                    image_path=decoded.image_path or "",
+                )
+                for decoded in self.proposal_bundle.frames
+            }
+        else:
+            frames_by_index: Dict[int, Frame] = {}
+            for frame in frames:
+                match = re.search(
+                    r"frame_(\d+)\.(jpg|png|jpeg)",
+                    os.path.basename(frame.image_path or ""),
+                )
+                if match:
+                    frames_by_index[int(match.group(1))] = frame
+            if not frames_by_index:
+                frames_by_index = {index: frame for index, frame in enumerate(frames)}
+
         regions: List[SubtitleRegion] = []
         for track in tracks:
-            rep_ids = representative_group_ids(track, 5)
-
-            # Verifier-first: when a semantic verifier is injected, it decides
-            # for every track and the rule heuristic is ignored for that track.
-            if self._semantic_verifier is not None:
-                accepted = self._verifier_accepts_track(track, frames, H)
-            else:
-                accepted = self._rule_accepts_track(track, rep_ids, H)
-
-            if not accepted:
+            decision = self._verifier_decision_for_track(track, frames_by_index, H)
+            if decision is None:
                 continue
 
             conf = _clamp01(track.get("mean_detector_confidence", 0.0))
@@ -148,13 +164,26 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             last_bbox = track["groups"][-1]["union_bbox_xyxy"]
             moving = len(track["groups"]) >= 2 and box_iou(first_bbox, last_bbox) < 0.30
 
+            # Gather proposal ids
+            proposal_ids = sorted(
+                {
+                    candidate_id
+                    for group in track["groups"]
+                    for candidate_id in group.get("member_candidate_ids", [])
+                }
+            )
+
             if moving:
                 for g in track["groups"]:
                     bbox = g["union_bbox_xyxy"]
                     if not bbox:
                         continue
                     x1, y1, x2, y2 = bbox
-                    ts = frames[g["frame_index"]].timestamp
+                    fi = g["frame_index"]
+                    src_frame = frames_by_index.get(fi)
+                    if src_frame is None:
+                        continue
+                    ts = src_frame.timestamp
                     start_time = max(0.0, ts - frame_gap / 2.0)
                     end_time = ts + frame_gap / 2.0
                     try:
@@ -166,6 +195,13 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                             width=_clamp01((x2 - x1) / W),
                             height=_clamp01((y2 - y1) / H),
                             confidence=conf,
+                            classification_id=f"classification:{track['track_id']}",
+                            is_subtitle=True,
+                            classifier_model=decision.get("model", "unknown"),
+                            track_id=track["track_id"],
+                            proposal_ids=proposal_ids,
+                            category=decision.get("category", "dialogue_subtitle"),
+                            classifier_confidence=decision.get("confidence", 1.0),
                         )
                     except Exception:
                         continue
@@ -184,8 +220,13 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
 
             first_idx = track["groups"][0]["frame_index"]
             last_idx = track["groups"][-1]["frame_index"]
-            start_time = frames[first_idx].timestamp
-            end_time = frames[last_idx].timestamp
+            first_frame = frames_by_index.get(first_idx)
+            last_frame = frames_by_index.get(last_idx)
+            if first_frame is None or last_frame is None:
+                continue
+
+            start_time = first_frame.timestamp
+            end_time = last_frame.timestamp
             if end_time < start_time:
                 end_time = start_time
             start_time = max(0.0, start_time - frame_gap / 2.0)
@@ -200,6 +241,13 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                     width=_clamp01((x2 - x1) / W),
                     height=_clamp01((y2 - y1) / H),
                     confidence=conf,
+                    classification_id=f"classification:{track['track_id']}",
+                    is_subtitle=True,
+                    classifier_model=decision.get("model", "unknown"),
+                    track_id=track["track_id"],
+                    proposal_ids=proposal_ids,
+                    category=decision.get("category", "dialogue_subtitle"),
+                    classifier_confidence=decision.get("confidence", 1.0),
                 )
             except Exception:
                 continue
@@ -207,19 +255,15 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
 
         return regions
 
-    def _rule_accepts_track(self, track, rep_ids, H) -> bool:
-        median_bbox = track.get("median_bbox_xyxy") or []
-        result = classify_track_by_position(
-            median_bbox, H, rep_ids, track["track_id"], self._bottom_ratio_threshold
-        )
-        if result.get("uncertain"):
-            return False
-        decisions = result.get("decisions", [])
-        if not decisions:
-            return False
-        return any(d.get("is_subtitle") for d in decisions)
+    def _verifier_decision_for_track(self, track: Dict, frames_by_index: Dict[int, Frame], H: int) -> Dict[str, Any] | None:
+        """Evaluate the track against the verifier.
+        Returns a decision dict if confirmed as subtitle, or None to fail-closed (discard).
+        """
+        # If no semantic verifier configured, rule heuristic ONLY performs a passive review.
+        # It does NOT confirm for production masking (to avoid overmasking from pure heuristic).
+        if self._semantic_verifier is None:
+            return None
 
-    def _verifier_accepts_track(self, track, frames, H) -> bool:
         try:
             groups = track["groups"]
             if len(groups) <= 3:
@@ -239,30 +283,57 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                         raise RuntimeError(
                             f"Single-decode bundle is missing frame_index={fi} required by region verifier."
                         ) from exc
-                    # No seek/disk fallback: this must be the exact YOLO orig_img.
                     frame_bgr.append(decoded_frame.image)
                 else:
-                    if fi < len(frames):
-                        frame = cv2.imread(frames[fi].image_path)
+                    src_frame = frames_by_index.get(fi)
+                    if src_frame is not None:
+                        frame = cv2.imread(src_frame.image_path)
                         if frame is not None:
                             frame_bgr.append(frame)
 
             if not frame_bgr or len(frame_bgr) < len(rep_groups):
-                # Could not load any frame; fall back to rule-based.
-                return self._rule_accepts_track(track, representative_group_ids(track, 5), H)
+                # Cannot load frames: fail-closed (no mask, loud log).
+                logger.warning(
+                    "LOUD-WARN: region verifier could not load representative frames for track %s. "
+                    "Fail-closed used: track discarded.",
+                    track["track_id"]
+                )
+                return None
 
             class TrackWrapper:
                 def __init__(self, track_id):
                     self.track_id = track_id
 
-            # Adapt the track dict to an object with track_id for classify_track signature compatibility
             track_obj = TrackWrapper(track["track_id"])
-
             decisions = self._semantic_verifier.classify_track(
                 track_obj, frame_bgr, candidate_ids, candidate_bboxes
             )
             decision_list = decisions.get("decisions", [])
-            return any(d.get("is_subtitle") for d in decision_list)
-        except Exception:
-            # Fall back to rule-based on any verifier failure
-            return self._rule_accepts_track(track, representative_group_ids(track, 5), H)
+            valid_candidate_set = set(candidate_ids)
+            for decision in decision_list:
+                if (
+                    decision.get("is_subtitle") is True
+                    and decision.get("candidate_id") in valid_candidate_set
+                ):
+                    return {
+                        "model": decisions.get("model", "unknown"),
+                        "category": decision.get("category", "dialogue_subtitle"),
+                        "confidence": decision.get("confidence", 1.0),
+                    }
+
+            # No positive confirmation for a valid candidate: fail-closed.
+            logger.warning(
+                "LOUD-WARN: region verifier did not confirm any valid candidate for track %s. "
+                "Fail-closed used: track discarded.",
+                track["track_id"]
+            )
+            return None
+        except Exception as exc:
+            # Exception in verifier: fail-closed, loud-warning.
+            logger.warning(
+                "LOUD-WARN: region verifier failed with exception for track %s. "
+                "Fail-closed used: track discarded. Error: %s",
+                track["track_id"],
+                str(exc)
+            )
+            return None

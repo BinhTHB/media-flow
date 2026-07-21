@@ -333,11 +333,13 @@ class JobOrchestrator:
                     },
                 )
                 quality_metrics.update(ocr_metrics)
+                ocr_prov = self.detect_onscreen_text_uc.ocr_provider
+                provider_name = getattr(ocr_prov, "primary_name", ocr_prov.__class__.__name__)
                 self.artifact_provider.write_json(
                     os.path.join(self.artifact_provider.debug_dir(job.job_id), "ocr_cache_metadata.json"),
                     cache_validator.signature(
                         job.input_video, self.frame_interval,
-                        self.detect_onscreen_text_uc.ocr_provider.__class__.__name__,
+                        provider_name,
                         "unknown",
                         getattr(self.detect_onscreen_text_uc.ocr_provider, "language", ""),
                         "gpu" if getattr(self.detect_onscreen_text_uc.ocr_provider, "use_gpu", False) else "cpu",
@@ -354,9 +356,11 @@ class JobOrchestrator:
                     if controls.debug_from_artifacts
                     else os.path.join(cache_root, "ocr_cache_metadata.json")
                 )
+                ocr_prov2 = self.detect_onscreen_text_uc.ocr_provider
+                cached_provider_name = getattr(ocr_prov2, "primary_name", ocr_prov2.__class__.__name__)
                 current = cache_validator.signature(
                     job.input_video, self.frame_interval,
-                    self.detect_onscreen_text_uc.ocr_provider.__class__.__name__,
+                    cached_provider_name,
                     "unknown",
                     getattr(self.detect_onscreen_text_uc.ocr_provider, "language", ""),
                     "gpu" if getattr(self.detect_onscreen_text_uc.ocr_provider, "use_gpu", False) else "cpu",

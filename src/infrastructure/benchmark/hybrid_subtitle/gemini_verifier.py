@@ -64,9 +64,10 @@ class GeminiTrackVerifier:
     validate_gemini_decision rejects bbox keys in responses.
     """
 
-    def __init__(self, runtime_client, model: str = DEFAULT_GEMINI_MODEL):
+    def __init__(self, runtime_client, model: str = DEFAULT_GEMINI_MODEL, job_id: str = "default"):
         self._client = runtime_client
         self._model = model
+        self._job_id = job_id
         # Diagnostic counters for A2 / STEP F audit.
         self.tracks_received: int = 0
         self.requests_sent: int = 0
