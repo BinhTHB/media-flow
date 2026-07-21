@@ -75,11 +75,36 @@ class ASSGenerator:
         placements: Optional[List[SubtitlePlacement]] = None,
         play_res_x: int = 1920,
         play_res_y: int = 1080,
+        mask_regions: Optional[List["SubtitleRegion"]] = None,
     ) -> str:
         if not segments:
             return ""
         header = generate_ass_header(style, play_res_x, play_res_y)
         events = []
+
+        if mask_regions:
+            for r in mask_regions:
+                # Che đen đặc, padding 8px
+                pad = 8
+                left = max(0.0, r.x * play_res_x - pad)
+                top = max(0.0, r.y * play_res_y - pad)
+                right = min(float(play_res_x), (r.x + r.width) * play_res_x + pad)
+                bottom = min(float(play_res_y), (r.y + r.height) * play_res_y + pad)
+                width = round(right - left)
+                height = round(bottom - top)
+                
+                # Nới rộng ±2 frame (khoảng 0.08s) để mượt
+                r_start = _format_time(max(0.0, r.start_time - 0.08))
+                r_end = _format_time(r.end_time + 0.08)
+                
+                events.append(
+                    f"Dialogue: 0,{r_start},{r_end},Default,,0,0,0,,"
+                    rf"{{\an7\pos({round(left)},{round(top)})"
+                    rf"\p1\1c&H000000&\1a&H00&}}"
+                    f"m 0 0 l {width} 0 l {width} {height} l 0 {height}"
+                    r"{\p0}"
+                )
+
         for index, seg in enumerate(segments):
             if seg.translated_text:
                 text = seg.translated_text
@@ -100,7 +125,8 @@ class ASSGenerator:
             if placements is not None and index < len(placements):
                 placement = placements[index]
                 if placement is not None:
-                    if placement.mask_bbox is not None:
+                    # Nếu dùng mask_regions thì bỏ qua sinh mask_bbox ở Layer 0
+                    if placement.mask_bbox is not None and not mask_regions:
                         mask = placement.mask_bbox
                         width = round(mask["right"] - mask["left"])
                         height = round(mask["bottom"] - mask["top"])
@@ -111,6 +137,9 @@ class ASSGenerator:
                             f"m 0 0 l {width} 0 l {width} {height} l 0 {height}"
                             r"{\p0}"
                         )
+                        layer = 1
+                    elif mask_regions and seg.source == "ocr":
+                        # Có mask_regions: text layer cho OCR là 1 để hiển thị đè lên mask
                         layer = 1
                     if placement.margin_l is not None:
                         margin_l = str(placement.margin_l)

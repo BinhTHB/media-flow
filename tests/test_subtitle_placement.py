@@ -15,6 +15,7 @@ from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_placement import SubtitlePlacement
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.domain.entities.subtitle_style import SubtitleStyle
+from src.application.services.ass_generator import ASSGenerator
 from src.infrastructure.providers.subtitle.mock_subtitle_region_detector_provider import (
     MockSubtitleRegionDetectorProvider,
 )
@@ -450,10 +451,55 @@ def test_ass_generator_omits_alignment_tag_when_placement_matches_style():
     assert r"\an2" not in content
 
 
+def test_ass_generator_renders_mask_events_from_regions():
+    """ASSGenerator must render a separate mask event for each window in regions
+    if mask_regions is provided, avoiding static clamp/freeze of track bbox."""
+    # OCR segment: 1.0 - 5.0s
+    seg = _segment("ocr_long", 1.0, 5.0)
+    seg.source = "ocr"
+    
+    # 2 windows of regions: y changes (moving)
+    regions = [
+        SubtitleRegion(start_time=1.0, end_time=3.0, x=0.1, y=0.8, width=0.5, height=0.1, confidence=0.9),
+        SubtitleRegion(start_time=3.0, end_time=5.0, x=0.1, y=0.4, width=0.5, height=0.1, confidence=0.9),
+    ]
+    
+    placement = SubtitlePlacement(alignment=5, x=960, y=540)
+    
+    content = ASSGenerator.generate(
+        [seg],
+        SubtitleStyle(),
+        [placement],
+        play_res_x=1000,
+        play_res_y=1000,
+        mask_regions=regions,
+    )
+    
+    # Must have 2 Mask events with different coordinates
+    # Region 1 y=0.8 -> top=800, bottom=900 (padded 8px -> top=792, bottom=908)
+    # Region 2 y=0.4 -> top=400, bottom=500 (padded 8px -> top=392, bottom=508)
+    assert r"\pos(92,792)" in content or r"\pos(92,792" in content or "792" in content
+    assert r"\pos(92,392)" in content or r"\pos(92,392" in content or "392" in content
+    
+    # Must have dialogue layer 1 for the subtitle text
+    assert "Dialogue: 1,0:00:01.00,0:00:05.00" in content
+
+
 def test_ass_generator_without_placement_uses_default_dialogue_format():
     content = ASSGenerator.generate([_segment()], SubtitleStyle(alignment=2))
 
     assert "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,text-s1" in content
+
+
+def test_ass_generator_loud_warns_when_translation_is_empty(caplog):
+    segment = _segment()
+
+    with caplog.at_level("WARNING"):
+        content = ASSGenerator.generate([segment], SubtitleStyle())
+
+    assert "EMPTY translated_text" in caplog.text
+    assert "text-s1" in content
+
 
 def test_rendered_bbox_for_long_subtitle_stays_inside_safe_zone():
     service = SubtitlePlacementService(_config())
