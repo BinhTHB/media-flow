@@ -779,15 +779,16 @@ class JobOrchestrator:
                 job.subtitle_path = self.artifact_provider.subtitle_path(job.job_id)
                 self.artifact_provider.write_text(job.subtitle_path, srt_content)
                 ass_content = self.generate_subtitle_uc.execute(
-                    display_segments,
-                    subtitle_format="ass",
-                    style=self.subtitle_style,
-                    placements=(
-                        placements if job.features.subtitle_placement and regions else None
-                    ),
-                    play_res_x=video_width,
-                    play_res_y=video_height,
-                )
+                                    display_segments,
+                                    subtitle_format="ass",
+                                    style=self.subtitle_style,
+                                    placements=(
+                                        placements if job.features.subtitle_placement and regions else None
+                                    ),
+                                    play_res_x=video_width,
+                                    play_res_y=video_height,
+                                    mask_regions=regions if replacement_required else None,
+                                )
                 self.artifact_provider.write_text(
                     self.artifact_provider.subtitle_ass_path(job.job_id), ass_content
                 )
