@@ -12,8 +12,35 @@ from src.infrastructure.factory.provider_factory import ProviderFactory
 from src.infrastructure.providers.ocr.mock_ocr_provider import MockOCRProvider
 from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
 from src.infrastructure.registry.provider_registry import ProviderRegistry
+from src.infrastructure.providers.video.ffmpeg_frame_extraction_provider import (
+    FFmpegFrameExtractionProvider,
+)
 from src.infrastructure.providers.video.mock_frame_extraction_provider import MockFrameExtractionProvider
 from src.shared.exceptions import ProviderError
+
+
+def test_ffmpeg_frame_validation_rejects_blank_frame(tmp_path):
+    import cv2
+    import numpy as np
+
+    path = tmp_path / "blank.jpg"
+    assert cv2.imwrite(str(path), np.full((1280, 720, 3), 128, dtype=np.uint8))
+
+    with pytest.raises(ProviderError, match="blank"):
+        FFmpegFrameExtractionProvider()._validate_frame_files(str(tmp_path), ["blank.jpg"], 720, 1280)
+
+
+def test_ffmpeg_frame_validation_rejects_wrong_resolution(tmp_path):
+    import cv2
+    import numpy as np
+
+    path = tmp_path / "wrong_size.jpg"
+    image = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    image[:, ::2] = 255
+    assert cv2.imwrite(str(path), image)
+
+    with pytest.raises(ProviderError, match="resolution"):
+        FFmpegFrameExtractionProvider()._validate_frame_files(str(tmp_path), ["wrong_size.jpg"], 720, 1280)
 
 
 def test_mock_frame_extraction_provider(tmp_path):
