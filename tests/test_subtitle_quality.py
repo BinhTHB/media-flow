@@ -341,6 +341,63 @@ def test_normalize_suppresses_redundant_incomplete_ocr_fragment():
     assert uc.metrics["suppressed_ocr_fragments"][0]["id"] == "ocr"
     assert uc.metrics["dropped_speech_segments"] == []
 
+def test_normalize_preserves_ocr_when_replacement_required():
+    uc = NormalizeSegmentsUseCase()
+    # Case 1: default -> should drop OCR due to redundancy/overlap
+    result_default = uc.execute(
+        [
+            Segment(
+                id="speech",
+                start=0.0,
+                end=3.0,
+                text="Ngay lúc anh ta tưởng rằng chiếc xe sẽ bị tịch thu.",
+                source="speech",
+                confidence=0.8,
+            ),
+            Segment(
+                id="ocr",
+                start=1.0,
+                end=2.0,
+                text="ngay lúc anh",
+                source="ocr",
+                confidence=0.99,
+            ),
+        ],
+        video_duration=4.0,
+        replacement_required=False,
+    )
+    assert "ocr" not in [s.id for s in result_default]
+    assert "speech" in [s.id for s in result_default]
+
+    # Case 2: replacement_required=True -> PRESERVE both timelines
+    result_preserved = uc.execute(
+        [
+            Segment(
+                id="speech",
+                start=0.0,
+                end=3.0,
+                text="Ngay lúc anh ta tưởng rằng chiếc xe sẽ bị tịch thu.",
+                source="speech",
+                confidence=0.8,
+            ),
+            Segment(
+                id="ocr",
+                start=1.0,
+                end=2.0,
+                text="ngay lúc anh",
+                source="ocr",
+                confidence=0.99,
+            ),
+        ],
+        video_duration=4.0,
+        replacement_required=True,
+    )
+    ocr_ids = [s.id for s in result_preserved if s.source == "ocr"]
+    speech_ids = [s.id for s in result_preserved if s.source == "speech"]
+    assert "ocr" in ocr_ids
+    assert "speech" in speech_ids
+
+
 def test_normalize_preserves_useful_ocr_not_covered_by_speech():
     uc = NormalizeSegmentsUseCase()
     result = uc.execute(

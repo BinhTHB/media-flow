@@ -117,6 +117,10 @@ class JobOrchestrator:
         placement_config = self.calculate_subtitle_placement_uc.placement_service.config
         placement_config.video_width = video_width
         placement_config.video_height = video_height
+        replacement_required = (
+            job.features.subtitle_placement
+            and placement_config.placement_mode == "replace_source_subtitle"
+        )
         cache_validator = ArtifactCacheValidator()
         if (
             job.features.ocr
@@ -511,6 +515,7 @@ class JobOrchestrator:
                     segments,
                     is_translated=normalize_translated,
                     video_duration=video_duration,
+                    replacement_required=replacement_required,
                 )
                 timings["normalization"] = round(time.monotonic() - started, 3)
             quality_metrics.update(self.normalize_segments_uc.metrics)
@@ -704,6 +709,10 @@ class JobOrchestrator:
                     else segments
                 )
                 if replacement_required and not display_segments:
+                    raw_filtered_count = len(ocr_segments) if 'ocr_segments' in locals() else 0
+                    translated_count = source_counts_before.get("ocr", 0) if 'source_counts_before' in locals() else 0
+                    normalized_count = sum(s.source == "ocr" for s in segments)
+                    display_count = len(display_segments)
                     quality_metrics["dynamic_replacement_status"] = (
                         "NO_ACCEPTED_SUBTITLE_INTERVALS"
                     )
@@ -711,10 +720,14 @@ class JobOrchestrator:
                     job.error_message = "NO_ACCEPTED_SUBTITLE_INTERVALS"
                     audit_logger.warning(
                         "LOUD-WARN: Subtitle placement requested (replacement_required=True) "
-                        "but NO OCR subtitle segments survived the verifier filter for job %s. "
-                        "Output will contain NO burned-in subtitle replacement. "
-                        "Check verifier filter thresholds and source OCR quality.",
+                        "but NO OCR subtitle segments survived the pipeline for job %s. "
+                        "Stage counts (OCR): filtered=%d -> translated=%d -> normalized=%d -> display=%d. "
+                        "Output will contain NO burned-in subtitle replacement.",
                         job.job_id,
+                        raw_filtered_count,
+                        translated_count,
+                        normalized_count,
+                        display_count,
                     )
                     self.artifact_provider.write_json(
                         self.artifact_provider.final_timeline_path(job.job_id),

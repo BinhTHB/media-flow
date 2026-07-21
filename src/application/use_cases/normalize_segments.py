@@ -15,6 +15,7 @@ class NormalizeSegmentsUseCase:
         segments: List[Segment],
         is_translated: bool = False,
         video_duration: float | None = None,
+        replacement_required: bool = False,
     ) -> List[Segment]:
         self.metrics = {}
         if not segments:
@@ -59,10 +60,11 @@ class NormalizeSegmentsUseCase:
         }
 
         self._split_long_speech(segments, get_text, is_translated, video_duration)
-        segments = self._suppress_redundant_ocr(segments, get_text)
+        if not replacement_required:
+            segments = self._suppress_redundant_ocr(segments, get_text)
 
         # 4. Prefer speech over OCR when timestamps overlap and text is similar
-        if self.config.prefer_speech_over_ocr:
+        if self.config.prefer_speech_over_ocr and not replacement_required:
             filtered = []
             for s in segments:
                 keep = True
@@ -79,17 +81,19 @@ class NormalizeSegmentsUseCase:
                     filtered.append(s)
             segments = filtered
 
-        # 5. Deduplicate repeated OCR/speech text
+        # 5. Deduplicate repeated text within each timeline.
         if self.config.deduplicate:
             filtered = []
             for s in segments:
                 if not filtered:
                     filtered.append(s)
-                else:
-                    last = filtered[-1]
-                    similarity = TextSimilarityService.get_similarity(get_text(s), get_text(last))
-                    if similarity > 0.8:
-                        continue
+                    continue
+                last = filtered[-1]
+                if replacement_required and last.source != s.source:
+                    filtered.append(s)
+                    continue
+                similarity = TextSimilarityService.get_similarity(get_text(s), get_text(last))
+                if similarity <= 0.8:
                     filtered.append(s)
             segments = filtered
 
@@ -149,7 +153,7 @@ class NormalizeSegmentsUseCase:
             if s.end - s.start >= self.config.min_duration:
                 normalized.append(s)
         
-        segments = self._resolve_overlaps(normalized, get_text)
+        segments = self._resolve_overlaps(normalized, get_text, replacement_required)
 
         # Record counts and metrics after normalization
         speech_after = [s for s in segments if s.source == "speech"]
@@ -389,7 +393,7 @@ class NormalizeSegmentsUseCase:
         ]
         return chunks
 
-    def _resolve_overlaps(self, segments: List[Segment], get_text) -> List[Segment]:
+    def _resolve_overlaps(self, segments: List[Segment], get_text, replacement_required: bool = False) -> List[Segment]:
         if not segments:
             return []
 
@@ -401,6 +405,9 @@ class NormalizeSegmentsUseCase:
 
             prev = resolved[-1]
             if s.start < prev.end:
+                if replacement_required and prev.source != s.source:
+                    resolved.append(s)
+                    continue
                 # If nested overlap, we must resolve by score (cannot split outer)
                 if s.end <= prev.end:
                     if self._caption_score(s, get_text) > self._caption_score(prev, get_text):
