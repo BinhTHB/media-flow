@@ -127,23 +127,17 @@ class HybridSubtitleClassifier:
         heur = self._heuristic.classify(track, self._frame_height)
         valid_ids = set(candidate_ids) if candidate_ids else set()
 
-        if heur.is_subtitle:
+        if not heur.is_subtitle:
+            # Heuristic-negative is the final decision -> reject immediately!
             return {
                 "track_id": track.get("track_id", "unknown"),
-                "decisions": [{
-                    "candidate_id": (candidate_ids or ["G00000_01"])[0],
-                    "is_subtitle": True,
-                    "category": heur.category,
-                    "confidence": heur.confidence,
-                    "provenance": heur.provenance,
-                    "reason": heur.reason,
-                }],
+                "decisions": [],
                 "uncertain": False,
                 "model": "heuristic",
                 "source": heur.provenance,
             }
 
-        # Non-subtitle from heuristic: ask Gemini if available (for borderline cases)
+        # Heuristic-positive: verify with Gemini if available (pre-filter logic)
         if self._gemini and candidate_ids and frame_bgr:
             class _TW:
                 __slots__ = ("track_id",)
@@ -156,7 +150,6 @@ class HybridSubtitleClassifier:
                 )
                 for d in gresp.get("decisions", []):
                     cid = d.get("candidate_id")
-                    # CRITICAL: validate candidate_id is in the request list
                     if d.get("is_subtitle") is True and cid in valid_ids:
                         return {
                             "track_id": track.get("track_id", "unknown"),
@@ -174,6 +167,35 @@ class HybridSubtitleClassifier:
                         }
             except Exception as exc:
                 logger.warning("LOUD-WARN: Gemini verification failed: %s", exc)
+                return {
+                    "track_id": track.get("track_id", "unknown"),
+                    "decisions": [],
+                    "uncertain": True,
+                    "source": "gemini_failed",
+                }
+            return {
+                "track_id": track.get("track_id", "unknown"),
+                "decisions": [],
+                "uncertain": False,
+                "source": "gemini_rejected",
+            }
+
+        # If Gemini not available but heuristic says True (e.g. in tests/passive mode)
+        if heur.is_subtitle:
+            return {
+                "track_id": track.get("track_id", "unknown"),
+                "decisions": [{
+                    "candidate_id": (candidate_ids or ["G00000_01"])[0],
+                    "is_subtitle": True,
+                    "category": heur.category,
+                    "confidence": heur.confidence,
+                    "provenance": heur.provenance,
+                    "reason": heur.reason,
+                }],
+                "uncertain": False,
+                "model": "heuristic",
+                "source": heur.provenance,
+            }
 
         return {
             "track_id": track.get("track_id", "unknown"),

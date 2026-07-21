@@ -73,6 +73,7 @@ def _create_hybrid_yolo(options):
         HybridSubtitleRegionDetectorProvider,
     )
     from src.infrastructure.benchmark.hybrid_subtitle.config import DEFAULT_GEMINI_MODEL
+    from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
     gemini_verify = bool(options.get("gemini_verify", False))
     runtime = options.get("runtime")
     semantic_verifier = None
@@ -81,7 +82,13 @@ def _create_hybrid_yolo(options):
         from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiTrackVerifier
         model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
         semantic_verifier = GeminiTrackVerifier(runtime, model=model)
-
+    proposal_provider = YoloTextProposalProvider(
+        weights_path=options.get("weights", "best.pt"),
+        conf=options.get("conf", 0.05),
+        iou=options.get("iou", 0.70),
+        imgsz=options.get("imgsz", 1024),
+        device=options.get("device", "cpu"),
+    )
     return HybridSubtitleRegionDetectorProvider(
         weights=options.get("weights", "best.pt"),
         conf=options.get("conf", 0.05),
@@ -90,6 +97,7 @@ def _create_hybrid_yolo(options):
         min_confidence=float(options.get("min_confidence", 0.30)),
         device=options.get("device", "cpu"),
         semantic_verifier=semantic_verifier,
+        proposal_provider=proposal_provider,
     )
 
 

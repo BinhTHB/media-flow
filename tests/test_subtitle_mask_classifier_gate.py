@@ -18,8 +18,8 @@ class Proposal:
                 "frame_index": index,
                 "timestamp_ms": index * 500,
                 "candidate_id": f"F{index:05d}_C01",
-                "bbox_xyxy": [300.0, 300.0, 900.0, 380.0],
-                "bbox_normalized": [0.23, 0.42, 0.70, 0.53],
+                "bbox_xyxy": [300.0, 300.0, 900.0, 600.0],
+                "bbox_normalized": [0.23, 0.42, 0.70, 0.83],
                 "confidence": 0.9,
                 "class": "text",
             }
@@ -158,7 +158,7 @@ def test_region_provider_uses_real_frame_indices_for_sparse_bundle(tmp_path):
     from src.application.dto.proposal_bundle import ProposalBundle
 
     bundle = ProposalBundle("video.mp4", fps=30.0, stride=2, video_width=1280, video_height=720)
-    for frame_index in (0, 2, 4):
+    for frame_index in (0, 5, 10):
         bundle.add_frame(
             frame_index=frame_index,
             timestamp_sec=frame_index / 30.0,
@@ -168,7 +168,7 @@ def test_region_provider_uses_real_frame_indices_for_sparse_bundle(tmp_path):
                 "frame_index": frame_index,
                 "timestamp_ms": frame_index / 30.0 * 1000,
                 "candidate_id": f"F{frame_index:05d}_C01",
-                "bbox_xyxy": [300.0, 300.0, 900.0, 380.0],
+                "bbox_xyxy": [300.0, 300.0, 900.0, 600.0],
                 "confidence": 0.9,
             }],
         )
@@ -219,3 +219,41 @@ def test_provenance_not_rendered_on_screen():
     if after_p0:
         # Anything after {\\p0} must be inside {} brackets (ASS comment block)
         assert after_p0.startswith("{") and after_p0.endswith("}"),             f"Found visible text after {{@}}p0: {after_p0!r}"
+
+
+def test_heuristic_negative_is_rejected_immediately_without_gemini(tmp_path):
+    class TopProposal:
+        def detect_images(self, image_paths):
+            return [
+                {
+                    "frame_index": index,
+                    "timestamp_ms": index * 500,
+                    "candidate_id": f"F{index:05d}_C01",
+                    "bbox_xyxy": [300.0, 50.0, 900.0, 100.0], # Top of frame, y2=100.0
+                    "bbox_normalized": [0.23, 0.07, 0.70, 0.14],
+                    "confidence": 0.9,
+                    "class": "text",
+                }
+                for index, _ in enumerate(image_paths)
+            ]
+
+    class MockSpyVerifier:
+        def __init__(self):
+            self.called = False
+        def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
+            self.called = True
+            return {
+                "track_id": "T00001",
+                "decisions": [{"candidate_id": candidate_ids[0], "is_subtitle": True, "category": "dialogue_subtitle", "confidence": 0.95}],
+                "model": "test-model",
+                "uncertain": False
+            }
+
+    spy = MockSpyVerifier()
+    det = HybridSubtitleRegionDetectorProvider(
+        proposal_provider=TopProposal(), semantic_verifier=spy
+    )
+    result = det.detect_regions(frames(tmp_path))
+
+    assert result == []
+    assert spy.called is False

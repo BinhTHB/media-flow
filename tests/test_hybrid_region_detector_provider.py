@@ -298,7 +298,7 @@ def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
         regions_no_v = provider_no_verifier.detect_regions(frames)
         assert len(regions_no_v) == 0
 
-        # With verifier that says it IS subtitle -> track accepted.
+        # A heuristic-negative track must remain rejected even if Gemini says subtitle.
         fake_decisions = [
             {"candidate_id": "G00000_01", "is_subtitle": True, "category": "subtitle", "confidence": 0.9}
         ]
@@ -308,7 +308,7 @@ def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
             semantic_verifier=fake_verifier,
         )
         regions_with_v = provider_with_v.detect_regions(frames)
-        assert len(regions_with_v) >= 1
+        assert len(regions_with_v) == 0
 
 
 from unittest import mock
@@ -321,7 +321,7 @@ def test_detect_regions_track_without_temporal_union_falls_back():
         img_path = os.path.join(tmp_dir, "frame.png")
         img = np.zeros((720, 1280, 3), dtype=np.uint8)
         cv2.imwrite(img_path, img)
-        frames = [Frame(timestamp=0.25, image_path=img_path)]
+        frames = [Frame(timestamp=0.25, image_path=img_path), Frame(timestamp=0.75, image_path=img_path)]
 
         # Patch build_tracks in the ADAPTER namespace so detect_regions
         # receives a track without temporal_union_bbox_xyxy.
@@ -334,6 +334,13 @@ def test_detect_regions_track_without_temporal_union_falls_back():
                     "frame_index": 0,
                     "candidate_group_id": "G00000_01",
                     "union_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
+                    "timestamp_ms": 0,
+                },
+                {
+                    "frame_index": 1,
+                    "candidate_group_id": "G00001_01",
+                    "union_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
+                    "timestamp_ms": 500,
                 }
             ],
         }
@@ -395,12 +402,12 @@ def test_low_confidence_proposal_cannot_swallow_subtitle_group(tmp_path):
     class PerFrameProposal:
         def detect_images(self, image_paths):
             boxes_by_frame = [
-                [[300.0, 200.0, 500.0, 240.0, 0.90]],
+                [[300.0, 500.0, 500.0, 540.0, 0.90]],
                 [
-                    [300.0, 300.0, 500.0, 340.0, 0.90],
+                    [300.0, 520.0, 500.0, 560.0, 0.90],
                     [2.0, 100.0, 1270.0, 400.0, 0.05],
                 ],
-                [[300.0, 400.0, 500.0, 440.0, 0.90]],
+                [[300.0, 540.0, 500.0, 580.0, 0.90]],
             ]
             detections = []
             for frame_index, boxes in enumerate(boxes_by_frame):
@@ -443,7 +450,7 @@ def test_low_confidence_proposal_cannot_swallow_subtitle_group(tmp_path):
         semantic_verifier=AcceptingVerifier(),
     ).detect_regions(frames)
 
-    target = [300 / 1280, 300 / 720, 500 / 1280, 340 / 720]
+    target = [300 / 1280, 520 / 720, 500 / 1280, 560 / 720]
     active = [region for region in regions if region.start_time <= 0.5 <= region.end_time]
     assert active
     assert max(
