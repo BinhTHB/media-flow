@@ -118,13 +118,34 @@ class GeminiRuntime:
         self._clients.clear()
 
     def _ledger_path_for(self, job_id: str) -> str:
-        """Derive ledger file path from RuntimeConfig, redirecting generic/legacy paths to per-job files."""
-        cfg_path = self._config.ledger_path or ""
-        if not cfg_path or cfg_path == "debug/gemini_request_ledger.json" or "round19" in cfg_path:
-            base = os.path.join("artifacts", "round20")
+        """Derive ledger file path from RuntimeConfig.ledger_path.
+
+        Returns the configured path as-is if the job_id is already part of the filename.
+        Otherwise, appends the job_id before the extension.
+        C?m: no literal 'round19'/'round20'/'round21' in src/.
+        """
+        cfg_path = self._config.ledger_path
+        if not cfg_path or cfg_path == "debug/gemini_request_ledger.json":
+            # Default fallback
+            base = os.path.join("debug")
             os.makedirs(base, exist_ok=True)
             return os.path.join(base, f"ledger_{job_id}.jsonl")
-        return cfg_path
+
+        # If job_id is already in the filename, return as-is
+        base_name = os.path.basename(cfg_path)
+        if job_id.lower() in base_name.lower():
+            dir_path = os.path.dirname(cfg_path)
+            if dir_path:
+                os.makedirs(dir_path, exist_ok=True)
+            return cfg_path
+
+        # Otherwise, append job_id before extension
+        dir_path = os.path.dirname(cfg_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
+        name, ext = os.path.splitext(base_name)
+        fname = f"{name}_{job_id}{ext}"
+        return os.path.join(dir_path, fname) if dir_path else fname
 
     @property
     def scheduler(self) -> RequestScheduler:

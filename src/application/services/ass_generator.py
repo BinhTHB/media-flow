@@ -116,7 +116,7 @@ class ASSGenerator:
                     rf"{{\an7\pos({round(left)},{round(top)})"
                     rf"\p1\1c&H000000&\1a&H00&}}"
                     f"m 0 0 l {width} 0 l {width} {height} l 0 {height}"
-                    rf"{{\p0}} ; provenance={r.classification_id}"
+                    rf"{{\p0}}{{provenance={r.classification_id}}}"
                 )
 
         for index, seg in enumerate(segments):

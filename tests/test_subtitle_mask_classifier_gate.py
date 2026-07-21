@@ -186,3 +186,36 @@ def test_region_provider_uses_real_frame_indices_for_sparse_bundle(tmp_path):
     assert result
     assert result[0].start_time == 0.0
     assert result[0].end_time > 4 / 30.0
+
+
+def test_provenance_not_rendered_on_screen():
+    segment = Segment(
+        id="s", start=0.0, end=1.0, text="source", translated_text="dich", source="ocr"
+    )
+    confirmed = SubtitleRegion(
+        0.0, 1.0, 0.1, 0.7, 0.4, 0.1, 0.9,
+        classification_id="classification:T00001",
+        is_subtitle=True,
+        classifier_model="test-model",
+        track_id="T00001",
+        proposal_ids=["F00000_C01"],
+    )
+
+    ass = ASSGenerator.generate(
+        [segment], SubtitleStyle(), play_res_x=720, play_res_y=1280, mask_regions=[confirmed]
+    )
+
+    mask_lines = [
+        line for line in ass.splitlines()
+        if line.startswith("Dialogue: 0,") and "m 0 0" in line
+    ]
+    assert len(mask_lines) == 1
+    assert "provenance=classification:T00001" in mask_lines[0]
+    # Split on the drawing close tag to check what comes after
+    split_text = r'{\p0}'
+    parts = mask_lines[0].split(split_text)
+    assert len(parts) > 1, f"Could not split on {split_text!r} in: {mask_lines[0]}"
+    after_p0 = parts[1].strip()
+    if after_p0:
+        # Anything after {\\p0} must be inside {} brackets (ASS comment block)
+        assert after_p0.startswith("{") and after_p0.endswith("}"),             f"Found visible text after {{@}}p0: {after_p0!r}"

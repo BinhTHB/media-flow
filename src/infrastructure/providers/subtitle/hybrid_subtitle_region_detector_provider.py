@@ -21,6 +21,10 @@ from src.infrastructure.benchmark.hybrid_subtitle.core import (
 from src.infrastructure.benchmark.hybrid_subtitle.runner import (
     classify_track_by_position,
 )
+from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
+    HybridSubtitleClassifier,
+    HeuristicSubtitleClassifier,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +55,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  min_confidence: float = 0.30,
                  proposal_provider: Optional[Any] = None,
                  device: str = "cpu",
-                 semantic_verifier: Optional[Any] = None) -> None:
+                 semantic_verifier: Optional[Any] = None,
+                 classifier: Optional[Any] = None) -> None:
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -64,6 +69,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._proposal = proposal_provider  # lazy-init trong detect_regions
         self._device = device
         self._semantic_verifier = semantic_verifier
+        self._classifier = classifier  # set by provider_registry or test
         self.proposal_bundle: ProposalBundle | None = None
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
@@ -256,84 +262,81 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         return regions
 
     def _verifier_decision_for_track(self, track: Dict, frames_by_index: Dict[int, Frame], H: int) -> Dict[str, Any] | None:
-        """Evaluate the track against the verifier.
+        """Evaluate the track using the hybrid classifier (heuristic + optional Gemini).
+
         Returns a decision dict if confirmed as subtitle, or None to fail-closed (discard).
+        Decision sources are tracked via provenance:
+          - heuristic_bottom_stable: confirmed by position+duration heuristic
+          - gemini_verified: confirmed by Gemini after heuristic borderline
+          - heuristic_top_or_short: heuristic non-subtitle (no Gemini fallback)
         """
-        # If no semantic verifier configured, rule heuristic ONLY performs a passive review.
-        # It does NOT confirm for production masking (to avoid overmasking from pure heuristic).
-        if self._semantic_verifier is None:
+        # If no classifier configured, fail-closed
+        if self._classifier is None and self._semantic_verifier is None:
             return None
 
-        try:
-            groups = track["groups"]
-            if len(groups) <= 3:
-                rep_groups = groups
-            else:
-                rep_groups = [groups[0], groups[len(groups) // 2], groups[-1]]
-
-            candidate_ids = [g["candidate_group_id"] for g in rep_groups]
-            candidate_bboxes = [g["union_bbox_xyxy"] for g in rep_groups]
-            frame_bgr = []
-            for g in rep_groups:
-                fi = g["frame_index"]
-                if self.proposal_bundle is not None:
-                    try:
-                        decoded_frame = self.proposal_bundle.frame_for_index(fi)
-                    except KeyError as exc:
-                        raise RuntimeError(
-                            f"Single-decode bundle is missing frame_index={fi} required by region verifier."
-                        ) from exc
-                    frame_bgr.append(decoded_frame.image)
-                else:
-                    src_frame = frames_by_index.get(fi)
-                    if src_frame is not None:
-                        frame = cv2.imread(src_frame.image_path)
-                        if frame is not None:
-                            frame_bgr.append(frame)
-
-            if not frame_bgr or len(frame_bgr) < len(rep_groups):
-                # Cannot load frames: fail-closed (no mask, loud log).
-                logger.warning(
-                    "LOUD-WARN: region verifier could not load representative frames for track %s. "
-                    "Fail-closed used: track discarded.",
-                    track["track_id"]
-                )
-                return None
-
-            class TrackWrapper:
-                def __init__(self, track_id):
-                    self.track_id = track_id
-
-            track_obj = TrackWrapper(track["track_id"])
-            decisions = self._semantic_verifier.classify_track(
-                track_obj, frame_bgr, candidate_ids, candidate_bboxes
+        # Setup classifier if not already done
+        if self._classifier is None and self._semantic_verifier is not None:
+            from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import HybridSubtitleClassifier
+            self._classifier = HybridSubtitleClassifier(
+                gemini_verifier=self._semantic_verifier,
+                frame_height=H
             )
-            decision_list = decisions.get("decisions", [])
-            valid_candidate_set = set(candidate_ids)
-            for decision in decision_list:
-                if (
-                    decision.get("is_subtitle") is True
-                    and decision.get("candidate_id") in valid_candidate_set
-                ):
-                    return {
-                        "model": decisions.get("model", "unknown"),
-                        "category": decision.get("category", "dialogue_subtitle"),
-                        "confidence": decision.get("confidence", 1.0),
-                    }
 
-            # No positive confirmation for a valid candidate: fail-closed.
+        groups = track.get("groups", [])
+        if not groups:
+            return None
+
+        # Gather representative groups and frames for classification
+        if len(groups) <= 3:
+            rep_groups = groups
+        else:
+            rep_groups = [groups[0], groups[len(groups) // 2], groups[-1]]
+
+        candidate_ids = [g["candidate_group_id"] for g in rep_groups]
+        candidate_bboxes = [g["union_bbox_xyxy"] for g in rep_groups]
+        frame_bgr = []
+        for g in rep_groups:
+            fi = g["frame_index"]
+            if self.proposal_bundle is not None:
+                try:
+                    decoded_frame = self.proposal_bundle.frame_for_index(fi)
+                    frame_bgr.append(decoded_frame.image)
+                except KeyError as exc:
+                    raise RuntimeError(
+                        f"Single-decode bundle is missing frame_index={fi}."
+                    ) from exc
+            else:
+                src_frame = frames_by_index.get(fi)
+                if src_frame is not None:
+                    frame = cv2.imread(src_frame.image_path)
+                    if frame is not None:
+                        frame_bgr.append(frame)
+
+        if not frame_bgr:
+            logger.warning("LOUD-WARN: no frames for track %s, fail-closed", track["track_id"])
+            return None
+
+        # Use hybrid classifier
+        result = self._classifier.classify_track(
+            track, frame_bgr, candidate_ids, candidate_bboxes
+        )
+
+        decisions = result.get("decisions", [])
+        if not decisions:
             logger.warning(
                 "LOUD-WARN: region verifier did not confirm any valid candidate for track %s. "
                 "Fail-closed used: track discarded.",
                 track["track_id"]
             )
             return None
-        except Exception as exc:
-            # Exception in verifier: fail-closed, loud-warning.
-            logger.warning(
-                "LOUD-WARN: region verifier failed with exception for track %s. "
-                "Fail-closed used: track discarded. Error: %s",
-                track["track_id"],
-                str(exc)
-            )
-            return None
+
+        # Return the first confirmed subtitle decision
+        for d in decisions:
+            if d.get("is_subtitle") is True:
+                return {
+                    "model": result.get("model", "unknown"),
+                    "category": d.get("category", "dialogue_subtitle"),
+                    "confidence": d.get("confidence", 1.0),
+                    "provenance": d.get("provenance", "unknown"),
+                }
+        return None
