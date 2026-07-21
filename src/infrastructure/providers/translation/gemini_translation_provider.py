@@ -51,6 +51,7 @@ class GeminiTranslationProvider(TranslationProvider):
                 GeminiRequest(
                     contents=[{"parts": [{"text": prompt}]}],
                     generation_config={"temperature": 0.3},
+                    source_kind="translation",
                 )
             )
             return self._parse_numbered_lines(response.text.strip(), texts)
