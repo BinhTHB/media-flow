@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import cv2
 
+from src.application.dto.proposal_bundle import ProposalBundle
 from src.application.ports.subtitle_region_detector_provider import (
     SubtitleRegionDetectorProvider,
 )
@@ -28,6 +29,12 @@ def _clamp01(v: float) -> float:
 
 class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
     """YOLO proposal -> grouping -> tracking -> heuristic vi tri.
+
+    Supports two modes:
+    1. **Legacy** (``proposal_bundle`` is None): calls ``detect_images``
+       on the interval-extracted frame paths, triggering a separate YOLO pass.
+    2. **Single-decode** (``proposal_bundle`` is set): reuses the pre-computed
+       detections and frame images from one YOLO-on-video pass.
 
     proposal_provider cho phep inject fake trong test (khong can best.pt).
     YOLO that chi duoc khoi tao lazy trong detect_regions.
@@ -55,25 +62,34 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._proposal = proposal_provider  # lazy-init trong detect_regions
         self._device = device
         self._semantic_verifier = semantic_verifier
+        self.proposal_bundle: ProposalBundle | None = None
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
             return []
 
-        # lazy-init YOLO
-        if self._proposal is None:
-            from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
-            self._proposal = YoloTextProposalProvider(
-                weights_path=self._weights,
-                conf=self._conf,
-                iou=self._iou,
-                imgsz=self._imgsz,
-                device=self._device,
-            )
-
-        # 1) detect images
-        image_paths = [f.image_path for f in frames]
-        dets = self._proposal.detect_images(image_paths)
+        # 1) Get proposals
+        if self.proposal_bundle is not None:
+            # Mode 2: Single-decode Proposal Bundle
+            dets = self.proposal_bundle.detections
+            H = self.proposal_bundle.video_height
+            W = self.proposal_bundle.video_width
+        else:
+            # Mode 1: Legacy Frame-extraction path
+            # lazy-init YOLO
+            if self._proposal is None:
+                from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
+                self._proposal = YoloTextProposalProvider(
+                    weights_path=self._weights,
+                    conf=self._conf,
+                    iou=self._iou,
+                    imgsz=self._imgsz,
+                    device=self._device,
+                )
+            image_paths = [f.image_path for f in frames]
+            dets = self._proposal.detect_images(image_paths)
+            img = cv2.imread(frames[0].image_path)
+            H, W = img.shape[:2]
 
         # Discard proposals below the minimum confidence threshold before grouping.
         # Otherwise giant low-confidence noise boxes (e.g. 0.053) sort first and swallow
@@ -101,10 +117,6 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         )
         if not tracks:
             return []
-
-        # get frame dimensions
-        img = cv2.imread(frames[0].image_path)
-        H, W = img.shape[:2]
 
         regions: List[SubtitleRegion] = []
         for track in tracks:
@@ -219,12 +231,23 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             candidate_bboxes = [g["union_bbox_xyxy"] for g in rep_groups]
             frame_bgr = []
             for g in rep_groups:
-                frame = cv2.imread(frames[g["frame_index"]].image_path)
-                if frame is None:
-                    continue
-                frame_bgr.append(frame)
+                fi = g["frame_index"]
+                if self.proposal_bundle is not None:
+                    try:
+                        decoded_frame = self.proposal_bundle.frame_for_index(fi)
+                    except KeyError as exc:
+                        raise RuntimeError(
+                            f"Single-decode bundle is missing frame_index={fi} required by region verifier."
+                        ) from exc
+                    # No seek/disk fallback: this must be the exact YOLO orig_img.
+                    frame_bgr.append(decoded_frame.image)
+                else:
+                    if fi < len(frames):
+                        frame = cv2.imread(frames[fi].image_path)
+                        if frame is not None:
+                            frame_bgr.append(frame)
 
-            if not frame_bgr:
+            if not frame_bgr or len(frame_bgr) < len(rep_groups):
                 # Could not load any frame; fall back to rule-based.
                 return self._rule_accepts_track(track, representative_group_ids(track, 5), H)
 

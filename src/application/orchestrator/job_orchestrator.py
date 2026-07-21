@@ -36,6 +36,7 @@ from src.application.services.final_timeline_builder import FinalTimelineBuilder
 from src.application.services.final_render_manifest_service import FinalRenderManifestService
 from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_region import SubtitleRegion
+from src.domain.entities.frame import Frame
 from src.application.services.artifact_cache_validator import ArtifactCacheValidator
 from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
 
@@ -172,16 +173,69 @@ class JobOrchestrator:
                     )
                 logger.done()
 
-            if ((job.features.ocr and controls.run_ocr and not direct_video_ocr) or (
-                job.features.subtitle_placement and job.features.subtitle
-                and controls.run_subtitle_region_detection
-                and not direct_video_ocr
-            )):
-                frames = self.extract_frames_uc.execute(
-                    job.input_video,
-                    self.frame_interval,
-                    self.artifact_provider.frames_dir(job.job_id),
+            needs_frames = (
+                (job.features.ocr and controls.run_ocr and not direct_video_ocr)
+                or (
+                    job.features.subtitle_placement
+                    and job.features.subtitle
+                    and controls.run_subtitle_region_detection
+                    and not direct_video_ocr
                 )
+            )
+            if needs_frames:
+                ocr_provider = self.detect_onscreen_text_uc.ocr_provider
+                region_provider = self.detect_subtitle_region_uc.provider
+                # Unwrap FallbackOCRProvider wrappers to reach the configured
+                # hybrid provider without treating the wrapper as a credential failure.
+                ocr_inner = getattr(ocr_provider, "primary", ocr_provider)
+                region_inner = getattr(region_provider, "primary", region_provider)
+                is_hybrid_ocr = ocr_inner.__class__.__name__ == "HybridGeminiOCRProvider"
+                is_hybrid_region = (
+                    region_inner.__class__.__name__ == "HybridSubtitleRegionDetectorProvider"
+                )
+
+                if is_hybrid_ocr or is_hybrid_region:
+                    proposal = getattr(ocr_inner, "_proposal", None)
+                    if proposal is None:
+                        proposal = getattr(region_inner, "_proposal", None)
+                    if proposal is None:
+                        raise ValidationError(
+                            "Hybrid OCR or Region Detector is enabled but YOLO text proposal provider is not configured. "
+                            "Ensure the proposal provider is wired correctly in ProviderFactory."
+                        )
+                    if is_hybrid_ocr:
+                        ocr_inner._proposal = proposal
+                    if is_hybrid_region:
+                        region_inner._proposal = proposal
+
+                    audit_logger.info("[Proposal] Single-decode YOLO-on-video for job=%s", job.job_id)
+                    bundle = proposal.detect_video(
+                        job.input_video,
+                        stride=1,
+                        output_dir=self.artifact_provider.frames_dir(job.job_id),
+                        min_pixel_std=1.0,
+                    )
+                    frames = [
+                        Frame(timestamp=df.timestamp_sec, image_path=df.image_path or "")
+                        for df in bundle.frames
+                    ]
+                    if is_hybrid_ocr:
+                        ocr_inner.proposal_bundle = bundle
+                    if is_hybrid_region:
+                        region_inner.proposal_bundle = bundle
+                    self.artifact_provider.write_json(
+                        os.path.join(
+                            self.artifact_provider.debug_dir(job.job_id),
+                            "proposal_bundle_metadata.json",
+                        ),
+                        bundle.to_metadata(),
+                    )
+                else:
+                    frames = self.extract_frames_uc.execute(
+                        job.input_video,
+                        self.frame_interval,
+                        self.artifact_provider.frames_dir(job.job_id),
+                    )
 
             if job.features.ocr and controls.run_ocr and not controls.reuse_ocr_cache:
                 started = time.monotonic()

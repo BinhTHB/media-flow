@@ -36,9 +36,10 @@ def test_yolo_multiple_text_and_cpu_fallback():
         vid_path = os.path.join(tmpdir, "test.mp4")
         create_synthetic_video(vid_path, [frame1, frame1])
 
-        # Test CPU fallback automatically
-        provider = YoloTextProposalProvider(weights_path="best.pt", conf=0.01, imgsz=320, device="cuda")
-        assert provider._device in ["cpu", "cuda"]
+        # CPU is the explicit opt-in path for non-GPU environments.
+        # GPU without CUDA raises RuntimeError (fail-loud) — not auto-fallback.
+        provider = YoloTextProposalProvider(weights_path="best.pt", conf=0.01, imgsz=320, device="cpu")
+        assert provider._device == "cpu"
 
         dets = provider.detect(vid_path)
         assert len(dets) > 0

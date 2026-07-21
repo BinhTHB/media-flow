@@ -1,10 +1,10 @@
-"""OCR that reuses hybrid YOLO and Gemini verifier transcriptions."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 
+from src.application.dto.proposal_bundle import ProposalBundle
 from src.application.ports.ocr_provider import OCRProvider
 from src.domain.entities.frame import Frame
 from src.domain.entities.segment import Segment
@@ -15,7 +15,17 @@ from src.infrastructure.benchmark.hybrid_subtitle.core import (
 
 
 class HybridGeminiOCRProvider(OCRProvider):
-    """Emit OCR segments from accepted hybrid-verifier transcriptions."""
+    """Emit OCR segments from accepted hybrid-verifier transcriptions.
+
+    Supports two modes:
+    1. **Legacy** (``proposal_bundle`` is None): calls ``detect_images``
+       on the interval-extracted frame paths, triggering a separate YOLO pass.
+    2. **Single-decode** (``proposal_bundle`` is set): reuses the pre-computed
+       detections and frame images from one YOLO-on-video pass,
+       avoiding a second decode + predict.
+
+    Set ``proposal_bundle`` before calling ``detect_text()`` to use mode 2.
+    """
 
     def __init__(
         self,
@@ -30,14 +40,25 @@ class HybridGeminiOCRProvider(OCRProvider):
         self._min_confidence = min_confidence
         self._track_iou_threshold = track_iou_threshold
         self._track_max_gap_frames = track_max_gap_frames
+        self.proposal_bundle: ProposalBundle | None = None
 
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
         if not frames or self._semantic_verifier is None:
             return []
-        detections = [
-            item for item in self._proposal.detect_images([frame.image_path for frame in frames])
-            if float(item.get("confidence", 0.0)) >= self._min_confidence
-        ]
+
+        if self.proposal_bundle is not None:
+            # Mode 2: Single-decode Proposal Bundle
+            detections = [
+                d for d in self.proposal_bundle.detections
+                if float(d.get("confidence", 0.0)) >= self._min_confidence
+            ]
+        else:
+            # Mode 1: Legacy frame-extraction path
+            detections = [
+                item for item in self._proposal.detect_images([frame.image_path for frame in frames])
+                if float(item.get("confidence", 0.0)) >= self._min_confidence
+            ]
+
         by_frame: Dict[int, List[Dict[str, Any]]] = {}
         for detection in detections:
             by_frame.setdefault(int(detection["frame_index"]), []).append(detection)
@@ -62,11 +83,26 @@ class HybridGeminiOCRProvider(OCRProvider):
     ) -> Optional[Segment]:
         groups = track["groups"]
         representative = groups if len(groups) <= 3 else [groups[0], groups[len(groups) // 2], groups[-1]]
-        images = [
-            image for group in representative
-            if (image := cv2.imread(frames[group["frame_index"]].image_path)) is not None
-        ]
-        if not images:
+
+        images = []
+        for group in representative:
+            fi = group["frame_index"]
+            if self.proposal_bundle is not None:
+                try:
+                    decoded_frame = self.proposal_bundle.frame_for_index(fi)
+                except KeyError as exc:
+                    raise RuntimeError(
+                        f"Single-decode bundle is missing frame_index={fi} required by OCR track."
+                    ) from exc
+                # No seek/disk fallback: this must be the exact YOLO orig_img.
+                images.append(decoded_frame.image)
+            else:
+                if fi < len(frames):
+                    img = cv2.imread(frames[fi].image_path)
+                    if img is not None:
+                        images.append(img)
+
+        if not images or len(images) < len(representative):
             return None
         candidate_ids = [group["candidate_group_id"] for group in representative]
         candidate_bboxes = [group["union_bbox_xyxy"] for group in representative]
