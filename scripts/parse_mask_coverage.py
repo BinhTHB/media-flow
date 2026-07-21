@@ -346,18 +346,30 @@ def main() -> None:
     ap.add_argument("--width", type=int, help="Override width")
     ap.add_argument("--height", type=int, help="Override height")
     ap.add_argument("--compare", nargs=2, metavar=("BASELINE", "NEW"), help="Compare two ASS files")
-    ap.add_argument("--padding", type=float, default=0.08, help="Padding seconds for ± frame margin")
+    ap.add_argument("--padding", type=float, default=0.0, help="Optional additional padding seconds")
+    ap.add_argument("--output", type=Path, help="Write machine-readable JSON to this path")
     args = ap.parse_args()
 
     if args.compare:
         compare(Path(args.compare[0]), Path(args.compare[1]), args.video)
         return
 
-    if not args.video or not args.ass:
+    if not args.ass:
         ap.print_help()
         return
 
-    geo = get_video_geometry(args.video)
+    if args.video:
+        geo = get_video_geometry(args.video)
+    elif None not in (args.width, args.height, args.fps, args.frames):
+        geo = {
+            "width": args.width,
+            "height": args.height,
+            "fps": args.fps,
+            "frame_count": args.frames,
+        }
+    else:
+        ap.error("provide video or all of --width, --height, --fps, and --frames")
+
     if args.fps:
         geo["fps"] = args.fps
     if args.frames is not None:
@@ -368,6 +380,8 @@ def main() -> None:
         geo["height"] = args.height
 
     result = compute_mask_coverage(Path(args.ass), geo, padding_seconds=args.padding)
+    if args.output:
+        args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(result, indent=2, ensure_ascii=False))
     m = result["union_mask_area_pct"]
     b = result["active_mask_boxes_per_frame"]
