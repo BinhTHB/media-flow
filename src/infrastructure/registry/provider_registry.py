@@ -53,7 +53,7 @@ def _create_hybrid_gemini_ocr(options):
 
     runtime = options.get("runtime")
     model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
-    verifier = GeminiTrackVerifier(runtime.get_client(model=model), model=model) if runtime else None
+    verifier = GeminiTrackVerifier(runtime, model=model) if runtime else None
     proposal = YoloTextProposalProvider(
         weights_path=options.get("weights", "best.pt"),
         conf=options.get("conf", 0.05),
@@ -80,8 +80,7 @@ def _create_hybrid_yolo(options):
         # Lazily import to keep the registry import-light.
         from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiTrackVerifier
         model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
-        client = runtime.get_client(model=model)
-        semantic_verifier = GeminiTrackVerifier(client, model=model)
+        semantic_verifier = GeminiTrackVerifier(runtime, model=model)
 
     return HybridSubtitleRegionDetectorProvider(
         weights=options.get("weights", "best.pt"),

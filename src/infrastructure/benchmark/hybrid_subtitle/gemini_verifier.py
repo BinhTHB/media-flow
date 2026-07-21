@@ -64,8 +64,14 @@ class GeminiTrackVerifier:
     validate_gemini_decision rejects bbox keys in responses.
     """
 
-    def __init__(self, runtime_client, model: str = DEFAULT_GEMINI_MODEL, job_id: str = "default"):
-        self._client = runtime_client
+    def __init__(self, runtime_or_client, model: str = DEFAULT_GEMINI_MODEL, job_id: str = "default"):
+        from src.infrastructure.gemini.runtime import GeminiRuntime
+        if isinstance(runtime_or_client, GeminiRuntime):
+            self._runtime: GeminiRuntime = runtime_or_client
+            self._cached_client = None
+        else:
+            self._runtime = None
+            self._cached_client = runtime_or_client
         self._model = model
         self._job_id = job_id
         # Diagnostic counters for A2 / STEP F audit.
@@ -75,6 +81,12 @@ class GeminiTrackVerifier:
         self.responses_parsed_ok: int = 0
         self.parse_failures: int = 0
         self.fail_open_count: int = 0
+
+    def _resolve_client(self):
+        """Get a GeminiClient, resolving lazily if we hold a GeminiRuntime reference."""
+        if self._runtime is not None:
+            return self._runtime.get_client(model=self._model)
+        return self._cached_client
 
     # ----- classify_track (original GeminiSubtitleSemanticVerifier path) -----
 
@@ -111,7 +123,7 @@ class GeminiTrackVerifier:
                 api_surface="benchmark",
             )
             self.requests_sent += 1
-            resp = self._client.generate_content(req, use_cache=True)
+            resp = self._resolve_client().generate_content(req, use_cache=True)
             if getattr(resp, "cache_hit", False):
                 self.cache_hits += 1
             text = resp.text if hasattr(resp, "text") else ""
@@ -266,7 +278,7 @@ class GeminiTrackVerifier:
                 source_kind="benchmark_subtitle_verifier",
                 api_surface="benchmark",
             )
-            resp = self._client.generate_content(req, use_cache=True)
+            resp = self._resolve_client().generate_content(req, use_cache=True)
             text = resp.text if hasattr(resp, "text") else ""
             parsed = json.loads(text)
             validated = validate_gemini_decision(parsed, track["track_id"], set(candidate_ids))
