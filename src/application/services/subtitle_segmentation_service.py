@@ -108,6 +108,11 @@ class SubtitleSegmentationService:
                 current.append(token)
         if current:
             chunks.append(" ".join(current))
+        if len(chunks) > 1 and len(chunks[-1].split()) == 1:
+            previous_tokens = chunks[-2].split()
+            if len(previous_tokens) > 1:
+                chunks[-2] = " ".join(previous_tokens[:-1])
+                chunks[-1] = f"{previous_tokens[-1]} {chunks[-1]}"
         return chunks
 
     def _improve_boundaries(self, chunks: list[str]) -> list[str]:
