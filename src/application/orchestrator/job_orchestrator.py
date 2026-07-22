@@ -172,6 +172,10 @@ class JobOrchestrator:
                         transcript_path, [s.to_dict() for s in speech_segments]
                     )
                 logger.done()
+                if not speech_segments:
+                    raise ValidationError(
+                        "Speech-to-text was requested but produced no transcript segments."
+                    )
 
             needs_frames = (
                 (job.features.ocr and controls.run_ocr and not direct_video_ocr)
@@ -223,6 +227,15 @@ class JobOrchestrator:
                         ocr_inner.proposal_bundle = bundle
                     if is_hybrid_region:
                         region_inner.proposal_bundle = bundle
+                    if job.features.speech_to_text:
+                        if is_hybrid_ocr:
+                            ocr_inner.set_speech_segments(
+                                speech_segments, video_duration
+                            )
+                        if is_hybrid_region:
+                            region_inner.set_speech_segments(
+                                speech_segments, video_duration
+                            )
                     self.artifact_provider.write_json(
                         os.path.join(
                             self.artifact_provider.debug_dir(job.job_id),

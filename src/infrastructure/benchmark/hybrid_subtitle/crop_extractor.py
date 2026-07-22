@@ -100,3 +100,17 @@ class TrackCropExtractor:
                 "last_center": (lc_x, lc_y),
             },
         }
+
+    @staticmethod
+    def add_behavior_metadata(
+        evidence: Dict[str, Any], behavior: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        evidence["trajectory"].update(
+            {
+                "speech_overlap_ratio": float(
+                    behavior.get("speech_overlap_ratio", 0.0)
+                ),
+                "coverage_ratio": float(behavior.get("coverage_ratio", 0.0)),
+            }
+        )
+        return evidence

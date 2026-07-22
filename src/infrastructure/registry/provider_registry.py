@@ -74,7 +74,7 @@ def _create_hybrid_gemini_ocr(options):
     return HybridGeminiOCRProvider(
         proposal_provider=proposal,
         semantic_verifier=verifier,
-        min_confidence=float(options.get("min_confidence", 0.45)),
+        min_confidence=float(options.get("min_confidence", 0.40)),
         crop_batch_classifier=crop_batch_classifier,
     )
 
@@ -114,7 +114,7 @@ def _create_hybrid_yolo(options):
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
-        min_confidence=float(options.get("min_confidence", 0.45)),
+        min_confidence=float(options.get("min_confidence", 0.40)),
         device=options.get("device", "cpu"),
         semantic_verifier=semantic_verifier,
         crop_batch_classifier=crop_batch_classifier,

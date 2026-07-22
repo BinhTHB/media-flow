@@ -74,6 +74,12 @@ providers:
   subtitle:
     mock: {}
 
+  speech:
+    faster-whisper:
+      model_size: base
+      device: cuda
+      compute_type: float16
+
   ocr:
     mock: {}
     paddle:
@@ -84,7 +90,7 @@ providers:
       conf: 0.05
       iou: 0.70
       imgsz: 1024
-      min_confidence: 0.45
+      min_confidence: 0.40
       device: cuda
       gemini_model: gemini-3.5-flash-lite
       gemini_verify: true
@@ -108,7 +114,7 @@ providers:
       conf: 0.05
       iou: 0.70
       imgsz: 1024
-      min_confidence: 0.45
+      min_confidence: 0.40
       device: cuda
       gemini_verify: true
       gemini_model: gemini-3.5-flash-lite

@@ -25,6 +25,9 @@ from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
     HybridSubtitleClassifier,
     HeuristicSubtitleClassifier,
 )
+from src.infrastructure.benchmark.hybrid_subtitle.behavior_discriminator import (
+    TrackBehaviorDiscriminator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +55,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  track_iou_threshold: float = 0.25,
                  track_max_gap_frames: int = 5,
                  bottom_ratio_threshold: float = 0.65,
-                 min_confidence: float = 0.45,
+                 min_confidence: float = 0.40,
                  proposal_provider: Optional[Any] = None,
                  device: str = "cpu",
                  semantic_verifier: Optional[Any] = None,
@@ -72,7 +75,16 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._semantic_verifier = semantic_verifier
         self._classifier = classifier  # set by provider_registry or test
         self._crop_batch_classifier = crop_batch_classifier
+        self._behavior_discriminator: TrackBehaviorDiscriminator | None = None
+        self.behavior_ledger: list[dict[str, Any]] = []
         self.proposal_bundle: ProposalBundle | None = None
+
+    def set_speech_segments(
+        self, speech_segments: list[Any], video_duration_seconds: float
+    ) -> None:
+        self._behavior_discriminator = TrackBehaviorDiscriminator(
+            speech_segments, video_duration_seconds
+        )
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
@@ -274,17 +286,36 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         heuristic = HeuristicSubtitleClassifier()
         uncertain = []
         canaries = []
+        self.behavior_ledger = []
         for track in tracks:
             result = heuristic.classify(track, frame_height)
             if result.is_subtitle:
                 continue
+            if self._behavior_discriminator is not None:
+                evidence = self._behavior_discriminator.evaluate(track)
+                self.behavior_ledger.append(
+                    {"track_id": track["track_id"], **evidence.__dict__}
+                )
+                if evidence.rule_fired:
+                    continue
+                track = {**track, "behavior": evidence.__dict__}
             duration_ms = (
                 track["groups"][-1]["timestamp_ms"]
                 - track["groups"][0]["timestamp_ms"]
             )
+            bbox = (
+                track.get("median_bbox_xyxy")
+                or track.get("temporal_union_bbox_xyxy")
+                or track["groups"][-1].get("union_bbox_xyxy", [])
+            )
+            bottom_ratio = bbox[3] / frame_height if len(bbox) == 4 else 0.0
+            if (
+                duration_ms >= 3000
+                and bottom_ratio < HeuristicSubtitleClassifier.BOTTOM_RATIO_THRESHOLD
+            ):
+                canaries.append(track)
+                continue
             if len(track["groups"]) < 2 or duration_ms < 300:
-                bbox = track.get("median_bbox_xyxy") or []
-                bottom_ratio = bbox[3] / frame_height if len(bbox) == 4 else 0.0
                 if bottom_ratio < HeuristicSubtitleClassifier.BOTTOM_RATIO_THRESHOLD:
                     canaries.append(track)
                 # Short bottom tracks are handled by the semantic fallback.

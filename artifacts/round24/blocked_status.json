@@ -1,0 +1,18 @@
+{
+  "status": "BLOCKED",
+  "reason": "Round 24 implementation and offline evidence are complete, but no live E2E was run because final canary/holdout and local-Paddle static-content gates are not implemented. Claims for final precision, recall, request ledger, render verification, and package verifier are therefore unavailable.",
+  "frozen_gt_sha256": "c60196edaf3d418f89073b05649f68cf37168f4f316d261d09cf6f5d1f27b103",
+  "gt_v2_sha256": "7952d8d9b6e32b161494d54d733f9e28e3ca307c26a820ef06c06544f27b537b",
+  "gt_v2_1_sha256": "f8e03c1d2b1bb36e81fb80c7db3f8b27a8e79cf2c40a5b6c45cd47cd62fc6d09",
+  "baseline_round23": {
+    "precision": 0.4048,
+    "recall": 0.8947,
+    "live_requests_claimed": 11,
+    "ocr_stage_seconds": 83.453
+  },
+  "stt_diagnosis": "artifacts/round24/stt_diagnosis.json",
+  "required_final_gate": {
+    "precision_min": 0.85,
+    "recall_min": 0.9
+  }
+}

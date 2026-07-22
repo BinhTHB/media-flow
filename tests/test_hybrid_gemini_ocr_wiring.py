@@ -28,7 +28,7 @@ def test_factory_wires_hybrid_gemini_ocr():
     assert isinstance(provider, HybridGeminiOCRProvider)
     assert provider._semantic_verifier is not None
     assert provider._proposal is not None
-    assert provider._min_confidence == 0.45
+    assert provider._min_confidence == 0.40
 
 
 def test_registry_has_hybrid_gemini():

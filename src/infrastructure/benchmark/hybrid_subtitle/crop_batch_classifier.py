@@ -25,10 +25,12 @@ class CropBatchClassifier:
         gemini_client: Any,
         model: str = "gemini-3.5-flash-lite",
         budget_limit: int = 60,
+        artifact_dir: str | Path = "artifacts/round24",
     ) -> None:
         self.client = gemini_client
         self.model = model
         self.budget_limit = budget_limit
+        self.artifact_dir = Path(artifact_dir)
         self.requests_sent = 0
     def classify_batch(
         self,
@@ -71,6 +73,8 @@ class CropBatchClassifier:
         for t in batch:
             ev = extractor.extract_evidence(t, proposal_bundle)
             if ev:
+                if isinstance(t.get("behavior"), dict):
+                    extractor.add_behavior_metadata(ev, t["behavior"])
                 ev["track_id"] = t["track_id"]
                 evidence_list.append(ev)
 
@@ -92,9 +96,9 @@ class CropBatchClassifier:
         prompt_parts = []
         prompt_text = [
             "You are a vision-language classifier for on-screen text in video crops.",
-            "Classify whether each candidate track is a subtitle.",
-            "Subtitle definition: text representing spoken dialogue, narration, or captions.",
-            "Non-subtitle: logos, UI text, watermarks, scene text, decorative text.",
+            "Default to NOT subtitle unless the complete evidence proves dialogue subtitle.",
+            "A subtitle translates or transcribes spoken dialogue, appears and disappears with dialogue, changes content over time, and is usually one or two lines.",
+            "Never accept a watermark/logo, text embedded in a scene, UI/sticker, karaoke effect, or decorative text as a subtitle.",
             "",
             "Analyze each track using its trajectory metadata and the sequence of crops provided.",
             "Crops are clean unannotated images showing the text region over time.",
@@ -145,7 +149,9 @@ class CropBatchClassifier:
             end_img = img_counter - 1
             prompt_text.append(
                 f"- Track {tid}: bottom_y_ratio={traj['bottom_y_ratio']:.3f}, "
-                f"duration={traj['duration']:.2f}s, displacement={traj['displacement']:.1f}px. "
+                f"duration={traj['duration']:.2f}s, displacement={traj['displacement']:.1f}px, "
+                f"speech_overlap_ratio={traj.get('speech_overlap_ratio', 0.0):.3f}, "
+                f"coverage_ratio={traj.get('coverage_ratio', 0.0):.3f}. "
                 f"Image {start_img} is one clean full-frame context image. "
                 f"Text crops are shown in Image {crop_start_img} to Image {end_img}."
             )
@@ -157,8 +163,8 @@ class CropBatchClassifier:
                 "[",
                 "  {",
                 "    \"track_id\": \"<track_id>\",",
-                "    \"is_subtitle\": true/false,",
-                "    \"category\": \"dialogue_subtitle\" or other allowed category,",
+                "    \"is_subtitle\": true only when category is \"subtitle\",",
+                "    \"category\": \"subtitle\" | \"watermark\" | \"scene_text\" | \"ui\" | \"other\",",
                 "    \"confidence\": 0.0-1.0,",
                 "    \"transcription\": \"extracted text\",",
                 "    \"reason\": \"short explanation\"",
@@ -260,9 +266,8 @@ class CropBatchClassifier:
 
     def _log_ledger(self, resp: Any, batch_size: int, canary_passed: bool) -> None:
         try:
-            ledger_dir = Path("artifacts/round23")
-            ledger_dir.mkdir(parents=True, exist_ok=True)
-            ledger_path = ledger_dir / "crop_classifier_ledger.jsonl"
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            ledger_path = self.artifact_dir / "crop_classifier_ledger.jsonl"
 
             log_entry = {
                 "timestamp": time.time(),
