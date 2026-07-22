@@ -392,7 +392,7 @@ class JobOrchestrator:
                         self.artifact_provider.debug_dir(job.job_id),
                         "subtitle_regions.json",
                     ),
-                    [region.to_dict() for region in regions],
+                    [region.to_dict(include_provenance=True) for region in regions],
                 )
                 self.artifact_provider.write_json(
                     os.path.join(self.artifact_provider.debug_dir(job.job_id), "subtitle_region_cache_metadata.json"),
