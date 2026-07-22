@@ -51,7 +51,7 @@ def _create_ledger_callback(ledger_path: str, job_id: str):
                 "purpose": record.source_kind or "unknown",
                 "model": record.model,
                 "live_or_cache": "cache" if record.cache_hit else "live",
-                "request_id_or_hash": record.request_id or "",
+                "request_id_or_hash": record.request_id or record.media_sha256 or "",
                 "status": "success" if record.success else "error",
                 "tokens": record.total_tokens,
                 "error_msg": record.error_msg or "",
