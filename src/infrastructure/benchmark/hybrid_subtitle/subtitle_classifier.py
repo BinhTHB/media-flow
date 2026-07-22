@@ -158,6 +158,7 @@ class HybridSubtitleClassifier:
                                 "is_subtitle": True,
                                 "category": d.get("category", "dialogue_subtitle"),
                                 "confidence": d.get("confidence", 1.0),
+                                "transcription": d.get("transcription"),
                                 "provenance": "gemini_verified",
                                 "reason": "Gemini confirmed subtitle",
                             }],

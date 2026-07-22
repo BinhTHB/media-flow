@@ -12,6 +12,9 @@ from src.infrastructure.benchmark.hybrid_subtitle.core import (
     build_tracks,
     group_frame_candidates,
 )
+from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
+    HybridSubtitleClassifier,
+)
 
 
 class HybridGeminiOCRProvider(OCRProvider):
@@ -106,8 +109,11 @@ class HybridGeminiOCRProvider(OCRProvider):
             return None
         candidate_ids = [group["candidate_group_id"] for group in representative]
         candidate_bboxes = [group["union_bbox_xyxy"] for group in representative]
-        verdict = self._semantic_verifier.classify_track(
-            _TrackRef(track["track_id"]), images, candidate_ids, candidate_bboxes
+        verdict = HybridSubtitleClassifier(
+            gemini_verifier=self._semantic_verifier,
+            frame_height=images[0].shape[0],
+        ).classify_track(
+            track, images, candidate_ids, candidate_bboxes
         )
         res = _subtitle_transcription_and_confidence(verdict.get("decisions", []))
         text, confidence = res
@@ -137,10 +143,6 @@ class HybridGeminiOCRProvider(OCRProvider):
             metadata={"provider": self.__class__.__name__, "track_id": track["track_id"]},
         )
 
-
-class _TrackRef:
-    def __init__(self, track_id: str) -> None:
-        self.track_id = track_id
 
 
 def _subtitle_transcription_and_confidence(decisions: List[Dict[str, Any]]) -> Tuple[Optional[str], float]:
