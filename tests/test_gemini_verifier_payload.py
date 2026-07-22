@@ -6,7 +6,7 @@ from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiT
 
 
 class _CannedResponse:
-    def __init__(self, text, model="gemini-3.1-flash-lite"):
+    def __init__(self, text, model="gemini-3.5-flash-lite"):
         self.text = text
         self.model = model
         self.cache_hit = False
@@ -46,7 +46,7 @@ def _make_track(track_id, candidate_ids):
 
 def test_classify_track_requests_well_formed_contents_envelope():
     client = FakeGeminiClient()
-    verifier = GeminiTrackVerifier(client, model="gemini-3.1-flash-lite")
+    verifier = GeminiTrackVerifier(client, model="gemini-3.5-flash-lite")
 
     track = _make_track("T1", ["C1"])
     frames = _make_frames(2)
@@ -73,14 +73,14 @@ def test_classify_track_requests_well_formed_contents_envelope():
         assert isinstance(inline.get("data"), str) and len(inline.get("data")) > 0
     # system instruction and model are forwarded
     assert isinstance(req.system_instruction, str) and req.system_instruction.strip()
-    assert req.model == "gemini-3.1-flash-lite"
+    assert req.model == "gemini-3.5-flash-lite"
     # returned decisions parsed from the canned body
     assert any(d.get("is_subtitle") for d in result.get("decisions", []))
 
 
 def test_classify_requests_well_formed_contents_envelope():
     client = FakeGeminiClient()
-    verifier = GeminiTrackVerifier(client, model="gemini-3.1-flash-lite")
+    verifier = GeminiTrackVerifier(client, model="gemini-3.5-flash-lite")
 
     track = {"track_id": "T2", "groups": [{"candidate_group_id": "C1"}]}
     rep_frames = [(0, [10, 20, 30, 40], "first"), (1, [12, 22, 32, 42], "last")]
@@ -111,14 +111,14 @@ def test_classify_requests_well_formed_contents_envelope():
         assert inline.get("mime_type") == "image/png"
         assert isinstance(inline.get("data"), str) and len(inline.get("data")) > 0
     assert isinstance(req.system_instruction, str) and req.system_instruction.strip()
-    assert req.model == "gemini-3.1-flash-lite"
+    assert req.model == "gemini-3.5-flash-lite"
     # the second classify path validates via validate_gemini_decision
     assert "decisions" in result
 
 
 def test_classify_sends_clean_frames_and_bbox_geometry():
     client = FakeGeminiClient()
-    verifier = GeminiTrackVerifier(client, model="gemini-3.1-flash-lite")
+    verifier = GeminiTrackVerifier(client, model="gemini-3.5-flash-lite")
     frame = np.full((80, 140, 3), 17, dtype=np.uint8)
     track = {"track_id": "T2", "groups": [{"candidate_group_id": "C1"}]}
 

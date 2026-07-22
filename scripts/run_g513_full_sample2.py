@@ -23,7 +23,7 @@ from src.infrastructure.gemini.structured_output import parse_structured
 from src.infrastructure.gemini.exceptions import GeminiRateLimitError, ProviderRateLimitError
 from src.shared.exceptions import ProviderError
 
-MODEL = "gemini-3.1-flash-lite"
+MODEL = "gemini-3.5-flash-lite"
 PROVIDER = "gemini_video_direct"
 RENDER_NOT_APPLICABLE = "NOT_APPLICABLE_LOCAL_RENDER"
 VISUAL_QA_STATUSES = {"PASS", "FAIL", "REVIEW_REQUIRED"}

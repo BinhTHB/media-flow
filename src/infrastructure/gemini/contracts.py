@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 ESCALATION_MODEL = "gemini-3.5-flash"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com"
 GEMINI_API_VERSION = "v1beta"
@@ -215,7 +215,7 @@ class GeminiFileClient(Protocol):
 
 
 def default_generation_config() -> Dict[str, Any]:
-    return {"temperature": 0.3}
+    return {}
 
 
 def now_seconds() -> float:

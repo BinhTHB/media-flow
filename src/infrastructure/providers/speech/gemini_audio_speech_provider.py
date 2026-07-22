@@ -40,7 +40,7 @@ class GeminiAudioSpeechProvider(SpeechProvider):
     def __init__(
         self,
         runtime: Optional[GeminiRuntime] = None,
-        model: str = "gemini-3.1-flash-lite",
+        model: str = "gemini-3.5-flash-lite",
         escalation_model: str = "gemini-3.5-flash",
         api_key: Optional[str] = None,
         prompt_version: str = "gemini_asr_v1",

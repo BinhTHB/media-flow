@@ -30,7 +30,7 @@ class GeminiMultiStageOCRProvider(OCRProvider):
     def __init__(
         self,
         runtime: Optional[GeminiRuntime] = None,
-        model: str = "gemini-3.1-flash-lite",
+        model: str = "gemini-3.5-flash-lite",
         stage_a_model: Optional[str] = None,
         stage_b_model: Optional[str] = None,
         stage_c_model: Optional[str] = None,

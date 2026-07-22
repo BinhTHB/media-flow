@@ -41,7 +41,7 @@ def _replay(events):
         ).event_timing_hash(events),
         "provenance": [{
             "stage": "v5_transcription",
-            "model": "gemini-3.1-flash-lite",
+            "model": "gemini-3.5-flash-lite",
             "provider": "gemini_video_direct",
             "schema_version": "v1",
             "validator_version": "v1",
@@ -58,7 +58,7 @@ def _replay(events):
 def _manifest(events):
     return {
         "video_sha256": "video",
-        "identity": {"video_sha256": "video", "model": "gemini-3.1-flash-lite"},
+        "identity": {"video_sha256": "video", "model": "gemini-3.5-flash-lite"},
         "artifacts": {
             "stage_status": {
                 stage: {"status": "COMPLETED_REUSED"}
@@ -200,7 +200,7 @@ def test_g513_translation_checkpoint_reuses_only_complete_provenanced_data():
     checkpoint = {
         "input_v5_sha256": "v5",
         "provenance": [{
-            "stage": "translation", "model": "gemini-3.1-flash-lite",
+            "stage": "translation", "model": "gemini-3.5-flash-lite",
             "provider": "gemini_video_direct", "schema_version": "v1",
             "validator_version": "v1",
         }],

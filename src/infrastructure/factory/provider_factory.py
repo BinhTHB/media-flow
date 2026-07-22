@@ -81,7 +81,7 @@ class ProviderFactory:
             self._gemini_runtime = GeminiRuntime.create(
                 RuntimeConfig(
                     api_key=self.gemini_api_key,
-                    default_model=getattr(config, "model", options.get("model", "gemini-3.1-flash-lite")),
+                    default_model=getattr(config, "model", options.get("model", "gemini-3.5-flash-lite")),
                     cache_dir=getattr(config, "cache_dir", options.get("cache_dir")),
                     cache_namespace=getattr(config, "cache_namespace", options.get("cache_namespace", "shared")),
                     cache_enabled=getattr(config, "cache_enabled", options.get("cache_enabled", True)),

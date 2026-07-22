@@ -358,7 +358,7 @@ def test_count_tokens_and_generate_use_identical_canonical_body(monkeypatch):
 
     client = GeminiClient(api_key="test", transport=Transport(), validate_models=False)
     request = GeminiRequest(
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash-lite",
         contents=[{"parts": [{"text": "prompt"}]}],
         generation_config={"responseMimeType": "application/json"},
         system_instruction="system",
@@ -370,7 +370,7 @@ def test_count_tokens_and_generate_use_identical_canonical_body(monkeypatch):
     count_body = json.loads(payloads[0][1])
     generate_body = json.loads(payloads[1][1])
     counted_request = count_body["generateContentRequest"]
-    assert counted_request.pop("model") == "models/gemini-3.1-flash-lite"
+    assert counted_request.pop("model") == "models/gemini-3.5-flash-lite"
     assert counted_request == generate_body
 
 
@@ -944,7 +944,7 @@ def test_fps_certification_reuse_skips_smoke_request(tmp_path, monkeypatch):
     cert_path.write_text(json.dumps({
         "status": "PARTIAL",
         "project_identity_hash": "cert_hash_123",
-        "model": "gemini-3.1-flash-lite",
+        "model": "gemini-3.5-flash-lite",
         "fps_low": 1,
         "fps_high": 6,
         "fps_low_count_tokens": 1838,
@@ -1046,7 +1046,7 @@ def test_authenticated_preflight_certification_reuse_skips_network(tmp_path):
     cert_path = tmp_path / "g5_authenticated_preflight.json"
     cert_path.write_text(json.dumps({
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "model": "gemini-3.1-flash-lite",
+        "model": "gemini-3.5-flash-lite",
         "http_status": 200,
         "authentication_verdict": "AUTHENTICATED_PREFLIGHT_PASS",
         "credential_identity_hash": hashlib.sha256(key.encode("utf-8")).hexdigest(),
@@ -1071,7 +1071,7 @@ def test_authenticated_preflight_certification_rejects_expired_or_mismatched_ide
     cert_path = tmp_path / "g5_authenticated_preflight.json"
     cert_path.write_text(json.dumps({
         "timestamp": "2020-01-01T00:00:00+00:00",
-        "model": "gemini-3.1-flash-lite",
+        "model": "gemini-3.5-flash-lite",
         "http_status": 200,
         "authentication_verdict": "AUTHENTICATED_PREFLIGHT_PASS",
         "credential_identity_hash": "different",
@@ -1096,7 +1096,7 @@ def test_stop_after_v1_persists_checkpoint_and_resume_skips_v1(tmp_path, monkeyp
     preflight = tmp_path / "preflight.json"
     preflight.write_text(json.dumps({
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "model": "gemini-3.1-flash-lite",
+        "model": "gemini-3.5-flash-lite",
         "http_status": 200,
         "authentication_verdict": "AUTHENTICATED_PREFLIGHT_PASS",
         "credential_identity_hash": hashlib.sha256(key.encode("utf-8")).hexdigest(),
@@ -1105,7 +1105,7 @@ def test_stop_after_v1_persists_checkpoint_and_resume_skips_v1(tmp_path, monkeyp
     fps.write_text(json.dumps({
         "status": "PARTIAL",
         "project_identity_hash": "fps-cert",
-        "model": "gemini-3.1-flash-lite",
+        "model": "gemini-3.5-flash-lite",
         "fps_low": 1,
         "fps_high": 6,
         "fps_low_count_tokens": 1838,
@@ -1246,7 +1246,7 @@ def test_config_loader_reads_direct_video_model_and_rpm_from_config_yml(tmp_path
     config_path.write_text(
         "gemini:\n"
         "  api_key: test_api_key_for_config_loader_1234567890\n"
-        "  direct_video_model: gemini-3.1-flash-lite\n"
+        "  direct_video_model: gemini-3.5-flash-lite\n"
         "  direct_video_active_rpm: 15\n"
         "  direct_video_rpm_safety_ratio: 0.80\n"
         "  direct_video_min_request_spacing_seconds: 5.0\n"
@@ -1258,7 +1258,7 @@ def test_config_loader_reads_direct_video_model_and_rpm_from_config_yml(tmp_path
 
     config = loader.load()
 
-    assert config.gemini.direct_video_model == "gemini-3.1-flash-lite"
+    assert config.gemini.direct_video_model == "gemini-3.5-flash-lite"
     assert config.gemini.direct_video_active_rpm == 15
     assert config.gemini.direct_video_min_request_spacing_seconds == 5.0
     assert config.gemini.direct_video_max_in_flight_requests == 1
@@ -1308,7 +1308,7 @@ def test_persistent_request_ledger_is_reused_across_scheduler_instances(tmp_path
         sleeper=lambda _: None,
         ledger_path=str(ledger_path),
     )
-    first.acquire(tokens=12, model="gemini-3.1-flash-lite")
+    first.acquire(tokens=12, model="gemini-3.5-flash-lite")
     first.release()
 
     resumed = RequestScheduler(
@@ -1333,9 +1333,9 @@ def test_preflight_and_v1_share_generate_rpm_ledger(tmp_path):
         sleeper=lambda _: None,
         ledger_path=str(ledger_path),
     )
-    scheduler.acquire(model="gemini-3.1-flash-lite")  # preflight
+    scheduler.acquire(model="gemini-3.5-flash-lite")  # preflight
     scheduler.release()
-    scheduler.acquire(model="gemini-3.1-flash-lite")  # V1
+    scheduler.acquire(model="gemini-3.5-flash-lite")  # V1
     scheduler.release()
 
     assert scheduler.ledger_state()["rolling_requests"] == 2

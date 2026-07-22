@@ -86,7 +86,7 @@ def main():
     runtime = GeminiRuntime.create(
         RuntimeConfig(api_key=api_key, cache_enabled=True)
     )
-    verifier = GeminiTrackVerifier(runtime.get_client(model="gemini-3.1-flash-lite"), model="gemini-3.1-flash-lite")
+    verifier = GeminiTrackVerifier(runtime.get_client(model="gemini-3.5-flash-lite"), model="gemini-3.5-flash-lite")
 
     provider = HybridSubtitleRegionDetectorProvider(
         weights=str(BEST_PT),

@@ -1,4 +1,4 @@
-﻿"""Scoped live-Gemini semantic smoke test on 10 stratified scenes."""
+"""Scoped live-Gemini semantic smoke test on 10 stratified scenes."""
 from __future__ import annotations
 import sys
 sys.path.insert(0, '.')
@@ -36,7 +36,7 @@ from src.infrastructure.gemini.contracts import GeminiRequest
 
 runtime = GeminiRuntime(RuntimeConfig(api_key=api_key, cache_enabled=False,
                                      max_retries=0, min_request_spacing_seconds=0))
-client = runtime.get_client("gemini-3.1-flash-lite", api_key=api_key)
+client = runtime.get_client("gemini-3.5-flash-lite", api_key=api_key)
 
 # ── stratified 10-scene selection ─────────────────────────────────────────────
 scenes_by_sample = defaultdict(list)
@@ -238,7 +238,7 @@ for idx, scene in enumerate(selected, 1):
     # ── API call ─────────────────────────────────────────────────────────────
     req = GeminiRequest(
         contents=[{"role": "user", "parts": content_parts}],
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash-lite",
         generation_config={"temperature": 0.1, "maxOutputTokens": 2048},
         system_instruction=SYSTEM,
         request_id=sid,
@@ -297,7 +297,7 @@ for idx, scene in enumerate(selected, 1):
         http_status = 0
 
     meta = RequestMeta(
-        scene_id=sid, model="gemini-3.1-flash-lite",
+        scene_id=sid, model="gemini-3.5-flash-lite",
         image_count=len(frames), image_dimensions=dims,
         total_image_payload_bytes=total_bytes,
         latency_ms=lat_ms, attempt_count=attempt,

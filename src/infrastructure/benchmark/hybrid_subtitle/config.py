@@ -1,5 +1,5 @@
 from __future__ import annotations
-DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional

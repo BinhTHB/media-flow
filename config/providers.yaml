@@ -47,7 +47,7 @@ providers:
       target_language: vi
       max_retries: 3
     gemini:
-      model: gemini-3.1-flash-lite
+      model: gemini-3.5-flash-lite
       max_retries: 5
       cache_enabled: true
       cache_dir: .cache/gemini
@@ -63,7 +63,7 @@ providers:
       direct_video_stage_timeout_seconds: 120
       direct_video_no_progress_timeout_seconds: 300
       direct_video_job_timeout_seconds: 600
-      model: gemini-3.1-flash-lite
+      model: gemini-3.5-flash-lite
       max_retries: 5
       cache_enabled: true
       cache_dir: .cache/gemini
@@ -86,7 +86,7 @@ providers:
       imgsz: 1024
       min_confidence: 0.30
       device: cuda
-      gemini_model: gemini-3.1-flash-lite
+      gemini_model: gemini-3.5-flash-lite
       gemini_verify: true
 
   storage:
@@ -111,7 +111,7 @@ providers:
       min_confidence: 0.30
       device: cuda
       gemini_verify: true
-      gemini_model: gemini-3.1-flash-lite
+      gemini_model: gemini-3.5-flash-lite
 
   subtitle_placement_debug:
     pillow: {}

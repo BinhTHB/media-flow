@@ -1,4 +1,4 @@
-﻿import sys, os, base64, json, hashlib
+import sys, os, base64, json, hashlib
 sys.path.insert(0, os.getcwd())
 from pathlib import Path
 
@@ -13,7 +13,7 @@ factory = ProviderFactory(config=config.providers, gemini_config=config.gemini, 
 provider = factory.create_ocr_provider("gemini_video_direct")
 
 # Initialize client using runtime to resolve api_key
-client = provider.runtime.get_client("gemini-3.1-flash-lite")
+client = provider.runtime.get_client("gemini-3.5-flash-lite")
 
 OUT = Path("output/review/gemini_direct_video_g5/sample2/g59/g510_forensic/")
 

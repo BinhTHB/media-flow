@@ -1,4 +1,4 @@
-﻿"""Run G.5.16 Sample4 Gemini-Only End-to-End Validation post-processing.
+"""Run G.5.16 Sample4 Gemini-Only End-to-End Validation post-processing.
 
 Loads Sample4 V1-V5 and Translation checkpoints.
 Generates local ASS file.
@@ -28,7 +28,7 @@ from src.infrastructure.gemini.exceptions import ProviderError
 from src.infrastructure.gemini.structured_output import parse_structured
 from src.interfaces.config.config_loader import ConfigLoader
 
-MODEL = "gemini-3.1-flash-lite"
+MODEL = "gemini-3.5-flash-lite"
 PROVIDER = "gemini_video_direct"
 VISUAL_QA_STATUSES = {"PASS", "FAIL", "REVIEW_REQUIRED"}
 

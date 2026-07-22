@@ -10,7 +10,7 @@ def test_ledger_writes_cache_entry():
         ledger = os.path.join(tmp, "ledger.jsonl")
         callback = _create_ledger_callback(ledger, "job-cache-001")
         record = UsageRecord(
-            model="gemini-3.1-flash-lite",
+            model="gemini-3.5-flash-lite",
             request_id="req-abc123",
             source_kind="benchmark_subtitle_verifier",
             cache_hit=True,
@@ -26,7 +26,7 @@ def test_ledger_writes_cache_entry():
         entry = json.loads(lines[0])
         assert entry["job_id"] == "job-cache-001"
         assert entry["purpose"] == "benchmark_subtitle_verifier"
-        assert entry["model"] == "gemini-3.1-flash-lite"
+        assert entry["model"] == "gemini-3.5-flash-lite"
         assert entry["live_or_cache"] == "cache"
         assert entry["status"] == "success"
         assert entry["tokens"] == 2048
@@ -62,7 +62,7 @@ def test_recorder_callback_wires():
         callback = _create_ledger_callback(ledger, "job-test-42")
         recorder = UsageRecorder(usage_callback=callback)
         recorder.record(UsageRecord(
-            model="gemini-3.1-flash-lite",
+            model="gemini-3.5-flash-lite",
             source_kind="ocr_verifier",
             cache_hit=False,
             total_tokens=512,
@@ -83,7 +83,7 @@ def test_runtime_uses_configured_ledger_and_job_id(tmp_path):
     runtime = GeminiRuntime.create(RuntimeConfig(api_key="fake", ledger_path=str(ledger)))
     runtime.set_job_id("job-round20")
     runtime.usage_recorder.record(UsageRecord(
-        model="gemini-3.1-flash-lite",
+        model="gemini-3.5-flash-lite",
         source_kind="translation",
         job_id="job-round20",
         success=True,
@@ -100,7 +100,7 @@ def test_ledger_writes_image_purpose_with_media_sha256():
         ledger = os.path.join(tmp, "ledger.jsonl")
         callback = _create_ledger_callback(ledger, "job-image-999")
         record = UsageRecord(
-            model="gemini-3.1-flash-lite",
+            model="gemini-3.5-flash-lite",
             request_id=None,
             media_sha256="abcde12345hashvalue",
             source_kind="image",

@@ -31,7 +31,7 @@ from src.infrastructure.gemini.structured_output import parse_structured
 from src.interfaces.config.config_loader import ConfigLoader
 from src.shared.exceptions import ProviderError
 
-MODEL = "gemini-3.1-flash-lite"
+MODEL = "gemini-3.5-flash-lite"
 PROVIDER = "gemini_video_direct"
 AUDITED_IDS = tuple(f"merged_0:e_{index}" for index in range(10, 15))
 _DIALOGUE = re.compile(

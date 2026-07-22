@@ -36,7 +36,7 @@ def _replay(events):
         'v3_event_timing_sha256': event_timing_hash(events),
         'provenance': [{
             'stage': 'v5_transcription',
-            'model': 'gemini-3.1-flash-lite',
+            'model': 'gemini-3.5-flash-lite',
             'provider': 'gemini_video_direct',
             'schema_version': 'v1',
             'validator_version': 'v1',
@@ -52,7 +52,7 @@ def _replay(events):
 def _manifest(events):
     return {
         'video_sha256': 'video_hash',
-        'identity': {'video_sha256': 'video_hash', 'model': 'gemini-3.1-flash-lite'},
+        'identity': {'video_sha256': 'video_hash', 'model': 'gemini-3.5-flash-lite'},
         'artifacts': {
             'stage_status': {
                 'V1': {'status': 'COMPLETED'},
@@ -147,7 +147,7 @@ def test_translation_reuse_complete():
         'input_v5_sha256': 'v5_hash',
         'provenance': [{
             'stage': 'translation',
-            'model': 'gemini-3.1-flash-lite',
+            'model': 'gemini-3.5-flash-lite',
             'provider': 'gemini_video_direct',
             'schema_version': 'v1',
             'validator_version': 'v1',
@@ -170,7 +170,7 @@ def test_translation_reuse_fails_partial():
         'input_v5_sha256': 'v5_hash',
         'provenance': [{
             'stage': 'translation',
-            'model': 'gemini-3.1-flash-lite',
+            'model': 'gemini-3.5-flash-lite',
             'provider': 'gemini_video_direct',
             'schema_version': 'v1',
             'validator_version': 'v1',

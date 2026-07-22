@@ -221,7 +221,7 @@ def test_provider_registry_create():
     assert registry.create("video", "mock", {}).__class__.__name__ == "MockVideoProvider"
     assert registry.create("speech", "mock", {}).__class__.__name__ == "MockSpeechProvider"
     assert registry.create("video", "ffmpeg", {"output_dir": "custom"}).__class__.__name__ == "FFmpegVideoProvider"
-    assert registry.create("translation", "gemini", {}).model == "gemini-3.1-flash-lite"
+    assert registry.create("translation", "gemini", {}).model == "gemini-3.5-flash-lite"
 
 def test_provider_factory_uses_registry():
     import pytest
@@ -255,7 +255,7 @@ def test_gemini_model_is_selected_from_provider_config():
             "providers": {
                 "translation": {
                     "gemini": {
-                        "model": "gemini-3.1-flash-lite",
+                        "model": "gemini-3.5-flash-lite",
                         "max_retries": 5,
                     }
                 }
@@ -266,7 +266,7 @@ def test_gemini_model_is_selected_from_provider_config():
 
     provider = factory.create_translation_provider()
 
-    assert provider.model == "gemini-3.1-flash-lite"
+    assert provider.model == "gemini-3.5-flash-lite"
     assert provider.max_retries == 5
 
 

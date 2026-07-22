@@ -148,7 +148,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     ))
     registry.register("speech", "gemini_audio", lambda opt: GeminiAudioSpeechProvider(
         runtime=opt.get("runtime"),
-        model=opt.get("model", "gemini-3.1-flash-lite"),
+        model=opt.get("model", "gemini-3.5-flash-lite"),
         escalation_model=opt.get("escalation_model", "gemini-3.5-flash"),
         api_key=opt.get("api_key"),
         prompt_version=opt.get("prompt_version", "gemini_asr_v1"),
@@ -170,7 +170,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     ))
     registry.register("translation", "gemini", lambda opt: GeminiTranslationProvider(
         runtime=opt.get("runtime"),
-        model=opt.get("model", "gemini-3.1-flash-lite"),
+        model=opt.get("model", "gemini-3.5-flash-lite"),
         max_retries=int(opt.get("max_retries", 3)),
     ))
 
@@ -218,7 +218,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     registry.register("ocr", "hybrid_gemini", _create_hybrid_gemini_ocr)
     registry.register("ocr", "gemini_vision", lambda opt: GeminiVisionOCRProvider(
         runtime=opt.get("runtime"),
-        model=opt.get("model", "gemini-3.1-flash-lite"),
+        model=opt.get("model", "gemini-3.5-flash-lite"),
         escalation_model=opt.get("escalation_model", "gemini-3.5-flash"),
         api_key=opt.get("api_key"),
         batch_size=int(opt.get("batch_size", 4)),
@@ -232,7 +232,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     ))
     registry.register("ocr", "gemini_vision_multistage", lambda opt: GeminiMultiStageOCRProvider(
         runtime=opt.get("runtime"),
-        model=opt.get("model", "gemini-3.1-flash-lite"),
+        model=opt.get("model", "gemini-3.5-flash-lite"),
         stage_a_model=opt.get("stage_a_model", opt.get("region_detection_model")),
         stage_b_model=opt.get("stage_b_model", opt.get("region_classification_model")),
         stage_c_model=opt.get("stage_c_model", opt.get("crop_recognition_model")),
@@ -251,7 +251,7 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     ))
     registry.register("ocr", "gemini_video_direct", lambda opt: GeminiDirectVideoOCRProvider(
         runtime=opt.get("runtime"),
-        model=opt.get("model", "gemini-3.1-flash-lite"),
+        model=opt.get("model", "gemini-3.5-flash-lite"),
         api_key=opt.get("api_key"),
         discovery_fps=float(opt.get("direct_video_discovery_fps", 6)),
         classification_fps=float(opt.get("direct_video_classification_fps", 6)),

@@ -33,7 +33,7 @@ class GeminiVisionOCRProvider(OCRProvider):
     def __init__(
         self,
         runtime: Optional[GeminiRuntime] = None,
-        model: str = "gemini-3.1-flash-lite",
+        model: str = "gemini-3.5-flash-lite",
         escalation_model: str = "gemini-3.5-flash",
         api_key: Optional[str] = None,
         batch_size: int = 4,

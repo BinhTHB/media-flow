@@ -1,4 +1,4 @@
-
+﻿
 """Hybrid subtitle detector GT benchmark.
 
 Chay HybridSubtitleRegionDetectorProvider tren cac frame co san trong
@@ -20,6 +20,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.domain.entities.frame import Frame
 from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
     HybridSubtitleRegionDetectorProvider,
+)
+from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
+    HybridSubtitleClassifier,
 )
 
 SETS = ["bottom_stable", "moving"]
@@ -67,11 +70,12 @@ def run_set(set_name: str):
         for i in range(len(checkpoints))
     ]
 
-    provider = HybridSubtitleRegionDetectorProvider()
-    regions = provider.detect_regions(frames)
-
     img = cv2.imread(str(frame_files[0]))
     H, W = img.shape[:2]
+    provider = HybridSubtitleRegionDetectorProvider(
+        classifier=HybridSubtitleClassifier(frame_height=H)
+    )
+    regions = provider.detect_regions(frames)
 
     hits = 0
     misses = 0
@@ -145,3 +149,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

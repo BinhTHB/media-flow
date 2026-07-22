@@ -49,7 +49,7 @@ def test_gemini_factory_injects_one_runtime():
             "providers": {
                 "translation": {
                     "gemini": {
-                        "model": "gemini-3.1-flash-lite",
+                        "model": "gemini-3.5-flash-lite",
                         "max_retries": 5,
                     }
                 }

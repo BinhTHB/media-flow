@@ -13,7 +13,7 @@ class GeminiTranslationProvider(TranslationProvider):
     def __init__(
         self,
         runtime: Optional[GeminiRuntime] = None,
-        model: str = "gemini-3.1-flash-lite",
+        model: str = "gemini-3.5-flash-lite",
         max_retries: int = 3,
     ):
         self._runtime = runtime or GeminiRuntime.create()

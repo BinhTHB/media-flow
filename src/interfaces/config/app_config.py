@@ -35,14 +35,14 @@ class ProviderConfig:
 
 @dataclass
 class GeminiConfig:
-    model: str = "gemini-3.1-flash-lite"
-    primary_model: str = "gemini-3.1-flash-lite"
+    model: str = "gemini-3.5-flash-lite"
+    primary_model: str = "gemini-3.5-flash-lite"
     escalation_model: str = "gemini-3.5-flash"
     escalation_enabled: bool = False
-    region_detection_model: str = "gemini-3.1-flash-lite"
-    region_classification_model: str = "gemini-3.1-flash-lite"
-    crop_recognition_model: str = "gemini-3.1-flash-lite"
-    verification_model: str = "gemini-3.1-flash-lite"
+    region_detection_model: str = "gemini-3.5-flash-lite"
+    region_classification_model: str = "gemini-3.5-flash-lite"
+    crop_recognition_model: str = "gemini-3.5-flash-lite"
+    verification_model: str = "gemini-3.5-flash-lite"
     region_window_frame_count: int = 8
     region_window_stride: int = 4
     representative_crop_count: int = 3
@@ -58,7 +58,7 @@ class GeminiConfig:
     validate_models: bool = False
     scheduler: Dict[str, Any] = field(default_factory=dict)
     ocr_strategy: str = "gemini_video_direct"
-    direct_video_model: str = "gemini-3.1-flash-lite"
+    direct_video_model: str = "gemini-3.5-flash-lite"
     direct_video_discovery_fps: float = 6
     direct_video_classification_fps: float = 6
     direct_video_segmentation_fps: float = 12
@@ -96,9 +96,9 @@ class GeminiConfig:
     direct_video_batch_size: int = 10
 
     def __post_init__(self) -> None:
-        if self.model != "gemini-3.1-flash-lite" and self.primary_model == "gemini-3.1-flash-lite":
+        if self.model != "gemini-3.5-flash-lite" and self.primary_model == "gemini-3.5-flash-lite":
             self.primary_model = self.model
-        elif self.primary_model != "gemini-3.1-flash-lite":
+        elif self.primary_model != "gemini-3.5-flash-lite":
             self.model = self.primary_model
 
         if not self.primary_model.strip():
@@ -121,12 +121,12 @@ class GeminiConfig:
             self.crop_recognition_model,
             self.verification_model,
         ):
-            if model != "gemini-3.1-flash-lite":
-                raise ValueError("Phase G.3 OCR stages require gemini-3.1-flash-lite.")
+            if model not in {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite"}:
+                raise ValueError("Phase G.3 OCR stages require a supported Gemini Flash-Lite model.")
         if not self.cache_namespace.strip():
             raise ValueError("Gemini cache_namespace must not be empty.")
-        if self.direct_video_model != "gemini-3.1-flash-lite":
-            raise ValueError("G.5 direct video requires gemini-3.1-flash-lite.")
+        if self.direct_video_model not in {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite"}:
+            raise ValueError("G.5 direct video requires a supported Gemini Flash-Lite model.")
         if self.direct_video_active_rpm <= 0:
             raise ValueError("direct_video_active_rpm must be positive.")
         if not 0 < self.direct_video_rpm_safety_ratio <= 1:

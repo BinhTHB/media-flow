@@ -151,7 +151,7 @@ def test_factory_registers_multistage_provider_with_shared_runtime():
     provider = factory.create_ocr_provider()
     assert isinstance(provider, GeminiMultiStageOCRProvider)
     assert provider.runtime is factory.gemini_runtime
-    assert set(provider.stage_models.values()) == {"gemini-3.1-flash-lite"}
+    assert set(provider.stage_models.values()) == {"gemini-3.5-flash-lite"}
 
 def test_multistage_exposes_serializable_stage_artifacts(tmp_path):
     first = _frame(tmp_path, "first.png", 1.0)

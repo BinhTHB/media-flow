@@ -47,7 +47,7 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
     def __init__(
         self,
         runtime: Optional[GeminiRuntime] = None,
-        model: str = "gemini-3.1-flash-lite",
+        model: str = "gemini-3.5-flash-lite",
         api_key: Optional[str] = None,
         discovery_fps: float = 6,
         classification_fps: float = 6,
@@ -90,8 +90,11 @@ class GeminiDirectVideoOCRProvider(VideoSubtitleOCRProvider):
         stop_after_stage: Optional[str] = None,
         geometry_mode: str = "image",
     ) -> None:
-        if model != "gemini-3.1-flash-lite":
-            raise ValueError("G.5 direct-video OCR requires gemini-3.1-flash-lite.")
+        if model not in {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite"}:
+            raise ValueError(
+                "G.5 direct-video OCR requires gemini-3.1-flash-lite or "
+                "gemini-3.5-flash-lite."
+            )
         if clip_padding_seconds < 0:
             raise ValueError("clip_padding_seconds must be non-negative.")
         if geometry_mode != "image":
