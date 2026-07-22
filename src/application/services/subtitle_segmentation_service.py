@@ -108,7 +108,29 @@ class SubtitleSegmentationService:
                 current.append(token)
         if current:
             chunks.append(" ".join(current))
-        return chunks
+        balanced = self._partition_balanced(tokens, len(chunks))
+        return balanced or chunks
+
+    def _partition_balanced(self, tokens: list[str], chunk_count: int) -> list[str] | None:
+        if chunk_count == 1:
+            text = " ".join(tokens)
+            return [text] if self._fits_subtitle_shape(text) else None
+
+        best = None
+        best_max_length = None
+        for index in range(1, len(tokens) - chunk_count + 2):
+            head = " ".join(tokens[:index])
+            if not self._fits_subtitle_shape(head):
+                break
+            tail = self._partition_balanced(tokens[index:], chunk_count - 1)
+            if tail is None:
+                continue
+            candidate = [head, *tail]
+            max_length = max(len(chunk) for chunk in candidate)
+            if best_max_length is None or max_length < best_max_length:
+                best = candidate
+                best_max_length = max_length
+        return best
 
     def _improve_boundaries(self, chunks: list[str]) -> list[str]:
         continuations = (
