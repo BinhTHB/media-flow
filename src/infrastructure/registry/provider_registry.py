@@ -63,6 +63,9 @@ def _create_hybrid_gemini_ocr(options):
             runtime.get_client(model=model),
             model=model,
             budget_limit=int(options.get("crop_classifier_max_requests", 60)),
+            artifact_dir=options.get("crop_classifier_artifact_dir"),
+            job_id=str(options.get("job_id", "")),
+            run_id=str(options.get("run_id", "")),
         )
     proposal = YoloTextProposalProvider(
         weights_path=options.get("weights", "best.pt"),
@@ -101,6 +104,9 @@ def _create_hybrid_yolo(options):
             runtime.get_client(model=model),
             model=model,
             budget_limit=int(options.get("crop_classifier_max_requests", 60)),
+            artifact_dir=options.get("crop_classifier_artifact_dir"),
+            job_id=str(options.get("job_id", "")),
+            run_id=str(options.get("run_id", "")),
         )
     proposal_provider = YoloTextProposalProvider(
         weights_path=options.get("weights", "best.pt"),

@@ -1,0 +1,2 @@
+{"timestamp": 1784737828.1299558, "job_id": "round25-sample5", "run_id": "round25-sample5", "request_id": "crop_batch_0", "route": "crop_batch_classifier", "live_or_cache": "live", "batch_size": 10, "canary_pass": true, "model": "gemini-3.5-flash-lite", "finish_reason": "STOP"}
+{"timestamp": 1784737841.8981826, "job_id": "round25-sample5", "run_id": "round25-sample5", "request_id": "crop_batch_2", "route": "crop_batch_classifier", "live_or_cache": "live", "batch_size": 5, "canary_pass": true, "model": "gemini-3.5-flash-lite", "finish_reason": "STOP"}

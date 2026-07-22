@@ -25,13 +25,21 @@ class CropBatchClassifier:
         gemini_client: Any,
         model: str = "gemini-3.5-flash-lite",
         budget_limit: int = 60,
-        artifact_dir: str | Path = "artifacts/round24",
+        artifact_dir: str | Path | None = None,
+        job_id: str = "",
+        run_id: str = "",
     ) -> None:
         self.client = gemini_client
         self.model = model
         self.budget_limit = budget_limit
-        self.artifact_dir = Path(artifact_dir)
+        self.artifact_dir = Path(artifact_dir) if artifact_dir else None
+        self.job_id = job_id
+        self.run_id = run_id
         self.requests_sent = 0
+
+    def set_run_context(self, job_id: str, run_id: str = "") -> None:
+        self.job_id = job_id
+        self.run_id = run_id
     def classify_batch(
         self,
         tracks: List[Dict[str, Any]],
@@ -98,6 +106,7 @@ class CropBatchClassifier:
             "You are a vision-language classifier for on-screen text in video crops.",
             "Default to NOT subtitle unless the complete evidence proves dialogue subtitle.",
             "A subtitle translates or transcribes spoken dialogue, appears and disappears with dialogue, changes content over time, and is usually one or two lines.",
+            "A short fragment that overlaps the same geometry and is adjacent in time to an already confirmed subtitle is not a separate subtitle track.",
             "Never accept a watermark/logo, text embedded in a scene, UI/sticker, karaoke effect, or decorative text as a subtitle.",
             "",
             "Analyze each track using its trajectory metadata and the sequence of crops provided.",
@@ -224,6 +233,7 @@ class CropBatchClassifier:
                     canary_passed = False
 
             if not canary_passed:
+                self._log_ledger(resp, len(batch), False)
                 if is_retry:
                     logger.error(
                         "LOUD-WARN: Canary failed on retry batch. BLOCKED."
@@ -265,12 +275,19 @@ class CropBatchClassifier:
             return {}
 
     def _log_ledger(self, resp: Any, batch_size: int, canary_passed: bool) -> None:
+        if self.artifact_dir is None:
+            return
         try:
             self.artifact_dir.mkdir(parents=True, exist_ok=True)
             ledger_path = self.artifact_dir / "crop_classifier_ledger.jsonl"
 
             log_entry = {
                 "timestamp": time.time(),
+                "job_id": self.job_id,
+                "run_id": self.run_id,
+                "request_id": getattr(resp, "request_id", "")
+                or f"crop_batch_{self.requests_sent - 1}",
+                "route": "crop_batch_classifier",
                 "live_or_cache": "cache"
                 if getattr(resp, "cache_hit", False)
                 else "live",

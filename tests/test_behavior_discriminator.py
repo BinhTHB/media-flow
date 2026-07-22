@@ -2,6 +2,8 @@ from src.domain.entities.segment import Segment
 from src.infrastructure.benchmark.hybrid_subtitle.behavior_discriminator import (
     TrackBehaviorDiscriminator,
 )
+from src.application.dto.proposal_bundle import ProposalBundle
+import numpy as np
 
 
 def _track(start_ms=0.0, end_ms=4000.0, displacement=0.0):
@@ -57,3 +59,60 @@ def test_missing_transcript_is_neutral():
 
     assert evidence.transcript_available is False
     assert evidence.rule_fired is False
+
+
+def test_rejects_durable_static_paddle_text_even_with_continuous_speech():
+    bundle = ProposalBundle("video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720)
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    for index, timestamp in ((0, 0.0), (120, 4.0)):
+        bundle.add_frame(
+            frame_index=index,
+            timestamp_sec=timestamp,
+            image=image,
+            image_path=None,
+            detections=[],
+        )
+    track = _track()
+    track["groups"][0]["frame_index"] = 0
+    track["groups"][1]["frame_index"] = 120
+    discriminator = TrackBehaviorDiscriminator(
+        [Segment(id="speech", start=0.0, end=4.0, text="dialogue", source="speech")],
+        video_duration_seconds=20.0,
+        static_text_reader=lambda _crop: "OMEGA",
+    )
+
+    evidence = discriminator.evaluate_static_content(track, bundle)
+
+    assert evidence.rule_fired is True
+    assert evidence.rule_reason == "durable_static_paddle_text"
+    assert evidence.static_text_similarity == 1.0
+    assert evidence.paddle_text_samples == ("OMEGA", "OMEGA")
+
+
+def test_static_content_rule_keeps_short_bottom_subtitle():
+    bundle = ProposalBundle("video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720)
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle.add_frame(
+        frame_index=0,
+        timestamp_sec=0.0,
+        image=image,
+        image_path=None,
+        detections=[],
+    )
+    bundle.add_frame(
+        frame_index=21,
+        timestamp_sec=0.7,
+        image=image,
+        image_path=None,
+        detections=[],
+    )
+    track = _track(end_ms=700.0)
+    track["groups"][0]["frame_index"] = 0
+    track["groups"][1]["frame_index"] = 21
+
+    evidence = TrackBehaviorDiscriminator(
+        static_text_reader=lambda _crop: "subtitle"
+    ).evaluate_static_content(track, bundle)
+
+    assert evidence.rule_fired is False
+    assert evidence.rule_reason == "neutral"

@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import cv2
@@ -85,6 +86,15 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._behavior_discriminator = TrackBehaviorDiscriminator(
             speech_segments, video_duration_seconds
         )
+
+    def static_rule_ledger(self) -> list[dict[str, Any]]:
+        """Return JSON-safe local rule metadata collected for the current run."""
+        return list(self.behavior_ledger)
+
+    def set_run_context(self, job_id: str, artifact_dir: str) -> None:
+        if self._crop_batch_classifier is not None:
+            self._crop_batch_classifier.artifact_dir = Path(artifact_dir)
+            self._crop_batch_classifier.set_run_context(job_id, job_id)
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
@@ -276,7 +286,42 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 continue
             regions.append(region)
 
-        return regions
+        return self._deduplicate_confirmed_fragments(regions, W, H)
+
+    @staticmethod
+    def _deduplicate_confirmed_fragments(
+        regions: List[SubtitleRegion], width: int, height: int
+    ) -> List[SubtitleRegion]:
+        """Remove a short duplicate fragment adjacent to a confirmed subtitle."""
+        retained: List[SubtitleRegion] = []
+        for region in regions:
+            duration = region.end_time - region.start_time
+            is_fragment = duration <= 0.5
+            duplicate = any(
+                is_fragment
+                and region.track_id != confirmed.track_id
+                and region.start_time <= confirmed.end_time + 0.2
+                and confirmed.start_time <= region.end_time + 0.2
+                and box_iou(
+                    [
+                        region.x * width,
+                        region.y * height,
+                        (region.x + region.width) * width,
+                        (region.y + region.height) * height,
+                    ],
+                    [
+                        confirmed.x * width,
+                        confirmed.y * height,
+                        (confirmed.x + confirmed.width) * width,
+                        (confirmed.y + confirmed.height) * height,
+                    ],
+                )
+                >= 0.7
+                for confirmed in regions
+            )
+            if not duplicate:
+                retained.append(region)
+        return retained
 
     def _crop_decisions_for_uncertain_tracks(
         self, tracks: List[Dict[str, Any]], frame_height: int
@@ -292,9 +337,15 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             if result.is_subtitle:
                 continue
             if self._behavior_discriminator is not None:
-                evidence = self._behavior_discriminator.evaluate(track)
+                evidence = self._behavior_discriminator.evaluate_static_content(
+                    track, self.proposal_bundle
+                )
                 self.behavior_ledger.append(
-                    {"track_id": track["track_id"], **evidence.__dict__}
+                    {
+                        "track_id": track["track_id"],
+                        **evidence.__dict__,
+                        "paddle_text_samples": list(evidence.paddle_text_samples),
+                    }
                 )
                 if evidence.rule_fired:
                     continue
@@ -315,10 +366,12 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             ):
                 canaries.append(track)
                 continue
-            if len(track["groups"]) < 2 or duration_ms < 300:
+            if len(track["groups"]) < 2:
                 if bottom_ratio < HeuristicSubtitleClassifier.BOTTOM_RATIO_THRESHOLD:
                     canaries.append(track)
-                # Short bottom tracks are handled by the semantic fallback.
+                else:
+                    # Preserve short bottom subtitle candidates for crop semantic review.
+                    uncertain.append(track)
             else:
                 uncertain.append(track)
         if not uncertain:

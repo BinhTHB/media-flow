@@ -1,0 +1,24 @@
+{
+  "frozen_gt_sha256": "c60196edaf3d418f89073b05649f68cf37168f4f316d261d09cf6f5d1f27b103",
+  "gt_v2_1_sha256": "f8e03c1d2b1bb36e81fb80c7db3f8b27a8e79cf2c40a5b6c45cd47cd62fc6d09",
+  "rules": {
+    "behavioral": {
+      "frozen_positive_total": 19,
+      "frozen_positive_rejected": 0,
+      "v2_1_positive_total": 12,
+      "v2_1_positive_rejected": 0,
+      "v2_1_negative_total": 23,
+      "v2_1_negative_correctly_rejected": 0,
+      "note": "Speech-overlap predicate is neutral on sample5 because STT coverage is continuous."
+    },
+    "static_content": {
+      "frozen_positive_total": 19,
+      "frozen_positive_rejected": 0,
+      "v2_1_positive_total": 12,
+      "v2_1_positive_rejected": 0,
+      "v2_1_negative_total": 23,
+      "v2_1_negative_correctly_rejected": 0,
+      "note": "No static-content decision is claimed until a fresh bounded Paddle E2E run emits per-track samples."
+    }
+  }
+}

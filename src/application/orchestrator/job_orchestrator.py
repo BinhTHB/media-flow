@@ -225,8 +225,14 @@ class JobOrchestrator:
                     ]
                     if is_hybrid_ocr:
                         ocr_inner.proposal_bundle = bundle
+                        ocr_inner.set_run_context(
+                            job.job_id, self.artifact_provider.debug_dir(job.job_id)
+                        )
                     if is_hybrid_region:
                         region_inner.proposal_bundle = bundle
+                        region_inner.set_run_context(
+                            job.job_id, self.artifact_provider.debug_dir(job.job_id)
+                        )
                     if job.features.speech_to_text:
                         if is_hybrid_ocr:
                             ocr_inner.set_speech_segments(
@@ -407,6 +413,15 @@ class JobOrchestrator:
                     ),
                     [region.to_dict(include_provenance=True) for region in regions],
                 )
+                region_provider = self.detect_subtitle_region_uc.provider
+                if hasattr(region_provider, "static_rule_ledger"):
+                    self.artifact_provider.write_json(
+                        os.path.join(
+                            self.artifact_provider.debug_dir(job.job_id),
+                            "static_content_rule_ledger.json",
+                        ),
+                        region_provider.static_rule_ledger(),
+                    )
                 self.artifact_provider.write_json(
                     os.path.join(self.artifact_provider.debug_dir(job.job_id), "subtitle_region_cache_metadata.json"),
                     cache_validator.signature(

@@ -1,0 +1,11 @@
+{
+  "proposal_source": "yolo_video_stream",
+  "video_path": "E:\\projects\\media-flow\\input\\sample5.mp4",
+  "fps": 30.0,
+  "stride": 1,
+  "video_width": 720,
+  "video_height": 1280,
+  "n_frames_decoded": 727,
+  "n_detections": 5854,
+  "total_frames": 727
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
+from pathlib import Path
 
 from src.application.dto.proposal_bundle import ProposalBundle
 from src.application.ports.ocr_provider import OCRProvider
@@ -60,6 +61,11 @@ class HybridGeminiOCRProvider(OCRProvider):
             speech_segments, video_duration_seconds
         )
 
+    def set_run_context(self, job_id: str, artifact_dir: str) -> None:
+        if self._crop_batch_classifier is not None:
+            self._crop_batch_classifier.artifact_dir = Path(artifact_dir)
+            self._crop_batch_classifier.set_run_context(job_id, job_id)
+
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
         if not frames or self._semantic_verifier is None:
             return []
@@ -115,9 +121,15 @@ class HybridGeminiOCRProvider(OCRProvider):
             if heuristic.classify(track, frame_height).is_subtitle:
                 continue
             if self._behavior_discriminator is not None:
-                evidence = self._behavior_discriminator.evaluate(track)
+                evidence = self._behavior_discriminator.evaluate_static_content(
+                    track, self.proposal_bundle
+                )
                 self.behavior_ledger.append(
-                    {"track_id": track["track_id"], **evidence.__dict__}
+                    {
+                        "track_id": track["track_id"],
+                        **evidence.__dict__,
+                        "paddle_text_samples": list(evidence.paddle_text_samples),
+                    }
                 )
                 if evidence.rule_fired:
                     continue
@@ -138,10 +150,12 @@ class HybridGeminiOCRProvider(OCRProvider):
             ):
                 canaries.append(track)
                 continue
-            if len(track["groups"]) < 2 or duration_ms < 300:
+            if len(track["groups"]) < 2:
                 if bottom_ratio < HeuristicSubtitleClassifier.BOTTOM_RATIO_THRESHOLD:
                     canaries.append(track)
                 # Short bottom tracks are handled by the semantic fallback.
+                else:
+                    uncertain.append(track)
             else:
                 uncertain.append(track)
         if not uncertain:

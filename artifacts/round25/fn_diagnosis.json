@@ -1,0 +1,46 @@
+{
+  "frozen_gt_sha256": "c60196edaf3d418f89073b05649f68cf37168f4f316d261d09cf6f5d1f27b103",
+  "source_regions": "output/round23-e2e/round23_sample5_fix3/debug/subtitle_regions.json",
+  "findings": [
+    {
+      "gt_id": "T003",
+      "expected_is_subtitle": true,
+      "bottom_y_ratio": 0.7469,
+      "duration_s": 0.7,
+      "event_count": 16,
+      "pipeline_track": {
+        "group_count": 16,
+        "duration_s": 0.5333,
+        "bbox_xyxy": [
+          307.6022644042969,
+          959.2612915039062,
+          406.3998260498047,
+          1018.8068542480469
+        ]
+      },
+      "drop_stage": "short_bottom_semantic_fallback_not_routed",
+      "evidence": "Track is absent from confirmed subtitle_regions; groups=16, baseline summary={'group_count': 16, 'duration_s': 0.5333, 'bbox_xyxy': [307.6022644042969, 959.2612915039062, 406.3998260498047, 1018.8068542480469]}.",
+      "fix": "Route persisted short-bottom tracks, including durations below 300ms, to fail-closed crop semantic review rather than leaving them unclassified."
+    },
+    {
+      "gt_id": "T053",
+      "expected_is_subtitle": true,
+      "bottom_y_ratio": 0.8109,
+      "duration_s": 0.46,
+      "event_count": 1,
+      "pipeline_track": {
+        "group_count": 4,
+        "duration_s": 0.2666,
+        "bbox_xyxy": [
+          0.0,
+          1048.3529052734375,
+          720.0,
+          1280.0
+        ]
+      },
+      "drop_stage": "short_bottom_semantic_fallback_not_routed",
+      "evidence": "Track is absent from confirmed subtitle_regions; groups=4, baseline summary={'group_count': 4, 'duration_s': 0.2666, 'bbox_xyxy': [0.0, 1048.3529052734375, 720.0, 1280.0]}.",
+      "fix": "No generic acceptance change: the one-event proposal has no durable track, so it remains a detector/association limitation."
+    }
+  ]
+}

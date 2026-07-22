@@ -55,8 +55,10 @@ def _frozen_entries() -> tuple[list[dict[str, Any]], str]:
     return entries, sidecar["frozen_gt_sha256"]
 
 
-def _v2_entries() -> tuple[list[dict[str, Any]], str]:
-    target = OUT / "gt_v2.json"
+def _v2_entries(kind: str = "v2") -> tuple[list[dict[str, Any]], str]:
+    target = ROOT / "artifacts" / ("round24" if kind == "v2_1" else "round23") / (
+        "gt_v2_1.json" if kind == "v2_1" else "gt_v2.json"
+    )
     payload = json.loads(target.read_text(encoding="utf-8"))
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     return [
@@ -75,14 +77,18 @@ def _v2_entries() -> tuple[list[dict[str, Any]], str]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--regions", required=True, type=Path)
-    parser.add_argument("--kind", choices=("frozen", "v2"), required=True)
+    parser.add_argument("--kind", choices=("frozen", "v2", "v2_1"), required=True)
     parser.add_argument("--width", required=True, type=int)
     parser.add_argument("--height", required=True, type=int)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
     regions = json.loads(args.regions.read_text(encoding="utf-8"))
-    entries, gt_sha256 = _frozen_entries() if args.kind == "frozen" else _v2_entries()
+    entries, gt_sha256 = (
+        _frozen_entries()
+        if args.kind == "frozen"
+        else _v2_entries(args.kind)
+    )
     by_track: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for region in regions:
         by_track[region["track_id"]].append(region)
@@ -132,7 +138,7 @@ def main() -> None:
         "matched_gt": matched_gt,
         "unmatched_prediction_tracks": sorted(unmatched_predictions),
     }
-    if args.kind == "v2":
+    if args.kind in ("v2", "v2_1"):
         moving_ids = {entry["id"] for entry in entries if entry.get("set") == "moving"}
         result["moving_hit_rate"] = round(
             len(moving_ids & true_positive_ids) / len(moving_ids), 4

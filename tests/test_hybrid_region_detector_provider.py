@@ -533,7 +533,7 @@ def test_uncertain_middle_track_uses_crop_classifier_with_local_canary():
     assert crop_classifier.canaries == [canary]
 
 
-def test_short_bottom_track_uses_semantic_fallback_not_canary():
+def test_short_bottom_track_uses_crop_semantic_fallback_not_canary():
     class CropClassifier:
         def __init__(self):
             self.tracks = None
@@ -552,11 +552,18 @@ def test_short_bottom_track_uses_semantic_fallback_not_canary():
     short_bottom = {
         "track_id": "T100",
         "median_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
-        "groups": [{
-            "frame_index": 0,
-            "timestamp_ms": 0.0,
-            "union_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
-        }],
+        "groups": [
+            {
+                "frame_index": 0,
+                "timestamp_ms": 0.0,
+                "union_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
+            },
+            {
+                "frame_index": 0,
+                "timestamp_ms": 200.0,
+                "union_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
+            },
+        ],
     }
     scene_canary = {
         "track_id": "T101",
@@ -578,7 +585,7 @@ def test_short_bottom_track_uses_semantic_fallback_not_canary():
     )
 
     assert decisions == {}
-    assert crop_classifier.tracks is None
+    assert crop_classifier.tracks == [short_bottom]
 
 
 def _normalized_iou(left, right):
