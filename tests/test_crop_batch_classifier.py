@@ -104,6 +104,25 @@ def test_batch_returns_decisions_for_all_tracks():
     assert decisions["T001"]["transcription"] == "Hello"
 
 
+def test_batch_sends_clean_full_frame_context_with_crops():
+    client = MagicMock()
+    client.generate_content.return_value = FakeGeminiResponse(
+        '[{"track_id":"T001","is_subtitle":true,"category":"dialogue_subtitle",'
+        '"confidence":0.9,"transcription":"Hello","reason":"bottom subtitle"},'
+        '{"track_id":"canary_N001","is_subtitle":false,"category":"logo",'
+        '"confidence":0.9,"transcription":"","reason":"negative canary"}]'
+    )
+    classifier = CropBatchClassifier(client)
+
+    classifier.classify_batch(
+        [_track()], _make_bundle(), canary_tracks=[_canary_track()]
+    )
+
+    parts = client.generate_content.call_args.args[0].contents[0]["parts"]
+    assert "clean full-frame context" in parts[0]["text"]
+    assert len([part for part in parts[1:] if "inline_data" in part]) == 6
+
+
 def test_canary_injection_detects_rubber_stamp():
     """Canary track flagged as subtitle triggers retry + half-size."""
     client = MagicMock()

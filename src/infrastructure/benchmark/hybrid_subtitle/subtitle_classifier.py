@@ -112,10 +112,12 @@ class HybridSubtitleClassifier:
         heuristic: Optional[HeuristicSubtitleClassifier] = None,
         gemini_verifier=None,
         frame_height: int = 1280,
+        verify_short_bottom_tracks: bool = False,
     ) -> None:
         self._heuristic = heuristic or HeuristicSubtitleClassifier()
         self._gemini = gemini_verifier
         self._frame_height = frame_height
+        self._verify_short_bottom_tracks = verify_short_bottom_tracks
 
     def classify_track(
         self,
@@ -127,7 +129,10 @@ class HybridSubtitleClassifier:
         heur = self._heuristic.classify(track, self._frame_height)
         valid_ids = set(candidate_ids) if candidate_ids else set()
 
-        if not heur.is_subtitle:
+        short_bottom_track = self._is_short_bottom_track(track)
+        if not heur.is_subtitle and not (
+            self._verify_short_bottom_tracks and short_bottom_track
+        ):
             # Heuristic-negative is the final decision -> reject immediately!
             return {
                 "track_id": track.get("track_id", "unknown"),
@@ -204,3 +209,22 @@ class HybridSubtitleClassifier:
             "uncertain": True,
             "source": heur.provenance,
         }
+
+    def _is_short_bottom_track(self, track: Dict[str, Any]) -> bool:
+        """Allow semantic review only for persisted, short bottom captions.
+
+        Proposal confidence has already been filtered by the calling provider.
+        """
+        groups = track.get("groups", [])
+        if len(groups) < 2:
+            return False
+        bbox = track.get("median_bbox_xyxy") or []
+        if len(bbox) != 4 or self._frame_height <= 0:
+            return False
+        duration_s = (
+            groups[-1].get("timestamp_ms", 0) - groups[0].get("timestamp_ms", 0)
+        ) / 1000.0
+        return (
+            bbox[3] / self._frame_height >= HeuristicSubtitleClassifier.BOTTOM_RATIO_THRESHOLD
+            and duration_s < HeuristicSubtitleClassifier.MIN_DURATION_SECONDS
+        )

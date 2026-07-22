@@ -332,7 +332,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import HybridSubtitleClassifier
             self._classifier = HybridSubtitleClassifier(
                 gemini_verifier=self._semantic_verifier,
-                frame_height=H
+                frame_height=H,
+                verify_short_bottom_tracks=True,
             )
 
         groups = track.get("groups", [])

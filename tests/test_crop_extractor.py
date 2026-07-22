@@ -68,6 +68,7 @@ def test_crop_extractor_correctly_crops_with_padding():
     
     assert "crops" in evidence
     assert len(evidence["crops"]) == 2
+    assert len(evidence["clean_frames"]) == 2
     
     # Verify crop 1 has correct shape with padding (padding=8)
     # x1=100-8=92, y1=600-8=592, x2=300+8=308, y2=650+8=658
@@ -79,6 +80,7 @@ def test_crop_extractor_correctly_crops_with_padding():
     # Verify crop pixels match source frame exactly
     expected_crop1 = img[592:658, 92:308]
     assert np.array_equal(crop1, expected_crop1)
+    assert np.array_equal(evidence["clean_frames"][0], img)
     
     # Verify trajectory metrics
     traj = evidence["trajectory"]

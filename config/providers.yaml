@@ -84,7 +84,7 @@ providers:
       conf: 0.05
       iou: 0.70
       imgsz: 1024
-      min_confidence: 0.30
+      min_confidence: 0.45
       device: cuda
       gemini_model: gemini-3.5-flash-lite
       gemini_verify: true
@@ -108,7 +108,7 @@ providers:
       conf: 0.05
       iou: 0.70
       imgsz: 1024
-      min_confidence: 0.30
+      min_confidence: 0.45
       device: cuda
       gemini_verify: true
       gemini_model: gemini-3.5-flash-lite

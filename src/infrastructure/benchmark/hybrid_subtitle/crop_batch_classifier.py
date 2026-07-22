@@ -109,6 +109,18 @@ class CropBatchClassifier:
             tid = ev["track_id"]
             traj = ev["trajectory"]
             start_img = img_counter
+            context_frame = ev["clean_frames"][0]
+            _, png = cv2.imencode(".png", context_frame)
+            images_in_request.append(
+                {
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": base64.b64encode(png.tobytes()).decode("ascii"),
+                    }
+                }
+            )
+            img_counter += 1
+            crop_start_img = img_counter
             for crop in ev["crops"]:
                 _, png = cv2.imencode(".png", crop)
                 images_in_request.append(
@@ -124,7 +136,8 @@ class CropBatchClassifier:
             prompt_text.append(
                 f"- Track {tid}: bottom_y_ratio={traj['bottom_y_ratio']:.3f}, "
                 f"duration={traj['duration']:.2f}s, displacement={traj['displacement']:.1f}px. "
-                f"Visual crops are shown in Image {start_img} to Image {end_img}."
+                f"Image {start_img} is one clean full-frame context image. "
+                f"Text crops are shown in Image {crop_start_img} to Image {end_img}."
             )
 
         prompt_text.extend(

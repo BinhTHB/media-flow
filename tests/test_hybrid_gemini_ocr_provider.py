@@ -174,3 +174,40 @@ def test_heuristic_negative_track_skips_gemini_verifier(tmp_path):
 
     assert segments == []
     assert verifier.calls == 0
+
+
+def test_short_bottom_track_routes_to_semantic_verifier(tmp_path):
+    image_path = tmp_path / "frame.png"
+    assert cv2.imwrite(str(image_path), np.zeros((720, 1280, 3), dtype=np.uint8))
+    frames = [
+        Frame(timestamp=0.0, image_path=str(image_path)),
+        Frame(timestamp=0.1, image_path=str(image_path)),
+    ]
+    detections = [
+        {
+            "frame_index": index,
+            "timestamp_ms": index * 100,
+            "candidate_id": f"F{index:05d}_C01",
+            "bbox_xyxy": [100.0, 650.0, 300.0, 710.0],
+            "confidence": 0.95,
+            "class": "text",
+        }
+        for index in range(2)
+    ]
+    verifier = CountingVerifier({
+        "T001": [{
+            "candidate_id": "G00000_01",
+            "is_subtitle": True,
+            "category": "dialogue_subtitle",
+            "confidence": 0.9,
+            "transcription": "Short caption",
+        }],
+    })
+
+    segments = HybridGeminiOCRProvider(
+        proposal_provider=FakeProposal(detections),
+        semantic_verifier=verifier,
+    ).detect_text(frames)
+
+    assert verifier.calls == 1
+    assert len(segments) == 1

@@ -158,6 +158,7 @@ class HybridGeminiOCRProvider(OCRProvider):
             verdict = HybridSubtitleClassifier(
                 gemini_verifier=self._semantic_verifier,
                 frame_height=images[0].shape[0],
+                verify_short_bottom_tracks=True,
             ).classify_track(
                 track, images, candidate_ids, candidate_bboxes
             )
