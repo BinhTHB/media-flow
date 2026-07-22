@@ -533,6 +533,54 @@ def test_uncertain_middle_track_uses_crop_classifier_with_local_canary():
     assert crop_classifier.canaries == [canary]
 
 
+def test_short_bottom_track_uses_semantic_fallback_not_canary():
+    class CropClassifier:
+        def __init__(self):
+            self.tracks = None
+
+        def classify_batch(self, tracks, *_args, **_kwargs):
+            self.tracks = tracks
+            return {}
+
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle = ProposalBundle(
+        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
+    )
+    bundle.add_frame(
+        frame_index=0, timestamp_sec=0.0, image=image, image_path=None, detections=[]
+    )
+    short_bottom = {
+        "track_id": "T100",
+        "median_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
+        "groups": [{
+            "frame_index": 0,
+            "timestamp_ms": 0.0,
+            "union_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
+        }],
+    }
+    scene_canary = {
+        "track_id": "T101",
+        "median_bbox_xyxy": [10.0, 20.0, 100.0, 70.0],
+        "groups": [{
+            "frame_index": 0,
+            "timestamp_ms": 0.0,
+            "union_bbox_xyxy": [10.0, 20.0, 100.0, 70.0],
+        }],
+    }
+    crop_classifier = CropClassifier()
+    provider = HybridSubtitleRegionDetectorProvider(
+        crop_batch_classifier=crop_classifier,
+    )
+    provider.proposal_bundle = bundle
+
+    decisions = provider._crop_decisions_for_uncertain_tracks(
+        [short_bottom, scene_canary], frame_height=720
+    )
+
+    assert decisions == {}
+    assert crop_classifier.tracks is None
+
+
 def _normalized_iou(left, right):
     x1 = max(left[0], right[0])
     y1 = max(left[1], right[1])

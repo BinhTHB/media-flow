@@ -110,12 +110,22 @@ class CropBatchClassifier:
             traj = ev["trajectory"]
             start_img = img_counter
             context_frame = ev["clean_frames"][0]
-            _, png = cv2.imencode(".png", context_frame)
+            height, width = context_frame.shape[:2]
+            max_context_width = 512
+            if width > max_context_width:
+                context_frame = cv2.resize(
+                    context_frame,
+                    (max_context_width, round(height * max_context_width / width)),
+                    interpolation=cv2.INTER_AREA,
+                )
+            _, jpeg = cv2.imencode(
+                ".jpg", context_frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+            )
             images_in_request.append(
                 {
                     "inline_data": {
-                        "mime_type": "image/png",
-                        "data": base64.b64encode(png.tobytes()).decode("ascii"),
+                        "mime_type": "image/jpeg",
+                        "data": base64.b64encode(jpeg.tobytes()).decode("ascii"),
                     }
                 }
             )

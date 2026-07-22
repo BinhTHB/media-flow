@@ -283,7 +283,11 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 - track["groups"][0]["timestamp_ms"]
             )
             if len(track["groups"]) < 2 or duration_ms < 300:
-                canaries.append(track)
+                bbox = track.get("median_bbox_xyxy") or []
+                bottom_ratio = bbox[3] / frame_height if len(bbox) == 4 else 0.0
+                if bottom_ratio < HeuristicSubtitleClassifier.BOTTOM_RATIO_THRESHOLD:
+                    canaries.append(track)
+                # Short bottom tracks are handled by the semantic fallback.
             else:
                 uncertain.append(track)
         if not uncertain:
