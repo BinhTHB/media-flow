@@ -9,6 +9,7 @@ from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provi
     HybridSubtitleRegionDetectorProvider,
 )
 from src.domain.entities.subtitle_region import SubtitleRegion
+from src.application.dto.proposal_bundle import ProposalBundle
 
 from src.infrastructure.registry.provider_registry import ProviderRegistry
 
@@ -460,6 +461,76 @@ def test_low_confidence_proposal_cannot_swallow_subtitle_group(tmp_path):
         )
         for region in active
     ) >= 0.5
+
+
+def test_uncertain_middle_track_uses_crop_classifier_with_local_canary():
+    class CropClassifier:
+        def __init__(self):
+            self.uncertain = []
+            self.canaries = []
+
+        def classify_batch(self, tracks, bundle, batch_size, canary_tracks):
+            self.uncertain = tracks
+            self.canaries = canary_tracks
+            return {
+                track["track_id"]: {
+                    "track_id": track["track_id"],
+                    "is_subtitle": True,
+                    "category": "dialogue_subtitle",
+                    "confidence": 0.95,
+                    "transcription": "moving middle subtitle",
+                }
+                for track in tracks
+            }
+
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle = ProposalBundle(
+        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
+    )
+    for frame_index, timestamp_ms in ((0, 0.0), (10, 333.3), (20, 666.7)):
+        bundle.add_frame(
+            frame_index=frame_index,
+            timestamp_sec=timestamp_ms / 1000.0,
+            image=image.copy(),
+            image_path=None,
+            detections=[],
+        )
+    uncertain = {
+        "track_id": "T100",
+        "groups": [
+            {
+                "frame_index": 0,
+                "timestamp_ms": 0.0,
+                "union_bbox_xyxy": [300.0, 300.0, 700.0, 360.0],
+            },
+            {
+                "frame_index": 20,
+                "timestamp_ms": 666.7,
+                "union_bbox_xyxy": [320.0, 330.0, 720.0, 390.0],
+            },
+        ],
+    }
+    canary = {
+        "track_id": "T101",
+        "groups": [{
+            "frame_index": 10,
+            "timestamp_ms": 333.3,
+            "union_bbox_xyxy": [10.0, 20.0, 100.0, 70.0],
+        }],
+    }
+    crop_classifier = CropClassifier()
+    provider = HybridSubtitleRegionDetectorProvider(
+        crop_batch_classifier=crop_classifier,
+    )
+    provider.proposal_bundle = bundle
+
+    decisions = provider._crop_decisions_for_uncertain_tracks(
+        [uncertain, canary], frame_height=720
+    )
+
+    assert list(decisions) == ["T100"]
+    assert crop_classifier.uncertain == [uncertain]
+    assert crop_classifier.canaries == [canary]
 
 
 def _normalized_iou(left, right):

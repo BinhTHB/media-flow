@@ -54,6 +54,16 @@ def _create_hybrid_gemini_ocr(options):
     runtime = options.get("runtime")
     model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
     verifier = GeminiTrackVerifier(runtime, model=model) if runtime else None
+    crop_batch_classifier = None
+    if runtime:
+        from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
+            CropBatchClassifier,
+        )
+        crop_batch_classifier = CropBatchClassifier(
+            runtime.get_client(model=model),
+            model=model,
+            budget_limit=int(options.get("crop_classifier_max_requests", 60)),
+        )
     proposal = YoloTextProposalProvider(
         weights_path=options.get("weights", "best.pt"),
         conf=options.get("conf", 0.05),
@@ -64,7 +74,8 @@ def _create_hybrid_gemini_ocr(options):
     return HybridGeminiOCRProvider(
         proposal_provider=proposal,
         semantic_verifier=verifier,
-        min_confidence=float(options.get("min_confidence", 0.30)),
+        min_confidence=float(options.get("min_confidence", 0.45)),
+        crop_batch_classifier=crop_batch_classifier,
     )
 
 
@@ -77,11 +88,20 @@ def _create_hybrid_yolo(options):
     gemini_verify = bool(options.get("gemini_verify", False))
     runtime = options.get("runtime")
     semantic_verifier = None
+    crop_batch_classifier = None
     if gemini_verify and runtime is not None:
         # Lazily import to keep the registry import-light.
         from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiTrackVerifier
+        from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
+            CropBatchClassifier,
+        )
         model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
         semantic_verifier = GeminiTrackVerifier(runtime, model=model)
+        crop_batch_classifier = CropBatchClassifier(
+            runtime.get_client(model=model),
+            model=model,
+            budget_limit=int(options.get("crop_classifier_max_requests", 60)),
+        )
     proposal_provider = YoloTextProposalProvider(
         weights_path=options.get("weights", "best.pt"),
         conf=options.get("conf", 0.05),
@@ -94,9 +114,10 @@ def _create_hybrid_yolo(options):
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
-        min_confidence=float(options.get("min_confidence", 0.30)),
+        min_confidence=float(options.get("min_confidence", 0.45)),
         device=options.get("device", "cpu"),
         semantic_verifier=semantic_verifier,
+        crop_batch_classifier=crop_batch_classifier,
         proposal_provider=proposal_provider,
     )
 

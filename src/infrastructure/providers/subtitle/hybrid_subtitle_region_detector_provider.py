@@ -52,11 +52,12 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  track_iou_threshold: float = 0.25,
                  track_max_gap_frames: int = 5,
                  bottom_ratio_threshold: float = 0.65,
-                 min_confidence: float = 0.30,
+                 min_confidence: float = 0.45,
                  proposal_provider: Optional[Any] = None,
                  device: str = "cpu",
                  semantic_verifier: Optional[Any] = None,
-                 classifier: Optional[Any] = None) -> None:
+                 classifier: Optional[Any] = None,
+                 crop_batch_classifier: Optional[Any] = None) -> None:
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -70,6 +71,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._device = device
         self._semantic_verifier = semantic_verifier
         self._classifier = classifier  # set by provider_registry or test
+        self._crop_batch_classifier = crop_batch_classifier
         self.proposal_bundle: ProposalBundle | None = None
 
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
@@ -148,9 +150,12 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             if not frames_by_index:
                 frames_by_index = {index: frame for index, frame in enumerate(frames)}
 
+        crop_decisions = self._crop_decisions_for_uncertain_tracks(tracks, H)
         regions: List[SubtitleRegion] = []
         for track in tracks:
-            decision = self._verifier_decision_for_track(track, frames_by_index, H)
+            decision = self._verifier_decision_for_track(
+                track, frames_by_index, H, crop_decisions.get(track["track_id"])
+            )
             if decision is None:
                 continue
 
@@ -261,7 +266,45 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
 
         return regions
 
-    def _verifier_decision_for_track(self, track: Dict, frames_by_index: Dict[int, Frame], H: int) -> Dict[str, Any] | None:
+    def _crop_decisions_for_uncertain_tracks(
+        self, tracks: List[Dict[str, Any]], frame_height: int
+    ) -> Dict[str, Dict[str, Any]]:
+        if self.proposal_bundle is None:
+            return {}
+        heuristic = HeuristicSubtitleClassifier()
+        uncertain = []
+        canaries = []
+        for track in tracks:
+            result = heuristic.classify(track, frame_height)
+            if result.is_subtitle:
+                continue
+            duration_ms = (
+                track["groups"][-1]["timestamp_ms"]
+                - track["groups"][0]["timestamp_ms"]
+            )
+            if len(track["groups"]) < 2 or duration_ms < 300:
+                canaries.append(track)
+            else:
+                uncertain.append(track)
+        if not uncertain:
+            return {}
+        if not canaries:
+            logger.error("LOUD-WARN: no local negative canary, uncertain tracks fail-closed")
+            return {}
+        if self._crop_batch_classifier is None:
+            logger.error("LOUD-WARN: crop classifier unavailable, uncertain tracks fail-closed")
+            return {}
+        return self._crop_batch_classifier.classify_batch(
+            uncertain, self.proposal_bundle, batch_size=10, canary_tracks=canaries[:2]
+        )
+
+    def _verifier_decision_for_track(
+        self,
+        track: Dict,
+        frames_by_index: Dict[int, Frame],
+        H: int,
+        crop_decision: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any] | None:
         """Evaluate the track using the hybrid classifier (heuristic + optional Gemini).
 
         Returns a decision dict if confirmed as subtitle, or None to fail-closed (discard).
@@ -270,6 +313,16 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
           - gemini_verified: confirmed by Gemini after heuristic borderline
           - heuristic_top_or_short: heuristic non-subtitle (no Gemini fallback)
         """
+        if crop_decision is not None:
+            if crop_decision.get("is_subtitle") is True:
+                return {
+                    "model": "crop_classifier",
+                    "category": crop_decision.get("category", "dialogue_subtitle"),
+                    "confidence": crop_decision.get("confidence", 0.0),
+                    "provenance": "crop_classifier",
+                }
+            return None
+
         # If no classifier configured, fail-closed
         if self._classifier is None and self._semantic_verifier is None:
             return None

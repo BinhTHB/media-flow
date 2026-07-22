@@ -14,6 +14,7 @@ from src.infrastructure.benchmark.hybrid_subtitle.core import (
 )
 from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
     HybridSubtitleClassifier,
+    HeuristicSubtitleClassifier,
 )
 
 
@@ -34,15 +35,17 @@ class HybridGeminiOCRProvider(OCRProvider):
         self,
         proposal_provider: Any,
         semantic_verifier: Any,
-        min_confidence: float = 0.30,
+        min_confidence: float = 0.45,
         track_iou_threshold: float = 0.25,
         track_max_gap_frames: int = 5,
+        crop_batch_classifier: Any = None,
     ) -> None:
         self._proposal = proposal_provider
         self._semantic_verifier = semantic_verifier
         self._min_confidence = min_confidence
         self._track_iou_threshold = track_iou_threshold
         self._track_max_gap_frames = track_max_gap_frames
+        self._crop_batch_classifier = crop_batch_classifier
         self.proposal_bundle: ProposalBundle | None = None
 
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
@@ -75,14 +78,50 @@ class HybridGeminiOCRProvider(OCRProvider):
             iou_threshold=self._track_iou_threshold,
             max_gap_frames=self._track_max_gap_frames,
         )
+        crop_decisions = self._crop_decisions_for_uncertain_tracks(tracks, frames)
         return [
             segment
             for track in tracks
-            if (segment := self._segment_for_track(track, frames)) is not None
+            if (
+                segment := self._segment_for_track(
+                    track, frames, crop_decisions.get(track["track_id"])
+                )
+            ) is not None
         ]
 
+    def _crop_decisions_for_uncertain_tracks(
+        self, tracks: List[Dict[str, Any]], frames: List[Frame]
+    ) -> Dict[str, Dict[str, Any]]:
+        if self.proposal_bundle is None or self._crop_batch_classifier is None:
+            return {}
+        frame_height = self.proposal_bundle.video_height
+        heuristic = HeuristicSubtitleClassifier()
+        uncertain = []
+        canaries = []
+        for track in tracks:
+            if heuristic.classify(track, frame_height).is_subtitle:
+                continue
+            duration_ms = (
+                track["groups"][-1]["timestamp_ms"]
+                - track["groups"][0]["timestamp_ms"]
+            )
+            if len(track["groups"]) < 2 or duration_ms < 300:
+                canaries.append(track)
+            else:
+                uncertain.append(track)
+        if not uncertain:
+            return {}
+        if not canaries:
+            return {}
+        return self._crop_batch_classifier.classify_batch(
+            uncertain, self.proposal_bundle, batch_size=10, canary_tracks=canaries[:2]
+        )
+
     def _segment_for_track(
-        self, track: Dict[str, Any], frames: List[Frame]
+        self,
+        track: Dict[str, Any],
+        frames: List[Frame],
+        crop_decision: Dict[str, Any] | None = None,
     ) -> Optional[Segment]:
         groups = track["groups"]
         representative = groups if len(groups) <= 3 else [groups[0], groups[len(groups) // 2], groups[-1]]
@@ -109,12 +148,19 @@ class HybridGeminiOCRProvider(OCRProvider):
             return None
         candidate_ids = [group["candidate_group_id"] for group in representative]
         candidate_bboxes = [group["union_bbox_xyxy"] for group in representative]
-        verdict = HybridSubtitleClassifier(
-            gemini_verifier=self._semantic_verifier,
-            frame_height=images[0].shape[0],
-        ).classify_track(
-            track, images, candidate_ids, candidate_bboxes
-        )
+        if crop_decision is not None:
+            verdict = {
+                "decisions": [crop_decision]
+                if crop_decision.get("is_subtitle") is True
+                else [],
+            }
+        else:
+            verdict = HybridSubtitleClassifier(
+                gemini_verifier=self._semantic_verifier,
+                frame_height=images[0].shape[0],
+            ).classify_track(
+                track, images, candidate_ids, candidate_bboxes
+            )
         res = _subtitle_transcription_and_confidence(verdict.get("decisions", []))
         text, confidence = res
         if text is None:

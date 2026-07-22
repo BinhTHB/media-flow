@@ -5,11 +5,9 @@ import base64
 import cv2
 import json
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from src.application.dto.proposal_bundle import ProposalBundle
+from typing import Any, Dict, List
 from .crop_extractor import TrackCropExtractor
 
 logger = logging.getLogger(__name__)
@@ -32,74 +30,12 @@ class CropBatchClassifier:
         self.model = model
         self.budget_limit = budget_limit
         self.requests_sent = 0
-        self._canary_tracks: List[Dict[str, Any]] | None = None
-
-    def _get_canaries(self) -> List[Dict[str, Any]]:
-        if self._canary_tracks is not None:
-            return self._canary_tracks
-
-        self._canary_tracks = []
-        try:
-            gt_path = "scripts/frozen_gt/sample5/frozen_gt.json"
-            tracks_path = "artifacts/hybrid_subtitle_benchmark/sample5_text_tracks.json"
-            video_path = "test_videos/real_mini_benchmark/sample5.mp4"
-
-            if (
-                not os.path.exists(gt_path)
-                or not os.path.exists(tracks_path)
-                or not os.path.exists(video_path)
-            ):
-                return []
-
-            with open(gt_path, encoding="utf-8") as f:
-                gt = json.load(f)
-            non_subs = [
-                t for t in gt
-                if not t.get("expected_is_subtitle") and t.get("duration_s", 0) >= 0.5
-            ]
-            if not non_subs:
-                return []
-
-            with open(tracks_path, encoding="utf-8") as f:
-                tracks = json.load(f)
-
-            canary_ids = ["T011", "T012"]
-            selected_tracks = [t for t in tracks if t["track_id"] in canary_ids]
-
-            cap = cv2.VideoCapture(video_path)
-            bundle = ProposalBundle(video_path, fps=30.0, stride=1)
-            needed_frames = {
-                g["frame_index"] for t in selected_tracks for g in t["groups"]
-            }
-            for fi in needed_frames:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-                ret, frame = cap.read()
-                if ret:
-                    bundle.add_frame(
-                        frame_index=fi,
-                        timestamp_sec=fi / 30.0,
-                        image=frame,
-                        image_path=None,
-                        detections=[],
-                    )
-            cap.release()
-
-            extractor = TrackCropExtractor()
-            for t in selected_tracks:
-                evidence = extractor.extract_evidence(t, bundle)
-                if evidence:
-                    evidence["track_id"] = f"canary_{t['track_id']}"
-                    self._canary_tracks.append(evidence)
-        except Exception as exc:
-            logger.warning("LOUD-WARN: Failed to load canaries: %s", exc)
-
-        return self._canary_tracks
-
     def classify_batch(
         self,
         tracks: List[Dict[str, Any]],
         proposal_bundle: Any,
         batch_size: int = 5,
+        canary_tracks: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         """Classify tracks in batches. Returns dict of track_id -> decision."""
         if not tracks or self.client is None:
@@ -108,7 +44,9 @@ class CropBatchClassifier:
         results = {}
         for i in range(0, len(tracks), batch_size):
             batch = tracks[i : i + batch_size]
-            res = self._classify_one_batch(batch, proposal_bundle)
+            res = self._classify_one_batch(
+                batch, proposal_bundle, canary_tracks or []
+            )
             results.update(res)
         return results
 
@@ -116,6 +54,7 @@ class CropBatchClassifier:
         self,
         batch: List[Dict[str, Any]],
         proposal_bundle: Any,
+        canary_tracks: List[Dict[str, Any]],
         is_retry: bool = False,
     ) -> Dict[str, Any]:
         if self.requests_sent >= self.budget_limit:
@@ -138,12 +77,17 @@ class CropBatchClassifier:
         if not evidence_list:
             return {}
 
-        canaries = self._get_canaries()
         injected_canaries = []
-        if canaries:
-            canary = canaries[self.requests_sent % len(canaries)]
-            evidence_list.append(canary)
-            injected_canaries.append(canary["track_id"])
+        if not canary_tracks:
+            raise RuntimeError("No local negative canary supplied. BLOCKED.")
+        canary_track = canary_tracks[self.requests_sent % len(canary_tracks)]
+        canary_evidence = extractor.extract_evidence(canary_track, proposal_bundle)
+        if not canary_evidence:
+            raise RuntimeError("Canary evidence is unavailable. BLOCKED.")
+        canary_id = f"canary_{canary_track['track_id']}"
+        canary_evidence["track_id"] = canary_id
+        evidence_list.append(canary_evidence)
+        injected_canaries.append(canary_id)
 
         prompt_parts = []
         prompt_text = [
@@ -225,7 +169,21 @@ class CropBatchClassifier:
             if not isinstance(data, list):
                 raise ValueError("Response is not a JSON list")
 
-            decisions = {d["track_id"]: d for d in data if "track_id" in d}
+            expected_ids = {
+                evidence["track_id"] for evidence in evidence_list
+            }
+            actual_ids = [
+                decision.get("track_id") for decision in data
+                if isinstance(decision, dict)
+            ]
+            if (
+                len(actual_ids) != len(set(actual_ids))
+                or set(actual_ids) != expected_ids
+            ):
+                raise ValueError(
+                    "Batch response track IDs are missing, extra, or duplicated."
+                )
+            decisions = {d["track_id"]: d for d in data}
 
             canary_passed = True
             for cid in injected_canaries:
@@ -246,16 +204,13 @@ class CropBatchClassifier:
                 logger.warning(
                     "LOUD-WARN: Canary check failed. Retrying batch with half size."
                 )
-                if len(batch) <= 1:
-                    raise RuntimeError("Canary failed on minimum batch size. BLOCKED.")
-
-                half = len(batch) // 2
+                half = max(1, len(batch) // 2)
                 res1 = self._classify_one_batch(
-                    batch[:half], proposal_bundle, is_retry=True
+                    batch[:half], proposal_bundle, canary_tracks, is_retry=True
                 )
                 res2 = self._classify_one_batch(
-                    batch[half:], proposal_bundle, is_retry=True
-                )
+                    batch[half:], proposal_bundle, canary_tracks, is_retry=True
+                ) if len(batch) > half else {}
                 res1.update(res2)
                 return res1
 

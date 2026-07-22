@@ -1,4 +1,7 @@
 ﻿"""Tests for CropBatchClassifier: canary logic, budget ceiling, and batch correctness."""
+import json
+import re
+
 import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch
@@ -74,20 +77,27 @@ def _track(track_id="T001"):
         ],
     }
 
+def _canary_track():
+    return _track("N001")
+
 
 def test_batch_returns_decisions_for_all_tracks():
     """Classifier returns a decision for every track in the batch."""
     client = MagicMock()
     client.generate_content.return_value = FakeGeminiResponse(
         '[{"track_id":"T001","is_subtitle":true,"category":"dialogue_subtitle",'
-        '"confidence":0.9,"transcription":"Hello","reason":"bottom subtitle"}]'
+        '"confidence":0.9,"transcription":"Hello","reason":"bottom subtitle"},'
+        '{"track_id":"canary_N001","is_subtitle":false,"category":"logo",'
+        '"confidence":0.9,"transcription":"","reason":"negative canary"}]'
     )
 
     classifier = CropBatchClassifier(client)
     bundle = _make_bundle()
     tracks = [_track()]
 
-    decisions = classifier.classify_batch(tracks, bundle, batch_size=5)
+    decisions = classifier.classify_batch(
+        tracks, bundle, batch_size=5, canary_tracks=[_canary_track()]
+    )
 
     assert "T001" in decisions
     assert decisions["T001"]["is_subtitle"] is True
@@ -104,12 +114,20 @@ def test_canary_injection_detects_rubber_stamp():
         # First call: model is untrusted, flags canary as subtitle
         # Subsequent calls: model is correct, flags canary as non-subtitle
         is_sub = True if call_count[0] == 1 else False
-        resp = FakeGeminiResponse(
-            f'[{{"track_id":"T001","is_subtitle":true,"category":"dialogue_subtitle","confidence":0.9,"transcription":"Hi","reason":"ok"}},'
-            f'{{"track_id":"T002","is_subtitle":true,"category":"dialogue_subtitle","confidence":0.9,"transcription":"Hi","reason":"ok"}},'
-            f'{{"track_id":"canary_T011","is_subtitle":{str(is_sub).lower()},"category":"logo","confidence":0.95}}]',
-            cache_hit=False,
-        )
+        prompt = req.contents[0]["parts"][0]["text"]
+        track_ids = re.findall(r"- Track (\w+):", prompt)
+        decisions = [
+            {
+                "track_id": track_id,
+                "is_subtitle": is_sub if track_id == "canary_N001" else True,
+                "category": "logo" if track_id == "canary_N001" else "dialogue_subtitle",
+                "confidence": 0.95,
+                "transcription": "" if track_id == "canary_N001" else "Hi",
+                "reason": "test",
+            }
+            for track_id in track_ids
+        ]
+        resp = FakeGeminiResponse(json.dumps(decisions), cache_hit=False)
         return resp
 
     client.generate_content = fake_generate
@@ -118,28 +136,9 @@ def test_canary_injection_detects_rubber_stamp():
     bundle = _make_bundle()
     tracks = [_track("T001"), _track("T002")]
 
-    # Patch _get_canaries to return a synthetic canary
-    with patch.object(
-        classifier,
-        "_get_canaries",
-        return_value=[
-            {
-                "track_id": "canary_T011",
-                "crops": [np.zeros((50, 100, 3), dtype=np.uint8)],
-                "clean_frames": [np.zeros((720, 1280, 3), dtype=np.uint8)],
-                "trajectory": {
-                    "first_bbox": [0.0, 100.0, 100.0, 150.0],
-                    "last_bbox": [0.0, 100.0, 100.0, 150.0],
-                    "displacement": 0.0,
-                    "bottom_y_ratio": 150.0 / 720.0,
-                    "duration": 0.5,
-                    "first_center": (50.0, 125.0),
-                    "last_center": (50.0, 125.0),
-                },
-            }
-        ],
-    ):
-        decisions = classifier.classify_batch(tracks, bundle, batch_size=5)
+    decisions = classifier.classify_batch(
+        tracks, bundle, batch_size=5, canary_tracks=[_canary_track()]
+    )
 
     # First call: full batch (T001 + T002 + canary). Canary failed.
     # Retry calls: half-sized batches (size 1). Canary passed because is_sub = False.
@@ -155,7 +154,10 @@ def test_budget_limit_blocks_requests():
     client = MagicMock()
 
     def fake_generate(req, **kwargs):
-        return FakeGeminiResponse("[]")
+        return FakeGeminiResponse(
+            '[{"track_id":"T001","is_subtitle":false,"category":"logo","confidence":0.9},'
+            '{"track_id":"canary_N001","is_subtitle":false,"category":"logo","confidence":0.9}]'
+        )
 
     client.generate_content = fake_generate
 
@@ -164,12 +166,16 @@ def test_budget_limit_blocks_requests():
     tracks = [_track() for _ in range(10)]
 
     # First 2 batches succeed
-    classifier.classify_batch(tracks[:2], bundle, batch_size=1)
+    classifier.classify_batch(
+        tracks[:2], bundle, batch_size=1, canary_tracks=[_canary_track()]
+    )
     assert classifier.requests_sent == 2
 
     # Third batch raises RuntimeError
     with pytest.raises(RuntimeError, match="Budget limit reached"):
-        classifier.classify_batch([tracks[2]], bundle, batch_size=1)
+        classifier.classify_batch(
+            [tracks[2]], bundle, batch_size=1, canary_tracks=[_canary_track()]
+        )
 
 
 def test_missing_decision_fail_closed():
@@ -179,15 +185,18 @@ def test_missing_decision_fail_closed():
     def fake_generate(req, **kwargs):
         return FakeGeminiResponse(
             '[{"track_id":"T002","is_subtitle":true,"category":"dialogue_subtitle",'
-            '"confidence":0.9,"transcription":"OK","reason":"ok"}]'
+            '"confidence":0.9,"transcription":"OK","reason":"ok"},'
+            '{"track_id":"canary_N001","is_subtitle":false,"category":"logo",'
+            '"confidence":0.9,"transcription":"","reason":"negative canary"}]'
         )
 
     client.generate_content = fake_generate
     classifier = CropBatchClassifier(client)
     bundle = _make_bundle()
 
-    with patch.object(classifier, "_get_canaries", return_value=[]):
-        decisions = classifier.classify_batch([_track("T001")], bundle, batch_size=5)
+    decisions = classifier.classify_batch(
+        [_track("T001")], bundle, batch_size=5, canary_tracks=[_canary_track()]
+    )
 
     # T001 not in decisions -> fail-closed
     assert "T001" not in decisions
