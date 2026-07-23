@@ -333,8 +333,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 is_fragment
                 and region.track_id != confirmed.track_id
                 and (confirmed.end_time - confirmed.start_time) > 0.5  # only confirmed full regions
-                and region.start_time <= confirmed.end_time + 0.2
-                and confirmed.start_time <= region.end_time + 0.2
+                and region.start_time < confirmed.end_time
+                and confirmed.start_time < region.end_time
                 and box_iou(
                     [
                         region.x * width,
@@ -354,6 +354,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             )
             if not duplicate:
                 retained.append(region)
+        return retained
     def _detect_regions_v21(self, frames: List[Frame]) -> List[SubtitleRegion]:
         """V2.1 pipeline: Tier -> R1 -> R2 -> R3 -> Gemini packet V2.1 -> dedupe."""
         from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (

@@ -2,7 +2,8 @@
 
 Separates tracks into:
   - sure-YES (THU HẸP): cadence position-stack only, must pass R1+R3
-  - sure-NO: explicit rejection criteria (persistence/confidence)
+  - sure-NO: explicit rejection criteria (persistence/confidence only;
+    position/duration are metadata signals fed to STEP 7 sweep)
   - gray zone: everything else → R1 → R2 → R3 → STEP 5
 
 Bất biến V2.1: reject-only, neutral on insufficient evidence.
@@ -32,7 +33,8 @@ class TierClassifier:
     These bypass R2 (language loop) but must pass R1 + R3 before final accept.
 
     sure-NO: tracks that are clearly non-subtitle by persistence/confidence
-    heuristics (same as prior rounds — rejected by position+duration rules).
+    heuristics. NOTE: position/duration are metadata signals only (not standalone
+    reject criteria) — all criteria go into STEP 7 sweep.
 
     gray zone: everything uncertain proceeds through R1 → R2 → R3 → Gemini.
     """
@@ -77,7 +79,7 @@ class TierClassifier:
         if not bbox or len(bbox) < 4:
             return TierResult("gray_zone", "no_bbox", "No bbox available", 0.0)
 
-        # --- sure-NO check: position+duration heuristic ---
+        # --- Metadata signal: position+duration (NOT reject, just metadata) ---
         _, y1, _, y2 = bbox
         bottom_y_ratio = y2 / self._frame_height if self._frame_height > 0 else 0.0
 
@@ -85,16 +87,8 @@ class TierClassifier:
         last_ts_ms = groups[-1].get("timestamp_ms", 0)
         duration_s = (last_ts_ms - first_ts_ms) / 1000.0 if last_ts_ms >= first_ts_ms else 0.0
 
-        is_top_or_short = (
-            bottom_y_ratio < 0.65 or duration_s < self.SURE_NO_MIN_DURATION
-        )
-        if is_top_or_short:
-            return TierResult(
-                "sure_no",
-                "tier_position_duration",
-                f"bottom_y_ratio={bottom_y_ratio:.3f} or duration={duration_s:.3f}s",
-                0.90,
-            )
+        # Position/duration are metadata signals fed to STEP 7 sweep,
+        # NOT standalone reject criteria (per user correction).
 
         # --- sure-YES check: cadence position-stack ---
         cadence_info = self._detect_cadence(track, all_tracks)
