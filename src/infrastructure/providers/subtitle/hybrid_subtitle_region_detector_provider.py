@@ -317,7 +317,14 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
     def _deduplicate_confirmed_fragments(
         regions: List[SubtitleRegion], width: int, height: int
     ) -> List[SubtitleRegion]:
-        """Remove a short duplicate fragment adjacent to a confirmed subtitle."""
+        """Remove a short duplicate fragment only when paired with a CONFIRMED full region.
+
+        STEP-6 fix: only delete fragment if the overlapping region is a confirmed full
+        region (>0.5s). This prevents:
+          (a) mutual-deletion of 2 adjacent fragments
+          (b) chain deletion of 3+ fragments
+          (c) splitting artifacts (e.g. "tuy nhiên" split across 2 events)
+        """
         retained: List[SubtitleRegion] = []
         for region in regions:
             duration = region.end_time - region.start_time
@@ -325,6 +332,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             duplicate = any(
                 is_fragment
                 and region.track_id != confirmed.track_id
+                and (confirmed.end_time - confirmed.start_time) > 0.5  # only confirmed full regions
                 and region.start_time <= confirmed.end_time + 0.2
                 and confirmed.start_time <= region.end_time + 0.2
                 and box_iou(
