@@ -38,14 +38,19 @@ def main():
     tracks_by_id = {t["track_id"]: t for t in tracks}
 
     track_dicts = {}
+    negatives = [e for e in gt["entries"] if not e["is_subtitle"]]
     if MAP_PATH.exists():
         map_data = json.loads(MAP_PATH.read_text(encoding="utf-8"))
         for match in map_data.get("matches", []):
             gt_id = match["gt_id"]
             base_id = match["base_id"]
             pt = tracks_by_id.get(base_id)
-            if pt and gt_id in {e["id"] for e in positives}:
-                track_dicts[gt_id] = pt
+            if pt is None:
+                continue
+            if gt_id in {e["id"] for e in positives}:
+                track_dicts[gt_id] = {"track": pt, "is_positive": True}
+            elif gt_id in {e["id"] for e in negatives}:
+                track_dicts[gt_id] = {"track": pt, "is_positive": False}
 
     if not track_dicts:
         print(json.dumps({"status": "COMPLETED", "results": []}, indent=2))
@@ -76,10 +81,11 @@ def main():
     cap.release()
     print("Decoded %d frames." % len(bundle.frames))
 
-    track_motion_data = {}
+    track_motion_data: Dict[str, dict] = {}
     r1_evaluator = R1MotionCoupling(frame_height=height, frame_width=width)
 
-    for eid, td in track_dicts.items():
+    for eid, entry in track_dicts.items():
+        td = entry["track"]
         groups = td.get("groups", [])
         pairs = []
         for i in range(min(len(groups) - 1, max_pairs)):
@@ -157,15 +163,19 @@ def main():
                 "angle_diff": angle_diff,
                 "speed_ratio": speed_ratio
             })
-        track_motion_data[eid] = pairs
+        track_motion_data[eid] = {"pairs": pairs}
     print("Precomputed motion for %d tracks." % len(track_motion_data))
 
     results = []
     for mp in MIN_BG_SPEED_GRID:
         for kc in K_CONSECUTIVE_GRID:
-            rejected = 0
-            details = []
-            for eid, pairs in track_motion_data.items():
+            pos_rejected = 0
+            neg_rejected = 0
+            pos_details = []
+            neg_details = []
+            for eid, entry_info in track_motion_data.items():
+                is_positive = track_dicts[eid]["is_positive"]
+                pairs = entry_info.get("pairs", [])
                 if len(pairs) < kc:
                     continue
                 bg_speeds = [p["bg_speed"] for p in pairs[:kc]]
@@ -188,23 +198,35 @@ def main():
                     frame_pairs_verified += 1
 
                 if frame_pairs_verified >= kc and coupled_count >= kc:
-                    rejected += 1
-                    details.append(eid)
+                    if is_positive:
+                        pos_rejected += 1
+                        pos_details.append(eid)
+                    else:
+                        neg_rejected += 1
+                        neg_details.append(eid)
 
             results.append({
                 "min_bg_speed": mp,
                 "k_consecutive": kc,
-                "rejected": rejected,
-                "total": len(positives),
-                "rejected_ids": details,
+                "positives_rejected": pos_rejected,
+                "total_positives": len(positives),
+                "negatives_rejected": neg_rejected,
+                "total_negatives": len(negatives),
+                "pos_rejected_ids": pos_details,
+                "neg_rejected_ids": neg_details,
             })
-            print("  mp=%.1f kc=%d: rejected=%d/%d" % (mp, kc, rejected, len(positives)))
+            print("  mp=%.1f kc=%d: pos_rej=%d/%d neg_rej=%d/%d" % (mp, kc, pos_rejected, len(positives), neg_rejected, len(negatives)))
 
     payload = {
         "status": "COMPLETED",
         "kind": "v2_2",
         "grid": {"MIN_BG_SPEED_PX": MIN_BG_SPEED_GRID, "K_CONSECUTIVE": K_CONSECUTIVE_GRID},
         "results": results,
+        "summary": {
+            "positives_total": len(positives),
+            "negatives_total": len(negatives),
+            "gate_positives_rejected_must_be_0": True,
+        }
     }
     (OUT / "sweep_r1.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     (OUT / "r1_motion_sweep.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")

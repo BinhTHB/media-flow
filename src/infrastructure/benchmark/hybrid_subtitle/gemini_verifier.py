@@ -80,7 +80,9 @@ class GeminiTrackVerifier:
         self.cache_hits: int = 0
         self.responses_parsed_ok: int = 0
         self.parse_failures: int = 0
-        self.fail_open_count: int = 0
+        self.no_frames_count: int = 0
+        self.network_error_count: int = 0
+        self.schema_error_count: int = 0
 
     def _resolve_client(self):
         """Get a GeminiClient, resolving lazily if we hold a GeminiRuntime reference."""
@@ -96,8 +98,13 @@ class GeminiTrackVerifier:
         """Classify track using pre-decoded BGR frames."""
         if not frame_bgr:
             self.tracks_received += 1
-            self.fail_open_count += 1
-            return {"track_id": track.track_id, "decisions": [], "uncertain": True}
+            self.no_frames_count += 1
+            logger.warning(
+                "LOUD-WARN: No frames for track %s — fail-closed (0 confirm).",
+                track.track_id,
+            )
+            return {"track_id": track.track_id, "decisions": [],
+                    "uncertain": True, "error": "no_frames"}
 
         self.tracks_received += 1
         user_prompt = self._build_user_prompt(candidate_ids, candidate_bboxes)
@@ -130,9 +137,9 @@ class GeminiTrackVerifier:
             return self._parse_response_text(text, track.track_id, candidate_ids, resp)
         except Exception as exc:
             self.parse_failures += 1
-            self.fail_open_count += 1
+            self.network_error_count += 1
             logger.warning(
-                "LOUD-WARN: Gemini classification/network failed for track %s (fail-open used): %s",
+                "LOUD-WARN: Gemini API/network failed for track %s (fail-closed): %s",
                 track.track_id,
                 str(exc)[:200],
             )
@@ -180,9 +187,8 @@ class GeminiTrackVerifier:
                 data = parse_json(text)
             except Exception as exc:
                 self.parse_failures += 1
-                self.fail_open_count += 1
                 logger.warning(
-                    "LOUD-WARN: Verifier parse_failed for track %s (fail-open): "
+                    "LOUD-WARN: Verifier parse_failed for track %s (fail-closed): "
                     "first_200_chars='%s'",
                     track_id,
                     text[:200],
@@ -198,9 +204,9 @@ class GeminiTrackVerifier:
                 uncertain = False
             else:
                 self.parse_failures += 1
-                self.fail_open_count += 1
+                self.schema_error_count += 1
                 logger.warning(
-                    "LOUD-WARN: Verifier schema_invalid for track %s (fail-open): "
+                    "LOUD-WARN: Verifier schema_invalid for track %s (fail-closed): "
                     "first_200_chars='%s'",
                     track_id,
                     text[:200],
@@ -228,7 +234,7 @@ class GeminiTrackVerifier:
 
             self.responses_parsed_ok += 1
             if uncertain or not validated:
-                self.fail_open_count += 1
+                pass  # uncertain/empty decisions — caller must fail-closed
             return {
                 "track_id": track_id,
                 "decisions": validated,

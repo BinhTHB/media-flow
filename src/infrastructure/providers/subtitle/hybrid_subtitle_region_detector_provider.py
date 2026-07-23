@@ -524,18 +524,72 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 track["static_long"] = True
             gray_survivors.append(track)
 
-        # 10) Send survivors to Gemini V2.1 packet classifier
-        final_accepted: List[Dict] = list(accepted_sure_yes)
-        if gray_survivors and v21_classifier is not None and v21_classifier.client is not None:
-            canary_tracks = sure_no[:2] if sure_no else []
-            decisions = v21_classifier.classify_batch(
-                gray_survivors, bundle, batch_size=5, canary_tracks=canary_tracks
+        # 10) Send ALL survivors to Gemini V2.1 packet classifier — fail-closed.
+        # sure_yes bypass R2 (language rule) only, NOT the final Gemini classifier.
+        # Invariant: any track NOT classified = not confirmed. Classifier unavailable = no confirmations.
+        all_candidates: List[Dict] = list(accepted_sure_yes) + list(gray_survivors)
+        fail_counters: Dict[str, int] = {
+            "client_unavailable": 0,
+            "batch_error": 0,
+            "budget_limit": 0,
+            "missing_decision": 0,
+        }
+
+        final_accepted: List[Dict] = []
+
+        if not all_candidates:
+            pass  # nothing to classify
+        elif v21_classifier is None or v21_classifier.client is None:
+            fail_counters["client_unavailable"] = len(all_candidates)
+            logger.error(
+                "LOUD-WARN: V2.1 classifier client unavailable. "
+                "%d candidate(s) BLOCKED — 0 regions confirmed.",
+                len(all_candidates),
             )
-            for track in gray_survivors:
+        else:
+            canary_tracks = sure_no[:2] if sure_no else []
+            decisions: Dict[str, Any] = {}
+            try:
+                decisions = v21_classifier.classify_batch(
+                    all_candidates, bundle, batch_size=5, canary_tracks=canary_tracks
+                )
+            except RuntimeError as exc:
+                batch_fail = len(all_candidates)
+                if "Budget limit" in str(exc):
+                    fail_counters["budget_limit"] = batch_fail
+                else:
+                    fail_counters["batch_error"] = batch_fail
+                logger.error(
+                    "LOUD-WARN: V2.1 classify_batch raised (BLOCKED): %s. "
+                    "%d candidate(s) → 0 confirmations.",
+                    exc,
+                    batch_fail,
+                )
+            except Exception as exc:
+                fail_counters["batch_error"] = len(all_candidates)
+                logger.error(
+                    "LOUD-WARN: V2.1 classify_batch unexpected error: %s. "
+                    "%d candidate(s) → 0 confirmations.",
+                    exc,
+                    len(all_candidates),
+                )
+
+            for track in all_candidates:
                 tid = track["track_id"]
                 d = decisions.get(tid, {})
                 if d.get("is_subtitle") is True:
                     final_accepted.append(track)
+                else:
+                    if tid not in decisions:
+                        fail_counters["missing_decision"] += 1
+                        logger.warning(
+                            "LOUD-WARN: Track %s had no classifier decision → not confirmed.",
+                            tid,
+                        )
+
+        if any(v > 0 for v in fail_counters.values()):
+            logger.warning("V2.1 fail_counters: %s", fail_counters)
+        self._v21_fail_counters = fail_counters
 
         # 11) Build SubtitleRegions
         regions: List[SubtitleRegion] = []

@@ -49,7 +49,7 @@ class GeminiClient:
                  cache: Optional[ResponseCache] = None,
                  usage_recorder: Optional[UsageRecorder] = None,
                  file_manager: Optional[FileManager] = None,
-                 role: str = MODE_ROLE_PRIMARY, timeout: float = 60.0,
+                 role: str = MODE_ROLE_PRIMARY, timeout: float = 180.0,
                  validate_models: bool = False, job_id: Optional[str] = None) -> None:
         self._model = model
         self._job_id = job_id
@@ -315,7 +315,7 @@ class GeminiClient:
 
 class _UrllibTransport:
     def send(self, method: str, url: str, *, headers: Dict[str, str],
-             data: Optional[bytes] = None, timeout: float = 60.0) -> Dict[str, Any]:
+             data: Optional[bytes] = None, timeout: float = 180.0) -> Dict[str, Any]:
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:

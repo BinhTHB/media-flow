@@ -598,3 +598,125 @@ def _normalized_iou(left, right):
     right_area = (right[2] - right[0]) * (right[3] - right[1])
     union = left_area + right_area - intersection
     return intersection / union if union else 0.0
+
+
+def test_detect_regions_v21_fail_closed_no_client():
+    from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import CropBatchClassifierV21
+    from src.domain.entities.frame import Frame
+
+    # Setup provider in v2.1 mode
+    provider = HybridSubtitleRegionDetectorProvider(
+        use_v21_pipeline=True,
+        crop_batch_classifier=CropBatchClassifierV21(gemini_client=None), # client is None!
+    )
+
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle = ProposalBundle(
+        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
+    )
+    bundle.add_frame(
+        frame_index=0,
+        timestamp_sec=0.0,
+        image=image,
+        image_path=None,
+        detections=[{
+            "frame_index": 0,
+            "timestamp_ms": 0.0,
+            "candidate_id": "F00000_C01",
+            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+            "confidence": 0.9,
+        }],
+    )
+    provider.proposal_bundle = bundle
+    frames = [Frame(timestamp=0.0, image_path=None)]
+
+    regions = provider.detect_regions(frames)
+    # Fail-closed: should return empty list on missing classifier client
+    assert regions == []
+    assert hasattr(provider, "_v21_fail_counters")
+    assert provider._v21_fail_counters["client_unavailable"] == 1
+
+
+def test_detect_regions_v21_fail_closed_batch_exception():
+    class BrokenClassifier:
+        def __init__(self):
+            class Client:
+                pass
+            self.client = Client()
+
+        def classify_batch(self, *args, **kwargs):
+            raise RuntimeError("Budget limit reached (60 requests).")
+
+    from src.domain.entities.frame import Frame
+    provider = HybridSubtitleRegionDetectorProvider(
+        use_v21_pipeline=True,
+        crop_batch_classifier=BrokenClassifier()
+    )
+
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle = ProposalBundle(
+        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
+    )
+    bundle.add_frame(
+        frame_index=0,
+        timestamp_sec=0.0,
+        image=image,
+        image_path=None,
+        detections=[{
+            "frame_index": 0,
+            "timestamp_ms": 0.0,
+            "candidate_id": "F00000_C01",
+            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+            "confidence": 0.9,
+        }],
+    )
+    provider.proposal_bundle = bundle
+    frames = [Frame(timestamp=0.0, image_path=None)]
+
+    regions = provider.detect_regions(frames)
+    assert regions == []
+    assert provider._v21_fail_counters["budget_limit"] == 1
+
+
+def test_detect_regions_v21_fail_closed_missing_decision():
+    class MissingDecisionClassifier:
+        def __init__(self):
+            class Client:
+                pass
+            self.client = Client()
+
+        def classify_batch(self, *args, **kwargs):
+            # Returns decisions for other tracks, misses our T001
+            return {
+                "some_other_id": {"is_subtitle": True}
+            }
+
+    from src.domain.entities.frame import Frame
+    provider = HybridSubtitleRegionDetectorProvider(
+        use_v21_pipeline=True,
+        crop_batch_classifier=MissingDecisionClassifier()
+    )
+
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle = ProposalBundle(
+        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
+    )
+    bundle.add_frame(
+        frame_index=0,
+        timestamp_sec=0.0,
+        image=image,
+        image_path=None,
+        detections=[{
+            "frame_index": 0,
+            "timestamp_ms": 0.0,
+            "candidate_id": "F00000_C01",
+            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+            "confidence": 0.9,
+        }],
+    )
+    provider.proposal_bundle = bundle
+    frames = [Frame(timestamp=0.0, image_path=None)]
+
+    regions = provider.detect_regions(frames)
+    assert regions == []
+    assert provider._v21_fail_counters["missing_decision"] == 1

@@ -403,11 +403,11 @@ class CropBatchClassifierV21:
             # Images 1..N: Full-res crops
             crop_indices: List[int] = []
             for crop in ev.get("crops", []):
-                _, png = cv2.imencode(".png", crop)
+                _, jpeg_crop = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 images_in_request.append({
                     "inline_data": {
-                        "mime_type": "image/png",
-                        "data": base64.b64encode(png.tobytes()).decode("ascii"),
+                        "mime_type": "image/jpeg",
+                        "data": base64.b64encode(jpeg_crop.tobytes()).decode("ascii"),
                     }
                 })
                 crop_indices.append(img_counter)

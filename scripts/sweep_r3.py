@@ -31,6 +31,7 @@ def main():
     gt = json.loads(GT.read_text(encoding="utf-8"))
     positives = [e for e in gt["entries"] if e["is_subtitle"]]
     negatives = [e for e in gt["entries"] if not e["is_subtitle"]]
+    entries_total = len(positives) + len(negatives)
     results = []
     for md in MIN_DUR_GRID:
         for st in STATIC_THRESH_GRID:
@@ -38,24 +39,37 @@ def main():
             r3 = R3StaticDiscriminator(scene)
             r3.MIN_DURATION_SECONDS = md
             r3.STATIC_THRESHOLD_PX = st
+            evaluated = 0
+            errors = 0
             pos_rejected = 0
             neg_rejected = 0
-            for entry in positives:
+            for entry in positives + negatives:
+                is_positive = entry in positives
+                # Build minimal track dict needed by R3 evaluate
+                groups = [{
+                    "frame_index": 0,
+                    "timestamp_ms": int(entry["timestamp_s"] * 1000),
+                    "union_bbox_xyxy": entry.get("bbox_xyxy", [0, 0, 0, 0]),
+                    "member_candidate_ids": [],
+                }]
+                track = {
+                    "track_id": entry["id"],
+                    "groups": groups,
+                    "median_bbox_xyxy": entry.get("bbox_xyxy", [0, 0, 0, 0]),
+                }
                 try:
-                    result = r3.evaluate(entry, None, [])
-                except Exception:
-                    pass
-                else:
-                    if hasattr(result, "reject_subtitle") and result.reject_subtitle:
+                    result = r3.evaluate(track, None, [])
+                    evaluated += 1
+                except Exception as exc:
+                    errors += 1
+                    print("  ERROR: md=%s st=%s id=%s %s" % (md, st, entry["id"], exc))
+                    continue
+                if result.rule_fired:
+                    if is_positive:
                         pos_rejected += 1
-            for entry in negatives:
-                try:
-                    result = r3.evaluate(entry, None, [])
-                except Exception:
-                    pass
-                else:
-                    if hasattr(result, "reject_subtitle") and result.reject_subtitle:
+                    else:
                         neg_rejected += 1
+            status = "BLOCKED" if errors > 0 else ("COMPLETED" if evaluated == entries_total else "PARTIAL")
             results.append({
                 "min_duration": md,
                 "static_threshold": st,
@@ -63,10 +77,15 @@ def main():
                 "total_positives": len(positives),
                 "negatives_rejected": neg_rejected,
                 "total_negatives": len(negatives),
+                "evaluated": evaluated,
+                "errors": errors,
             })
-            print("  md=%s st=%s: pos_rej=%d/%d neg_rej=%d/%d" % (md, st, pos_rejected, len(positives), neg_rejected, len(negatives)))
+            print("  md=%s st=%s: pos_rej=%d/%d neg_rej=%d/%d (eval=%d err=%d)" % (md, st, pos_rejected, len(positives), neg_rejected, len(negatives), evaluated, errors))
+    total_errors = sum(r["errors"] for r in results)
+    all_evaluated = all(r["evaluated"] == entries_total for r in results)
+    status = "COMPLETED" if all_evaluated and total_errors == 0 else ("BLOCKED" if total_errors > 0 else "PARTIAL")
     payload = {
-        "status": "COMPLETED" if results else "NO_DATA",
+        "status": status,
         "kind": "v2_2",
         "grid": {"MIN_DURATION_SECONDS": MIN_DUR_GRID, "STATIC_THRESHOLD_PX": STATIC_THRESH_GRID},
         "results": results,

@@ -195,7 +195,8 @@ def test_verifier_has_counters():
     verifier = GeminiTrackVerifier(client, "gemini-2.5-flash")
 
     for attr in ("tracks_received", "requests_sent", "cache_hits",
-                 "responses_parsed_ok", "parse_failures", "fail_open_count"):
+                 "responses_parsed_ok", "parse_failures",
+                 "no_frames_count", "network_error_count", "schema_error_count"):
         assert hasattr(verifier, attr), (
             f"GeminiTrackVerifier must have counter '{attr}' for diagnostics; "
             "without it we cannot distinguish parse-fail from quiet-drop (H1)."
