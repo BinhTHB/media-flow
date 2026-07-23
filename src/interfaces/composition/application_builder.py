@@ -78,6 +78,7 @@ class ApplicationBuilder:
         ffmpeg_gpu_decode: bool = False,
         ffmpeg_nvenc_cq: int = 23,
         ffmpeg_nvenc_preset: str = "p5",
+        use_v21_pipeline: bool = False,
     ):
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
         self.config_path = config_path or os.path.join(base_dir, "config", "providers.yaml")
@@ -120,6 +121,7 @@ class ApplicationBuilder:
         self.ffmpeg_gpu_decode = ffmpeg_gpu_decode
         self.ffmpeg_nvenc_cq = ffmpeg_nvenc_cq
         self.ffmpeg_nvenc_preset = ffmpeg_nvenc_preset
+        self.use_v21_pipeline = use_v21_pipeline
 
     @classmethod
     def from_cli_args(cls, args: Any) -> "ApplicationBuilder":
@@ -162,6 +164,7 @@ class ApplicationBuilder:
             ffmpeg_gpu_decode=getattr(args, "ffmpeg_gpu_decode", False),
             ffmpeg_nvenc_cq=getattr(args, "ffmpeg_nvenc_cq", 23),
             ffmpeg_nvenc_preset=getattr(args, "ffmpeg_nvenc_preset", "p5"),
+            use_v21_pipeline=getattr(args, "use_v21_pipeline", False),
         )
 
     def build(self) -> MediaFlowApplication:
@@ -247,7 +250,10 @@ class ApplicationBuilder:
         )
         region_detector_provider = factory.create_subtitle_region_detector_provider(
             name=self.subtitle_region_detector_provider,
-            overrides={"use_gpu": self.ocr_device == "gpu"},
+            overrides={
+                "use_gpu": self.ocr_device == "gpu",
+                "use_v21_pipeline": self.use_v21_pipeline,
+            },
         )
         debug_provider = factory.create_subtitle_placement_debug_provider()
         frame_extraction_provider = factory.create_frame_extraction_provider(name=self.frame_provider)

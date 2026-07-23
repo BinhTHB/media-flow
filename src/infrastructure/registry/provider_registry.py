@@ -125,6 +125,7 @@ def _create_hybrid_yolo(options):
         semantic_verifier=semantic_verifier,
         crop_batch_classifier=crop_batch_classifier,
         proposal_provider=proposal_provider,
+        use_v21_pipeline=bool(options.get("use_v21_pipeline", False)),
     )
 
 
