@@ -29,6 +29,18 @@ from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
 from src.infrastructure.benchmark.hybrid_subtitle.behavior_discriminator import (
     TrackBehaviorDiscriminator,
 )
+from src.infrastructure.benchmark.hybrid_subtitle.tier_classifier import (
+    TierClassifier,
+)
+from src.infrastructure.benchmark.hybrid_subtitle.r1_motion import (
+    R1MotionCoupling,
+)
+from src.infrastructure.benchmark.hybrid_subtitle.r2_language import (
+    R2LanguageDetector,
+)
+from src.infrastructure.benchmark.hybrid_subtitle.behavior_discriminator import (
+    R3StaticDiscriminator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +73,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  device: str = "cpu",
                  semantic_verifier: Optional[Any] = None,
                  classifier: Optional[Any] = None,
-                 crop_batch_classifier: Optional[Any] = None) -> None:
+                 crop_batch_classifier: Optional[Any] = None,
+                 use_v21_pipeline: bool = False) -> None:
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -79,6 +92,16 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._behavior_discriminator: TrackBehaviorDiscriminator | None = None
         self.behavior_ledger: list[dict[str, Any]] = []
         self.proposal_bundle: ProposalBundle | None = None
+        # V2.1 pipeline components
+        self._use_v21 = use_v21_pipeline
+        self._tier_classifier: TierClassifier | None = None
+        self._r1_motion: R1MotionCoupling | None = None
+        self._r2_language: R2LanguageDetector | None = None
+        self._r3_static: R3StaticDiscriminator | None = None
+        self._v21_crop_classifier: Any = None
+        self.r1_ledger: list[dict[str, Any]] = []
+        self.r2_ledger: list[dict[str, Any]] = []
+        self.r3_ledger: list[dict[str, Any]] = []
 
     def set_speech_segments(
         self, speech_segments: list[Any], video_duration_seconds: float
@@ -99,6 +122,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
             return []
+        if self._use_v21:
+            return self._detect_regions_v21(frames)
 
         # 1) Get proposals
         if self.proposal_bundle is not None:
@@ -321,7 +346,291 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             )
             if not duplicate:
                 retained.append(region)
-        return retained
+    def _detect_regions_v21(self, frames: List[Frame]) -> List[SubtitleRegion]:
+        """V2.1 pipeline: Tier -> R1 -> R2 -> R3 -> Gemini packet V2.1 -> dedupe."""
+        from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
+            CropBatchClassifierV21,
+        )
+
+        if not frames:
+            return []
+
+        # 1) Get proposals from single-decode bundle or legacy
+        if self.proposal_bundle is not None:
+            bundle = self.proposal_bundle
+            dets = bundle.detections
+            H = bundle.video_height
+            W = bundle.video_width
+        else:
+            if self._proposal is None:
+                from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import (
+                    YoloTextProposalProvider,
+                )
+                self._proposal = YoloTextProposalProvider(
+                    weights_path=self._weights,
+                    conf=self._conf,
+                    iou=self._iou,
+                    imgsz=self._imgsz,
+                    device=self._device,
+                )
+            image_paths = [f.image_path for f in frames]
+            dets = self._proposal.detect_images(image_paths)
+            img = cv2.imread(frames[0].image_path)
+            H, W = img.shape[:2]
+            bundle = self.proposal_bundle
+
+        # Filter by min confidence
+        dets = [
+            d for d in dets
+            if float(d.get("confidence", 0.0)) >= self._min_confidence
+        ]
+
+        # 2) Group per frame
+        by_frame: Dict[int, List[Dict]] = {}
+        for d in dets:
+            by_frame.setdefault(d["frame_index"], []).append(d)
+
+        flat_groups: List[Dict] = []
+        for fi in sorted(by_frame):
+            groups = group_frame_candidates(by_frame[fi], self._h_gap_ratio)
+            flat_groups.extend(groups)
+
+        if not flat_groups:
+            return []
+
+        # 3) Build tracks
+        tracks = build_tracks(
+            flat_groups,
+            iou_threshold=self._track_iou_threshold,
+            max_gap_frames=self._track_max_gap_frames,
+        )
+        if not tracks:
+            return []
+
+        # Map frame indexes
+        if self.proposal_bundle is not None:
+            frames_by_index = {
+                decoded.frame_index: Frame(
+                    timestamp=decoded.timestamp_sec,
+                    image_path=decoded.image_path or "",
+                )
+                for decoded in self.proposal_bundle.frames
+            }
+        else:
+            frames_by_index: Dict[int, Frame] = {}
+            for frame in frames:
+                match = re.search(
+                    r"frame_(\\d+)\\\.(jpg|png|jpeg)",
+                    os.path.basename(frame.image_path or ""),
+                )
+                if match:
+                    frames_by_index[int(match.group(1))] = frame
+            if not frames_by_index:
+                frames_by_index = {i: f for i, f in enumerate(frames)}
+
+        # 4) Frame cadence
+        if len(frames) >= 2:
+            frame_gap = (frames[-1].timestamp - frames[0].timestamp) / (len(frames) - 1)
+        else:
+            frame_gap = 0.0
+
+        # 5) Initialize V2.1 components
+        self._tier_classifier = TierClassifier(frame_height=H)
+        self._r1_motion = R1MotionCoupling(frame_height=H, frame_width=W)
+        self._r2_language = R2LanguageDetector()
+        self._r3_static = R3StaticDiscriminator(
+            frame_height=H,
+            speech_segments=[],
+        )
+        v21_classifier: Any = self._crop_batch_classifier or CropBatchClassifierV21(
+            gemini_client=None,  # Will be set before use
+        )
+        self._v21_crop_classifier = v21_classifier
+
+        # 6) Tier classification
+        sure_yes: List[Dict] = []
+        sure_no: List[Dict] = []
+        gray_zone: List[Dict] = []
+
+        for track in tracks:
+            result = self._tier_classifier.classify(track, tracks)
+            if result.tier == "sure_yes":
+                sure_yes.append(track)
+            elif result.tier == "sure_no":
+                sure_no.append(track)
+            else:
+                gray_zone.append(track)
+
+        # 7) Auto-detect sub-band and language from sure-YES
+        self._r3_static.set_sub_band_from_sure_yes(sure_yes)
+        self._r2_language.set_target_from_sure_yes(sure_yes, bundle)
+
+        # 8) Process sure-YES: must pass R1 + R3
+        accepted_sure_yes: List[Dict] = []
+        for track in sure_yes:
+            r1 = self._r1_motion.evaluate(track, bundle)
+            self.r1_ledger.append({
+                "track_id": track["track_id"],
+                "r1": r1.__dict__,
+            })
+            if r1.rejected:
+                continue
+            r3 = self._r3_static.evaluate(track, bundle, tracks, r2_non_target=False)
+            self.r3_ledger.append({
+                "track_id": track["track_id"],
+                "r3": r3.to_dict(),
+            })
+            if r3.rule_fired:
+                continue
+            accepted_sure_yes.append(track)
+
+        # 9) Process gray zone through R1 -> R2 -> R3 -> survivors
+        gray_survivors: List[Dict] = []
+        for track in gray_zone:
+            r1 = self._r1_motion.evaluate(track, bundle)
+            self.r1_ledger.append({
+                "track_id": track["track_id"],
+                "r1": r1.__dict__,
+            })
+            if r1.rejected:
+                continue
+            r2 = self._r2_language.evaluate(track, bundle, tracks, sure_yes)
+            self.r2_ledger.append({
+                "track_id": track["track_id"],
+                "r2": r2.__dict__,
+            })
+            if r2.rejected:
+                continue
+            r3 = self._r3_static.evaluate(
+                track, bundle, tracks, r2_non_target=r2.rejected
+            )
+            self.r3_ledger.append({
+                "track_id": track["track_id"],
+                "r3": r3.to_dict(),
+            })
+            if r3.rule_fired:
+                continue
+            # Flag static_long for Gemini
+            if r3.static_long_flag:
+                track["static_long"] = True
+            gray_survivors.append(track)
+
+        # 10) Send survivors to Gemini V2.1 packet classifier
+        final_accepted: List[Dict] = list(accepted_sure_yes)
+        if gray_survivors and v21_classifier is not None and v21_classifier.client is not None:
+            canary_tracks = sure_no[:2] if sure_no else []
+            decisions = v21_classifier.classify_batch(
+                gray_survivors, bundle, batch_size=5, canary_tracks=canary_tracks
+            )
+            for track in gray_survivors:
+                tid = track["track_id"]
+                d = decisions.get(tid, {})
+                if d.get("is_subtitle") is True:
+                    final_accepted.append(track)
+
+        # 11) Build SubtitleRegions
+        regions: List[SubtitleRegion] = []
+        for track in final_accepted:
+            decision = {
+                "model": "v21_pipeline",
+                "confidence": 0.85,
+                "category": "dialogue_subtitle",
+            }
+            conf = _clamp01(track.get("mean_detector_confidence", 0.0))
+            if conf < self._min_confidence:
+                continue
+
+            first_bbox = track["groups"][0]["union_bbox_xyxy"]
+            last_bbox = track["groups"][-1]["union_bbox_xyxy"]
+            moving = len(track["groups"]) >= 2 and box_iou(first_bbox, last_bbox) < 0.30
+
+            proposal_ids = sorted({
+                cid
+                for g in track["groups"]
+                for cid in g.get("member_candidate_ids", [])
+            })
+
+            if moving:
+                for g in track["groups"]:
+                    bbox = g["union_bbox_xyxy"]
+                    if not bbox:
+                        continue
+                    x1, y1, x2, y2 = bbox
+                    fi = g["frame_index"]
+                    src_frame = frames_by_index.get(fi)
+                    if src_frame is None:
+                        continue
+                    ts = src_frame.timestamp
+                    start_time = max(0.0, ts - frame_gap / 2.0)
+                    end_time = ts + frame_gap / 2.0
+                    try:
+                        region = SubtitleRegion(
+                            start_time=start_time,
+                            end_time=end_time,
+                            x=_clamp01(x1 / W),
+                            y=_clamp01(y1 / H),
+                            width=_clamp01((x2 - x1) / W),
+                            height=_clamp01((y2 - y1) / H),
+                            confidence=conf,
+                            classification_id=f"classification:{track['track_id']}",
+                            is_subtitle=True,
+                            classifier_model=decision["model"],
+                            track_id=track["track_id"],
+                            proposal_ids=proposal_ids,
+                            category=decision["category"],
+                            classifier_confidence=decision["confidence"],
+                        )
+                    except Exception:
+                        continue
+                    regions.append(region)
+                continue
+
+            # Stable track
+            union = (
+                track.get("temporal_union_bbox_xyxy")
+                or track.get("median_bbox_xyxy")
+                or []
+            )
+            if not union:
+                continue
+            x1, y1, x2, y2 = union
+
+            first_idx = track["groups"][0]["frame_index"]
+            last_idx = track["groups"][-1]["frame_index"]
+            first_frame = frames_by_index.get(first_idx)
+            last_frame = frames_by_index.get(last_idx)
+            if first_frame is None or last_frame is None:
+                continue
+
+            start_time = first_frame.timestamp
+            end_time = last_frame.timestamp
+            if end_time < start_time:
+                end_time = start_time
+            start_time = max(0.0, start_time - frame_gap / 2.0)
+            end_time = end_time + frame_gap / 2.0
+
+            try:
+                region = SubtitleRegion(
+                    start_time=start_time,
+                    end_time=end_time,
+                    x=_clamp01(x1 / W),
+                    y=_clamp01(y1 / H),
+                    width=_clamp01((x2 - x1) / W),
+                    height=_clamp01((y2 - y1) / H),
+                    confidence=conf,
+                    classification_id=f"classification:{track['track_id']}",
+                    is_subtitle=True,
+                    classifier_model=decision["model"],
+                    track_id=track["track_id"],
+                    proposal_ids=proposal_ids,
+                    category=decision["category"],
+                    classifier_confidence=decision["confidence"],
+                )
+            except Exception:
+                continue
+            regions.append(region)
+
+        return self._deduplicate_confirmed_fragments(regions, W, H)
 
     def _crop_decisions_for_uncertain_tracks(
         self, tracks: List[Dict[str, Any]], frame_height: int

@@ -11,6 +11,21 @@ from src.application.dto.proposal_bundle import DecodedFrame, ProposalBundle
 
 logger = logging.getLogger(__name__)
 
+CROP_PADDING: int = 8  # ~10% margin for full-res crops (STEP 0)
+
+
+def _resize_720p(image):
+    """Downscale image so max dimension is ~720px, preserving aspect ratio."""
+    import cv2
+    H, W = image.shape[:2]
+    max_dim = max(H, W)
+    if max_dim <= 720:
+        return image.copy()
+    scale = 720.0 / max_dim
+    new_w = int(round(W * scale))
+    new_h = int(round(H * scale))
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
 
 # ---------------------------------------------------------------------------
 # YoloTextProposalProvider — now supports both legacy detect() / detect_images()
@@ -142,8 +157,12 @@ class YoloTextProposalProvider:
                 img_path = os.path.join(output_dir, f"frame_{fi:06d}.jpg")
                 cv2.imwrite(img_path, orig_img)
 
-            # Collect detections for this frame
+            # Downscale frame to ~720p for Gemini context (STEP 0)
+            image_720p = _resize_720p(orig_img)
+
+            # Collect detections for this frame + pre-extract full-res crops (STEP 0)
             frame_detections: List[Dict[str, Any]] = []
+            frame_crops: list[Any] = []
             for box in r.boxes:
                 frame_counts[fi] = frame_counts.get(fi, 0) + 1
                 ci = frame_counts[fi]
@@ -158,6 +177,15 @@ class YoloTextProposalProvider:
                     "confidence": round(float(box.conf[0]), 4),
                     "class": "text",
                 })
+                # Pre-extract full-res crop for this detection (STEP 0)
+                import cv2 as _cv2
+                x1, y1, x2, y2 = [int(round(v)) for v in xyxy]
+                px1 = max(0, x1 - CROP_PADDING)
+                py1 = max(0, y1 - CROP_PADDING)
+                px2 = min(W, x2 + CROP_PADDING)
+                py2 = min(H, y2 + CROP_PADDING)
+                crop = orig_img[py1:py2, px1:px2].copy()
+                frame_crops.append(crop)
 
             bundle.add_frame(
                 frame_index=fi,
@@ -166,6 +194,9 @@ class YoloTextProposalProvider:
                 image_path=img_path,
                 detections=frame_detections,
             )
+            # Store 720p downscale and crops on the frame we just added
+            bundle.frames[-1].image_720p = image_720p
+            bundle.frames[-1].crops = frame_crops
 
         if not bundle.frames:
             raise RuntimeError(

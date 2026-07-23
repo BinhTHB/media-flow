@@ -1,4 +1,4 @@
-﻿"""Track crop extractor for STEP B evidence pack.
+"""Track crop extractor for STEP B evidence pack.
 
 Extracts representative crops and trajectory metadata from ProposalBundle.
 Single-decode: NO re-decode or video seek (frame_for_index only).
@@ -23,7 +23,12 @@ class TrackCropExtractor:
         max_crops: int = 5,
         padding: int = 8,
     ) -> Dict[str, Any]:
-        """Return evidence pack dict or empty dict if no valid groups."""
+        """Return evidence pack dict or empty dict if no valid groups.
+
+        Uses pre-cached 720p frames and full-res crops from ProposalBundle
+        when available (STEP-0 single-pass). Falls back to on-demand extraction
+        for legacy code paths.
+        """
         from src.application.dto.proposal_bundle import ProposalBundle
         groups = track.get("groups", [])
         if not groups:
@@ -42,6 +47,8 @@ class TrackCropExtractor:
 
         crops: List[Any] = []
         clean_frames: List[Any] = []
+        # Track whether we use cached crops so we can skip per-candidate crop IDs
+        use_cached_crops = True
 
         for idx in rep_indices:
             group = groups[idx]
@@ -49,19 +56,39 @@ class TrackCropExtractor:
             bbox = group["union_bbox_xyxy"]  # [x1, y1, x2, y2]
             try:
                 decoded = proposal_bundle.frame_for_index(fi)
-                img = decoded.image  # single-decode source, never re-decoded
             except (KeyError, AttributeError):
                 continue
 
-            H, W = img.shape[:2]
-            x1, y1, x2, y2 = bbox
-            px1 = max(0, int(round(x1 - padding)))
-            py1 = max(0, int(round(y1 - padding)))
-            px2 = min(W, int(round(x2 + padding)))
-            py2 = min(H, int(round(y2 + padding)))
-            crop = img[py1:py2, px1:px2]
-            crops.append(crop.copy())       # isolated copy
-            clean_frames.append(img.copy())  # isolated copy
+            # Prefer cached 720p context frame (STEP 0), fallback to full-res
+            if decoded.image_720p is not None:
+                clean_frames.append(decoded.image_720p.copy())
+            else:
+                clean_frames.append(decoded.image.copy())
+
+            # Prefer cached full-res crops (STEP 0), fallback to on-demand slice
+            if decoded.crops:
+                # Find which detection index corresponds to this group's candidates
+                candidate_ids = set(group.get("member_candidate_ids", []))
+                found = False
+                for det_idx, det in enumerate(decoded.detections):
+                    det_cid = det.get("candidate_id", "")
+                    if det_cid in candidate_ids and det_idx < len(decoded.crops):
+                        crops.append(decoded.crops[det_idx].copy())
+                        found = True
+                        break
+                if not found:
+                    use_cached_crops = False
+                    crops.append(self._extract_crop(decoded.image, bbox, padding))
+            else:
+                use_cached_crops = False
+                crops.append(self._extract_crop(decoded.image, bbox, padding))
+
+        # If not all crops resolved from cache, fall back entirely
+        if not use_cached_crops and len(crops) == len(rep_indices):
+            pass  # All resolved via mixed strategy
+
+        if not crops or not clean_frames:
+            return {}
 
         # Trajectory metrics from temporal union bbox
         union_bbox = (
@@ -100,6 +127,21 @@ class TrackCropExtractor:
                 "last_center": (lc_x, lc_y),
             },
         }
+
+    @staticmethod
+    def _extract_crop(
+        img: Any, bbox: list[float], padding: int
+    ) -> Any:
+        """On-demand crop extraction from a decoded frame."""
+        import cv2
+        H, W = img.shape[:2]
+        x1, y1, x2, y2 = bbox
+        px1 = max(0, int(round(x1 - padding)))
+        py1 = max(0, int(round(y1 - padding)))
+        px2 = min(W, int(round(x2 + padding)))
+        py2 = min(H, int(round(y2 + padding)))
+        crop = img[py1:py2, px1:px2]
+        return crop.copy()
 
     @staticmethod
     def add_behavior_metadata(

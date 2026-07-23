@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List
 
 
 @dataclass
 class DecodedFrame:
-    """A frame and its YOLO detections from one video-stream decode pass."""
+    """A frame and its YOLO detections from one video-stream decode pass.
+
+    Stores the original full-res image plus a 720p context version and
+    pre-extracted full-res crops per detection (STEP-0 cache).
+    """
 
     frame_index: int
     timestamp_sec: float
     image: Any
     image_path: str | None
     detections: list[dict[str, Any]] = field(default_factory=list)
+    image_720p: Any | None = None  # Downscale ~720px max dimension (context for Gemini)
+    crops: list[Any] = field(default_factory=list)  # Full-res crops per detection (JPEG q85)
 
 
 @dataclass
