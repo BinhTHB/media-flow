@@ -119,7 +119,7 @@ def test_batch_sends_clean_full_frame_context_with_crops():
     )
 
     parts = client.generate_content.call_args.args[0].contents[0]["parts"]
-    assert "clean full-frame context" in parts[0]["text"]
+    assert "clean context frame" in parts[0]["text"]
     assert len([part for part in parts[1:] if "inline_data" in part]) == 6
 
 
@@ -134,7 +134,7 @@ def test_canary_injection_detects_rubber_stamp():
         # Subsequent calls: model is correct, flags canary as non-subtitle
         is_sub = True if call_count[0] == 1 else False
         prompt = req.contents[0]["parts"][0]["text"]
-        track_ids = re.findall(r"- Track (\w+):", prompt)
+        track_ids = re.findall(r"- Candidate (\w+):", prompt)
         decisions = [
             {
                 "track_id": track_id,
