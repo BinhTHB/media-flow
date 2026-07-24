@@ -95,7 +95,7 @@ def _build_package(round_num: int) -> None:
         "stage": "e2e_gpu",
         "job_id": f"round{round_num}-sample5",
         "git_sha": git_sha,
-        "reason": "GPU E2E not executed. PaddlePaddle-GPU is not available in local configuration (no CUDA backend). Cannot run full pipeline without GPU OCR. Sweep + offline replay completed with Paddle CPU fallback — see artifacts for diagnosis.",
+        "reason": "GPU E2E not executed. GPU unavailable in local configuration. Cannot run full pipeline without GPU.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     (artifacts_dir / "blocked_status.json").write_text(

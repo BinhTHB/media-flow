@@ -9,7 +9,10 @@ import argparse
 from pathlib import Path
 
 from scripts.run_real_video_benchmark import _apply_review_only_rejection, _interval_eligibility
-from scripts.targeted_ocr_localization import _static_region_report
+
+def _static_region_report(timestamp_reports):
+    """Placeholder: PaddleOCR-based static region report removed."""
+    return {}
 
 
 ROOT = Path(__file__).resolve().parents[1]

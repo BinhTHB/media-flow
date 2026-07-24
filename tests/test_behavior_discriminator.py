@@ -61,7 +61,7 @@ def test_missing_transcript_is_neutral():
     assert evidence.rule_fired is False
 
 
-def test_rejects_durable_static_paddle_text_even_with_continuous_speech():
+def test_rejects_durable_static_text_even_with_continuous_speech():
     bundle = ProposalBundle("video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720)
     image = np.zeros((720, 1280, 3), dtype=np.uint8)
     for index, timestamp in ((0, 0.0), (120, 4.0)):
@@ -84,9 +84,9 @@ def test_rejects_durable_static_paddle_text_even_with_continuous_speech():
     evidence = discriminator.evaluate_static_content(track, bundle)
 
     assert evidence.rule_fired is True
-    assert evidence.rule_reason == "durable_static_paddle_text"
+    assert evidence.rule_reason == "durable_static_text"
     assert evidence.static_text_similarity == 1.0
-    assert evidence.paddle_text_samples == ("OMEGA", "OMEGA")
+    assert evidence.ocr_text_samples == ("OMEGA", "OMEGA")
 
 
 def test_static_content_rule_keeps_short_bottom_subtitle():

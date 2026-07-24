@@ -131,7 +131,6 @@ def _create_hybrid_yolo(options):
 
 def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.ocr.mock_ocr_provider import MockOCRProvider
-    from src.infrastructure.providers.ocr.paddle_ocr_provider import PaddleOCRProvider
     from src.infrastructure.providers.ocr.gemini_multistage_ocr_provider import GeminiMultiStageOCRProvider
     from src.infrastructure.providers.ocr.gemini_vision_ocr_provider import GeminiVisionOCRProvider
     from src.infrastructure.providers.ocr.gemini_video_direct_provider import GeminiDirectVideoOCRProvider
@@ -142,7 +141,6 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     from src.infrastructure.providers.subtitle.mock_subtitle_provider import MockSubtitleProvider
     from src.infrastructure.providers.subtitle.ass_subtitle_provider import ASSSubtitleProvider
     from src.infrastructure.providers.subtitle.mock_subtitle_region_detector_provider import MockSubtitleRegionDetectorProvider
-    from src.infrastructure.providers.subtitle.paddle_subtitle_region_detector_provider import PaddleOCRSubtitleRegionDetectorProvider
     from src.infrastructure.providers.subtitle.pillow_subtitle_placement_debug_provider import PillowSubtitlePlacementDebugProvider
     from src.infrastructure.providers.video.ffmpeg_video_provider import FFmpegVideoProvider
     from src.infrastructure.providers.video.mock_video_provider import MockVideoProvider
@@ -212,15 +210,6 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     )
     registry.register(
         "subtitle_region_detector",
-        "paddle",
-        lambda opt: PaddleOCRSubtitleRegionDetectorProvider(
-            language=opt.get("language", "ch"),
-            use_gpu=opt.get("use_gpu", True),
-            min_confidence=float(opt.get("min_confidence", 0.70)),
-        ),
-    )
-    registry.register(
-        "subtitle_region_detector",
         "hybrid_yolo",
         _create_hybrid_yolo,
     )
@@ -239,10 +228,6 @@ def register_default_providers(registry: ProviderRegistry) -> None:
 
     # ocr
     registry.register("ocr", "mock", MockOCRProvider)
-    registry.register("ocr", "paddle", lambda opt: PaddleOCRProvider(
-        language=opt.get("language", "ch"),
-        use_gpu=opt.get("use_gpu", True),
-    ))
     registry.register("ocr", "hybrid_gemini", _create_hybrid_gemini_ocr)
     registry.register("ocr", "gemini_vision", lambda opt: GeminiVisionOCRProvider(
         runtime=opt.get("runtime"),

@@ -454,7 +454,7 @@ class GeminiVisionOCRProvider(OCRProvider):
             "provenance.json": self.provenance,
             "usage.json": usage,
             "comparison.json": {
-                "paddle_reference": None,
+                "ocr_reference": None,
                 "gemini_observations": self.observations,
                 "segment_count": len(segments),
                 "notes": "shadow only; not merged into production",

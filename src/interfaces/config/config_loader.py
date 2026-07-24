@@ -317,7 +317,7 @@ class ConfigLoader:
             gemini=gemini,
             provider_fallback=ProviderFallbackConfig(
                 ocr_fallback_provider=fallback_raw.get(
-                    "ocr_fallback_provider", "paddle"
+                    "ocr_fallback_provider", "gemini_vision"
                 ),
                 speech_fallback_provider=fallback_raw.get(
                     "speech_fallback_provider", "faster-whisper"

@@ -156,7 +156,7 @@ class R3StaticDiscriminator:
         # Displacement
         displacement = self._displacement(track)
 
-        # Static text similarity (from PaddleOCR)
+        # Static text similarity
         text_sim = self._text_similarity(track, proposal_bundle)
 
         # Check if within sub band
@@ -305,7 +305,7 @@ class R3StaticDiscriminator:
     def _text_similarity(
         self, track: Dict[str, Any], proposal_bundle: Any
     ) -> float | None:
-        """Compute text similarity across track frames using PaddleOCR."""
+        """Compute text similarity across track frames."""
         groups = track.get("groups", [])
         if len(groups) < 2:
             return None
@@ -343,23 +343,8 @@ class R3StaticDiscriminator:
         return min(pairs) if pairs else 0.0
 
     def _read_text(self, crop: Any) -> str:
-        """OCR text from a crop image using PaddleOCR."""
-        try:
-            import paddleocr
-            if not hasattr(self, "_paddle_ocr"):
-                self._paddle_ocr = paddleocr.PaddleOCR(
-                    lang="ch", device="gpu",
-                    enable_mkldnn=False,
-                    engine_config={"paddle_static": {"enable_new_ir": False}},
-                    show_log=False,
-                )
-            result = self._paddle_ocr.ocr(crop)
-            page = result[0] if result else []
-            if isinstance(page, dict):
-                return " ".join(str(item) for item in page.get("rec_texts", []))
-            return " ".join(str(line[1][0]) for line in page if len(line) == 2)
-        except Exception:
-            return ""
+        """OCR text from a crop image (disabled)."""
+        return ""
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -388,7 +373,7 @@ class BehaviorEvidence:
     rule_fired: bool
     rule_reason: str
     static_text_similarity: float | None = None
-    paddle_text_samples: tuple[str, ...] = ()
+    ocr_text_samples: tuple[str, ...] = ()
 
 
 class TrackBehaviorDiscriminator:
@@ -460,10 +445,10 @@ class TrackBehaviorDiscriminator:
         return replace(
             evidence,
             static_text_similarity=round(similarity, 4) if normalized else None,
-            paddle_text_samples=samples,
+            ocr_text_samples=samples,
             rule_fired=evidence.rule_fired or static,
             rule_reason=(
-                "durable_static_paddle_text"
+                "durable_static_text"
                 if static
                 else evidence.rule_reason
             ),

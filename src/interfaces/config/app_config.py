@@ -173,7 +173,7 @@ class GeminiConfig:
 
 @dataclass
 class ProviderFallbackConfig:
-    ocr_fallback_provider: str = "paddle"
+    ocr_fallback_provider: str = "gemini_vision"
     speech_fallback_provider: str = "faster-whisper"
     ocr_fallback_enabled: bool = True
     speech_fallback_enabled: bool = True

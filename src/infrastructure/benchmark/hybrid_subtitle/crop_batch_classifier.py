@@ -10,7 +10,6 @@ adjacent_confirmed_subtitle: computed in CODE, NOT shown to model.
 Model returns per-candidate {candidate_id, subtitle y/n, burn_in y/n, text_echo}.
 Accept on subtitle=y (burn_in=n is additional signal, NOT AND gate).
 
-Echo-check fuzzy >= 0.6 vs Paddle text → mismatch → retry solo-packet once.
 Budget: total <= 60, retry <= 10% candidates.
 
 Bất biến V2.1: reject-only canary. Fail-closed on canary failure.
@@ -21,7 +20,6 @@ import cv2
 import json
 import logging
 import time
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,8 +27,6 @@ from .crop_extractor import TrackCropExtractor
 
 logger = logging.getLogger(__name__)
 
-FUZZY_THRESHOLD: float = 0.6  # Echo-check threshold
-MAX_RETRY_RATIO: float = 0.10  # Max retries as fraction of total candidates
 BUDGET_LIMIT: int = 60
 
 
@@ -65,7 +61,6 @@ class CropBatchClassifierV21:
         self.total_candidates = 0
         self.retry_count = 0
         self.unresolved_count = 0
-        self.echo_check_ocr_error_count = 0
 
     def set_run_context(self, job_id: str, run_id: str = "") -> None:
         self.job_id = job_id
@@ -294,7 +289,7 @@ class CropBatchClassifierV21:
 
             self._log_ledger(resp, len(batch), canary_passed)
 
-            # Map decisions back to tracks, run echo-check
+            # Map decisions back to tracks (pass-through directly, no echo-check fallback)
             mapped: Dict[str, Any] = {}
             for t in batch:
                 tid = t["track_id"]
@@ -305,28 +300,6 @@ class CropBatchClassifierV21:
                         tid,
                     )
                     continue
-
-                # Echo-check
-                echo_ok = self._echo_check(decision, t, proposal_bundle)
-                if not echo_ok:
-                    if self.retry_count < max(
-                        1, int(self.total_candidates * MAX_RETRY_RATIO)
-                    ):
-                        self.retry_count += 1
-                        # Solo retry
-                        solo = self._classify_one_batch(
-                            [t], proposal_bundle, canary_tracks, is_retry=True
-                        )
-                        if solo:
-                            mapped[tid] = solo[tid]
-                            continue
-                    self.unresolved_count += 1
-                    logger.warning(
-                        "LOUD-WARN: Echo-check failed for %s (unresolved). NO.",
-                        tid,
-                    )
-                    decision["is_subtitle"] = False
-                    decision["echo_mismatch"] = True
 
                 mapped[tid] = decision
 
@@ -458,114 +431,6 @@ class CropBatchClassifierV21:
         prompt_parts.extend(images_in_request)
 
         return prompt_parts
-
-    def _echo_check(
-        self,
-        decision: Dict[str, Any],
-        track: Dict[str, Any],
-        proposal_bundle: Any,
-    ) -> bool:
-        """Echo-check: fuzzy match Gemini text_echo vs PaddleOCR text.
-
-        Returns True if match >= FUZZY_THRESHOLD or pass-through on error.
-        Rejects track if Gemini produces text but Paddle runs successfully and finds nothing.
-        """
-        echo_text = decision.get("text_echo", "")
-        if not echo_text:
-            return True  # No echo text provided, skip check
-
-        # Get Paddle text from track crops
-        paddle_text, had_error = self._get_paddle_text(track, proposal_bundle)
-        
-        # Fail-safe V2.1: pass-through on OCR error/crash
-        if had_error:
-            logger.warning(
-                "LOUD-WARN: OCR error occurred during evaluation of track %s. "
-                "Pass-through allowed. (errors=%d)",
-                track.get("track_id"), self.echo_check_ocr_error_count
-            )
-            return True
-
-        if not paddle_text:
-            # Gemini claims subtitle text but Paddle executed successfully and saw nothing
-            # -> Candidate is likely a non-subtitle (hallucination on green HUD/UI or blank crop)
-            logger.warning(
-                "Echo-reject: Gemini '%s' but Paddle empty for track %s",
-                echo_text[:50], track.get("track_id")
-            )
-            return False
-
-        # Fuzzy match
-        similarity = SequenceMatcher(
-            None,
-            echo_text.lower().strip(),
-            paddle_text.lower().strip(),
-        ).ratio()
-
-        if similarity < FUZZY_THRESHOLD:
-            logger.warning(
-                "Echo-check: Gemini '%s' vs Paddle '%s' = %.2f (threshold %.1f)",
-                echo_text[:50], paddle_text[:50], similarity, FUZZY_THRESHOLD,
-            )
-            return False
-
-        return True
-
-    def _get_paddle_text(
-        self, track: Dict[str, Any], proposal_bundle: Any
-    ) -> Tuple[str, bool]:
-        """Extract PaddleOCR text from track crops.
-
-        Returns (joined_texts, had_error).
-        """
-        groups = track.get("groups", [])
-        texts: List[str] = []
-        errors: List[bool] = []
-        for group in groups:
-            fi = group.get("frame_index", -1)
-            try:
-                decoded = proposal_bundle.frame_for_index(fi)
-            except (KeyError, AttributeError):
-                continue
-            if not decoded.crops or not decoded.detections:
-                continue
-            candidate_ids = set(group.get("member_candidate_ids", []))
-            for det_idx, det in enumerate(decoded.detections):
-                if det.get("candidate_id", "") in candidate_ids and det_idx < len(decoded.crops):
-                    text, err = self._ocr_simple(decoded.crops[det_idx])
-                    errors.append(err)
-                    if not err and text.strip():
-                        texts.append(text)
-                    break
-        return " ".join(texts), any(errors)
-
-    def _ocr_simple(self, crop: Any) -> Tuple[str, bool]:
-        """Simple PaddleOCR call on a crop image.
-
-        Returns (text, is_error).
-        """
-        try:
-            import paddleocr
-            if not hasattr(self, "_paddle"):
-                self._paddle = paddleocr.PaddleOCR(
-                    lang="ch",
-                    device="gpu",
-                    enable_mkldnn=False,
-                    engine_config={"paddle_static": {"enable_new_ir": False}},
-                )
-            result = self._paddle.ocr(crop)
-            page = result[0] if result else []
-            if isinstance(page, dict):
-                text = " ".join(str(item) for item in page.get("rec_texts", []))
-            else:
-                text = " ".join(str(line[1][0]) for line in page if len(line) == 2)
-            return text, False
-        except Exception as exc:
-            self.echo_check_ocr_error_count += 1
-            logger.warning(
-                "LOUD-WARN: exception during PaddleOCR invocation: %s", exc
-            )
-            return "", True
 
     def _log_ledger(self, resp: Any, batch_size: int, canary_passed: bool) -> None:
         if self.artifact_dir is None:

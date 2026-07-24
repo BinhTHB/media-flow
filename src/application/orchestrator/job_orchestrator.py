@@ -123,18 +123,6 @@ class JobOrchestrator:
             and placement_config.placement_mode == "replace_source_subtitle"
         )
         cache_validator = ArtifactCacheValidator()
-        if (
-            job.features.ocr
-            and job.features.subtitle_placement
-            and controls.run_ocr
-            and controls.run_subtitle_region_detection
-            and self.detect_onscreen_text_uc.ocr_provider.__class__.__name__.startswith("Paddle")
-            and self.detect_subtitle_region_uc.provider.__class__.__name__.startswith("Paddle")
-            and not getattr(self.detect_onscreen_text_uc.ocr_provider, "use_gpu", False)
-        ):
-            print(
-                "Warning: CPU PaddleOCR will run twice and may take a long time. Use cache or GPU."
-            )
         try:
             if job.features.speech_to_text and controls.run_asr:
                 started = time.monotonic()

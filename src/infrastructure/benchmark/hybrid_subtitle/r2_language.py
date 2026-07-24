@@ -3,7 +3,7 @@
 Rejects non-target language subtitles while allowing bilingual exceptions.
 
 Target language is set via config (--source-sub-language) or auto-detected
-from sure-YES filtered tracks. Reject ONLY when >= 2 distinct PaddleOCR
+from sure-YES filtered tracks. Reject ONLY when >= 2 distinct OCR
 samples on DIFFERENT frames confidently agree on non-target language.
 
 Track containing non-target text BUT temporally adjacent + spatially adjacent
@@ -49,7 +49,7 @@ class R2Result:
 class R2LanguageDetector:
     """Reject non-target language subtitle tracks.
 
-    Language detection uses PaddleOCR text results from the track's crops.
+    Language detection uses OCR text results from the track's crops.
     Works as a filter on top of TierClassifier's gray zone tracks.
     """
 
@@ -136,7 +136,7 @@ class R2LanguageDetector:
                 reason="No groups — insufficient language samples",
             )
 
-        # Extract text samples from PaddleOCR via existing crop infrastructure
+        # Extract text samples via existing crop infrastructure
         texts = self._extract_track_texts(track, proposal_bundle)
         if len(texts) < self.MIN_SAMPLES_FOR_REJECTION:
             return R2Result(
@@ -270,29 +270,8 @@ class R2LanguageDetector:
         return all_texts
 
     def _ocr_crop(self, crop: Any) -> str:
-        """Simple OCR on a crop using PaddleOCR.
-
-        Falls back to no-op if PaddleOCR is unavailable.
-        """
-        try:
-            import paddleocr
-            if not hasattr(self, "_paddle"):
-                self._paddle = paddleocr.PaddleOCR(
-                    lang="ch",  # Multi-language model
-                    device="gpu",
-                    enable_mkldnn=False,
-                    engine_config={"paddle_static": {"enable_new_ir": False}},
-                    show_log=False,
-                )
-            result = self._paddle.ocr(crop)
-            page = result[0] if result else []
-            if isinstance(page, dict):
-                lines = page.get("rec_texts", [])
-            else:
-                lines = [str(line[1][0]) for line in page if len(line) == 2]
-            return " ".join(lines)
-        except Exception:
-            return ""
+        """Simple OCR on a crop (disabled)."""
+        return ""
 
     def _check_bilingual_neighbor(
         self,

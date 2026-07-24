@@ -160,11 +160,11 @@ def test_phase_f_explicit_overrides():
         },
         gemini_api_key="test-key"
     )
-    ocr_p = factory.create_ocr_provider(name="paddle")
+    ocr_p = factory.create_ocr_provider(name="gemini_vision")
     speech_p = factory.create_speech_provider(name="faster-whisper")
 
     assert not isinstance(ocr_p, FallbackOCRProvider)
-    assert ocr_p.__class__.__name__ == "PaddleOCRProvider"
+    assert ocr_p.__class__.__name__ == "GeminiVisionOCRProvider"
     assert not isinstance(speech_p, FallbackSpeechProvider)
     assert speech_p.__class__.__name__ == "FasterWhisperSpeechProvider"
 

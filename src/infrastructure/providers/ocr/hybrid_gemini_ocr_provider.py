@@ -128,7 +128,7 @@ class HybridGeminiOCRProvider(OCRProvider):
                     {
                         "track_id": track["track_id"],
                         **evidence.__dict__,
-                        "paddle_text_samples": list(evidence.paddle_text_samples),
+                        "ocr_text_samples": list(evidence.ocr_text_samples),
                     }
                 )
                 if evidence.rule_fired:
