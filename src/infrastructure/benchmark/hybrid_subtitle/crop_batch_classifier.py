@@ -438,26 +438,50 @@ class CropBatchClassifierV21:
         try:
             self.artifact_dir.mkdir(parents=True, exist_ok=True)
             ledger_path = self.artifact_dir / "crop_classifier_v21_ledger.jsonl"
+            
+            # Extract request details
+            echo_text = getattr(resp, "text", "")
+            usage_info = {}
+            if hasattr(resp, "usage") and resp.usage:
+                if hasattr(resp.usage, "to_dict"):
+                    usage_info = resp.usage.to_dict()
+                else:
+                    try:
+                        usage_info = dict(resp.usage)
+                    except Exception:
+                        pass
+            elif hasattr(resp, "usage_metadata") and resp.usage_metadata:
+                usage_info = {
+                    "input_tokens": getattr(resp.usage_metadata, "prompt_token_count", 0),
+                    "output_tokens": getattr(resp.usage_metadata, "candidates_token_count", 0),
+                    "total_tokens": getattr(resp.usage_metadata, "total_token_count", 0)
+                }
+
+            # Generate request hash for traceability
+            prompt_content = getattr(resp, "request_id", "") + "_" + echo_text[:100]
+            import hashlib
+            rhash = hashlib.sha256(prompt_content.encode("utf-8")).hexdigest()[:12]
+
             log_entry = {
                 "timestamp": time.time(),
                 "job_id": self.job_id,
                 "run_id": self.run_id,
-                "request_id": getattr(resp, "request_id", "")
-                or f"crop_batch_v21_{self.requests_sent - 1}",
+                "request_id": getattr(resp, "request_id", "") or f"crop_batch_v21_{self.requests_sent - 1}",
+                "request_hash": rhash,
                 "route": "crop_classifier_v21",
-                "live_or_cache": "cache"
-                if getattr(resp, "cache_hit", False)
-                else "live",
+                "live_or_cache": "cache" if getattr(resp, "cache_hit", False) else "live",
+                "cache_hit": getattr(resp, "cache_hit", False),
+                "variant": "separator_batch" if batch_size > 1 else "single_crop",
                 "batch_size": batch_size,
                 "canary_pass": canary_passed,
                 "model": self.model,
-                "total_candidates": self.total_candidates,
-                "retry_count": self.retry_count,
-                "unresolved_count": self.unresolved_count,
+                "tokens": usage_info,
+                "echo": echo_text,
                 "finish_reason": getattr(resp, "finish_reason", "STOP"),
+                "total_candidates": self.total_candidates,
             }
             with open(ledger_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(log_entry) + "\n")
+                f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
         except Exception as exc:
             logger.warning(
                 "LOUD-WARN: Failed to write ledger: %s", exc
