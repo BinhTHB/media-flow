@@ -8,7 +8,8 @@
     "recall": 1.0
   },
   "scenario_gpu_production_success": {
-    "description": "PaddleOCR runs successfully (had_error=False). Positives detected, FPs empty.",
+    "status": "HYPOTHETICAL",
+    "description": "HYPOTHETICAL GPU scenario assuming clean PaddleOCR output (empty on non-subtitle background, positive on dialogue). Under this ideal assumption, FPs are eliminated.",
     "true_positives": 14,
     "false_positives": 0,
     "false_negatives": 0,

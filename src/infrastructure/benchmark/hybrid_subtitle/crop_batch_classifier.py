@@ -552,7 +552,6 @@ class CropBatchClassifierV21:
                     device="gpu",
                     enable_mkldnn=False,
                     engine_config={"paddle_static": {"enable_new_ir": False}},
-                    show_log=False,
                 )
             result = self._paddle.ocr(crop)
             page = result[0] if result else []

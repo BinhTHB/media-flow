@@ -1,0 +1,146 @@
+[
+  {
+    "crop_id": "T030_crop0",
+    "track_id": "T030",
+    "is_positive": false,
+    "ch": "g ST",
+    "vi": "g ST",
+    "time_s": 14.73
+  },
+  {
+    "crop_id": "T030_crop1",
+    "track_id": "T030",
+    "is_positive": false,
+    "ch": "DOO",
+    "vi": "DOO",
+    "time_s": 8.24
+  },
+  {
+    "crop_id": "T133_crop0",
+    "track_id": "T133",
+    "is_positive": true,
+    "ch": "nen",
+    "vi": "nen",
+    "time_s": 4.33
+  },
+  {
+    "crop_id": "T133_crop1",
+    "track_id": "T133",
+    "is_positive": true,
+    "ch": "nen",
+    "vi": "nen",
+    "time_s": 4.34
+  },
+  {
+    "crop_id": "T055_crop0",
+    "track_id": "T055",
+    "is_positive": false,
+    "ch": "",
+    "vi": "",
+    "time_s": 2.63
+  },
+  {
+    "crop_id": "T055_crop1",
+    "track_id": "T055",
+    "is_positive": false,
+    "ch": "G",
+    "vi": "G",
+    "time_s": 3.88
+  },
+  {
+    "crop_id": "T003_crop0",
+    "track_id": "T003",
+    "is_positive": true,
+    "ch": "tai",
+    "vi": "tai",
+    "time_s": 3.96
+  },
+  {
+    "crop_id": "T003_crop1",
+    "track_id": "T003",
+    "is_positive": true,
+    "ch": "tai",
+    "vi": "tai",
+    "time_s": 4.07
+  },
+  {
+    "crop_id": "T135_crop0",
+    "track_id": "T135",
+    "is_positive": true,
+    "ch": "Y",
+    "vi": "Y",
+    "time_s": 3.92
+  },
+  {
+    "crop_id": "T135_crop1",
+    "track_id": "T135",
+    "is_positive": true,
+    "ch": "M",
+    "vi": "M",
+    "time_s": 3.86
+  },
+  {
+    "crop_id": "T138_crop0",
+    "track_id": "T138",
+    "is_positive": true,
+    "ch": "",
+    "vi": "",
+    "time_s": 2.7
+  },
+  {
+    "crop_id": "T138_crop1",
+    "track_id": "T138",
+    "is_positive": true,
+    "ch": "đó",
+    "vi": "đó",
+    "time_s": 3.98
+  },
+  {
+    "crop_id": "T044_crop0",
+    "track_id": "T044",
+    "is_positive": false,
+    "ch": "",
+    "vi": "",
+    "time_s": 4.63
+  },
+  {
+    "crop_id": "T044_crop1",
+    "track_id": "T044",
+    "is_positive": false,
+    "ch": "0'o0al",
+    "vi": "0'o0al",
+    "time_s": 4.47
+  },
+  {
+    "crop_id": "T010_crop0",
+    "track_id": "T010",
+    "is_positive": true,
+    "ch": "đê",
+    "vi": "đê",
+    "time_s": 3.9
+  },
+  {
+    "crop_id": "T010_crop1",
+    "track_id": "T010",
+    "is_positive": true,
+    "ch": "p e",
+    "vi": "p e",
+    "time_s": 5.74
+  },
+  {
+    "crop_id": "T137_crop0",
+    "track_id": "T137",
+    "is_positive": true,
+    "ch": "000",
+    "vi": "000",
+    "time_s": 4.25
+  },
+  {
+    "crop_id": "T137_crop1",
+    "track_id": "T137",
+    "is_positive": true,
+    "ch": "con",
+    "vi": "con",
+    "time_s": 4.36
+  }
+]

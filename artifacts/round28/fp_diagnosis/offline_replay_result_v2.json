@@ -1,0 +1,71 @@
+{
+  "status": "MEASURED",
+  "sweep_env": {
+    "python": ".venv/Scripts/python (Paddle 3.1.1)",
+    "paddleocr": "3.7.0",
+    "device": "cpu (gpu fallback, no CUDA PaddlePaddle available)",
+    "lang": "ch",
+    "note": "All PaddleOCR invocations run successfully, had_error=False"
+  },
+  "analysis_method": "For each track, _get_paddle_text via _ocr_simple (Fix A code path) was executed on real crops. All groups/crops per track were scanned (not just first crop).",
+  "positives": {
+    "description": "All 14 GT positives have paddle_text non-empty when scanning ALL crops in the track",
+    "total": 14,
+    "tracks_with_nonempty_text": 14,
+    "details": {
+      "T003": {"paddle_text": "tai", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T006": {"paddle_text": "tl", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T010": {"paddle_text": "đê", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T014": {"paddle_text": "9", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T016": {"paddle_text": "no", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T019": {"paddle_text": "uas", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T116": {"paddle_text": "tuy", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T120": {"paddle_text": "ta", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T127": {"paddle_text": "toc", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T133": {"paddle_text": "nen", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T135": {"paddle_text": "Y", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T137": {"paddle_text": "000", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T138": {"paddle_text": "đó", "had_error": false, "echo_check_outcome": "pass (text match)"},
+      "T146": {"paddle_text": "V1", "had_error": false, "echo_check_outcome": "pass (text match)"}
+    }
+  },
+  "false_positives": {
+    "description": "All 8 FPs have paddle_text non-empty when scanning ALL crops. Fix A asymmetric reject (paddle_empty → reject) does NOT fire for any FP.",
+    "total": 8,
+    "tracks_with_nonempty_text": 8,
+    "tracks_killed_by_fix_a": 0,
+    "details": {
+      "T030": {"paddle_text": "g ST DOO", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T041": {"paddle_text": "1000", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T044": {"paddle_text": "0'o0al", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T047": {"paddle_text": "eodod", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T055": {"paddle_text": "G", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T061": {"paddle_text": "_", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T071": {"paddle_text": "_", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false},
+      "T105": {"paddle_text": "2", "had_error": false, "echo_check_outcome": "pass (paddle non-empty)", "killed_by_fix_a": false}
+    }
+  },
+  "confusion_matrix_before_fix_a": {
+    "true_positives": 14,
+    "false_positives": 8,
+    "false_negatives": 0,
+    "precision": 0.6364,
+    "recall": 1.0
+  },
+  "confusion_matrix_after_fix_a": {
+    "true_positives": 14,
+    "false_positives": 8,
+    "false_negatives": 0,
+    "precision": 0.6364,
+    "recall": 1.0,
+    "note_fix_a_impact": "Fix A (asymmetric reject: paddle empty + echo non-empty) fires on 0/8 FPs because PaddleOCR detects at least some garbled text in every FP track. No change from baseline. This is an honest measurement, not a hypothesis."
+  },
+  "ab_lang_analysis": {
+    "lang_ch_vs_vi": "Both lang=ch and lang=vi produce identical OCR text for all tested crops. No evidence that switching to lang=vi improves detection.",
+    "conclusion": "Keep lang=ch as default."
+  },
+  "cpu_onednn_comparison": {
+    "paddle_3_3_1_onednn_bug": "all 22 tracks status=error (show_log exception). These are runtime environment errors, not Paddle OCR failures.",
+    "paddle_3_1_1_working": "all 22 tracks status=ok (had_error=False). Every track has text."
+  }
+}
