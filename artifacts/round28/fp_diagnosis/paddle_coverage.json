@@ -1,0 +1,310 @@
+{
+  "T003": {
+    "track_id": "T003",
+    "status_kind": "positive",
+    "total_groups": 16,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 2,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)\n"
+      }
+    ]
+  },
+  "T006": {
+    "track_id": "T006",
+    "status_kind": "positive",
+    "total_groups": 23,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 19,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T010": {
+    "track_id": "T010",
+    "status_kind": "positive",
+    "total_groups": 60,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 53,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T014": {
+    "track_id": "T014",
+    "status_kind": "positive",
+    "total_groups": 62,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 122,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T016": {
+    "track_id": "T016",
+    "status_kind": "positive",
+    "total_groups": 22,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 199,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T019": {
+    "track_id": "T019",
+    "status_kind": "positive",
+    "total_groups": 63,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 225,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T030": {
+    "track_id": "T030",
+    "status_kind": "false_positive",
+    "total_groups": 5,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 237,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T041": {
+    "track_id": "T041",
+    "status_kind": "false_positive",
+    "total_groups": 4,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 240,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)\n"
+      }
+    ]
+  },
+  "T044": {
+    "track_id": "T044",
+    "status_kind": "false_positive",
+    "total_groups": 5,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 242,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T047": {
+    "track_id": "T047",
+    "status_kind": "false_positive",
+    "total_groups": 48,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 243,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T055": {
+    "track_id": "T055",
+    "status_kind": "false_positive",
+    "total_groups": 14,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 246,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T061": {
+    "track_id": "T061",
+    "status_kind": "false_positive",
+    "total_groups": 35,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 254,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T071": {
+    "track_id": "T071",
+    "status_kind": "false_positive",
+    "total_groups": 14,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 272,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T105": {
+    "track_id": "T105",
+    "status_kind": "false_positive",
+    "total_groups": 1,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 298,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T116": {
+    "track_id": "T116",
+    "status_kind": "positive",
+    "total_groups": 16,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 307,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T120": {
+    "track_id": "T120",
+    "status_kind": "positive",
+    "total_groups": 25,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 325,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T127": {
+    "track_id": "T127",
+    "status_kind": "positive",
+    "total_groups": 49,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 365,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T133": {
+    "track_id": "T133",
+    "status_kind": "positive",
+    "total_groups": 91,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 428,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T135": {
+    "track_id": "T135",
+    "status_kind": "positive",
+    "total_groups": 7,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 457,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T137": {
+    "track_id": "T137",
+    "status_kind": "positive",
+    "total_groups": 7,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 530,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T138": {
+    "track_id": "T138",
+    "status_kind": "positive",
+    "total_groups": 61,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 546,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  },
+  "T146": {
+    "track_id": "T146",
+    "status_kind": "positive",
+    "total_groups": 92,
+    "final_paddle_text": "",
+    "group_details": [
+      {
+        "frame_index": 617,
+        "status": "error",
+        "text": "",
+        "error_message": "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support [pir::ArrayAttribute<pir::DoubleAttribute>]  (at ..\\paddle\\fluid\\framework\\new_executor\\instruction\\onednn\\onednn_instruction.cc:118)"
+      }
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "based_on": "artifacts/round26/gt_v2_2.json",
+  "reason": "Amending GT V2.2 positives due to 5 confirmed game HUD / scene text mislabels identified in sample5.mp4.",
+  "entries": [
+    {
+      "id": "T036",
+      "reason": "Vertical UI scroll / progress bar on the right side of the screen. Height 159px, width 103px, y=1100-1259. Not a subtitle.",
+      "crop_ref": "artifacts/round28/fn_diagnosis/T036_crop.jpg"
+    },
+    {
+      "id": "T042",
+      "reason": "HUD overlay text displaying timing/scores on the right-middle side of the screen at y=857-925. Not a subtitle.",
+      "crop_ref": "artifacts/round28/fn_diagnosis/T042_crop.jpg"
+    },
+    {
+      "id": "T053",
+      "reason": "Track pavement markings depicting green orientation triangles at y=1046-1272. No text, not a subtitle.",
+      "crop_ref": "artifacts/round28/fn_diagnosis/T053_crop.jpg"
+    },
+    {
+      "id": "T125",
+      "reason": "Lane marker / bib number '3' painted on track piste at y=862-903. Small 40x41px object, not a subtitle.",
+      "crop_ref": "artifacts/round28/fn_diagnosis/T125_crop.jpg"
+    },
+    {
+      "id": "T126",
+      "reason": "Starting blocks / shoe spikes detail on track surface at y=1056-1198. No text, not a subtitle.",
+      "crop_ref": "artifacts/round28/fn_diagnosis/T126_crop.jpg"
+    }
+  ]
+}

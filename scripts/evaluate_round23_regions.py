@@ -11,6 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "artifacts" / "round23"
 ROUND26 = ROOT / "artifacts" / "round26"
+ROUND28 = ROOT / "artifacts" / "round28"
 
 
 def _iou(left: list[float], right: list[float]) -> float:
@@ -91,10 +92,26 @@ def _v2_2_entries() -> tuple[list[dict[str, Any]], str]:
     ], digest
 
 
+def _v2_3_entries() -> tuple[list[dict[str, Any]], str]:
+    target = ROUND28 / "gt_v2_3.json"
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    return [
+        {
+            "id": item["id"],
+            "is_subtitle": item["is_subtitle"],
+            "start_time": item["timestamp_s"] - 0.25,
+            "end_time": item["timestamp_s"] + 0.25,
+            "bbox_xyxy": item["bbox_xyxy"],
+        }
+        for item in payload["entries"]
+    ], digest
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--regions", required=True, type=Path)
-    parser.add_argument("--kind", choices=("frozen", "v2", "v2_1", "v2_2"), required=True)
+    parser.add_argument("--kind", choices=("frozen", "v2", "v2_1", "v2_2", "v2_3"), required=True)
     parser.add_argument("--width", required=True, type=int)
     parser.add_argument("--height", required=True, type=int)
     parser.add_argument("--output", required=True, type=Path)
@@ -104,6 +121,8 @@ def main() -> None:
     entries, gt_sha256 = (
         _frozen_entries()
         if args.kind == "frozen"
+        else _v2_3_entries()
+        if args.kind == "v2_3"
         else _v2_2_entries()
         if args.kind == "v2_2"
         else _v2_entries(args.kind)

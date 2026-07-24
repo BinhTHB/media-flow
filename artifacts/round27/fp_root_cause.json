@@ -1,17 +1,17 @@
-﻿{
-  \""crop_classifier_applied_to\"": \""gray_survivors in step 10 of _detect_regions_v21\"",
-  \""bypass_paths\"": [
-    \""sure_yes tracks that pass R1 and R3 are auto-confirmed and bypass the Gemini classifier (step 10)\""
+{
+  "crop_classifier_applied_to": "gray_survivors in step 10 of _detect_regions_v21",
+  "bypass_paths": [
+    "sure_yes tracks that pass R1 and R3 are auto-confirmed and bypass the Gemini classifier (step 10)"
   ],
-  \""track_confirmation_counts\"": {
-    \""total_confirmed_tracks\"": 155,
-    \""maximum_processed_by_gemini\"": 84,
-    \""minimum_auto_confirmed_sure_yes\"": 71,
-    \""explanation\"": \""Out of 155 track predictions, only 84 (max) or 80 (actual ledger size) candidates were sent in batches to the Gemini V2.1 batch classifier. Therefore, at least 71-75 confirmed tracks bypassed the classifier entirely via the sure_yes path because they were classified as sure_yes by the TierClassifier and survived R1 and R3.\""
+  "track_confirmation_counts": {
+    "total_confirmed_tracks": 155,
+    "maximum_processed_by_gemini": 84,
+    "minimum_auto_confirmed_sure_yes": 71,
+    "explanation": "Out of 155 track predictions, only 84 (max) or 80 (actual ledger size) candidates were sent in batches to the Gemini V2.1 batch classifier. Therefore, at least 71-75 confirmed tracks bypassed the classifier entirely via the sure_yes path because they were classified as sure_yes by the TierClassifier and survived R1 and R3."
   },
-  \""gemini_429_evidence\"": {
-    \""occurs\"": false,
-    \""details\"": \""No 429 errors or retry attempts are logged in crop_classifier_v21_ledger.jsonl. All 8 batches completed with canary_pass=true and finish_reason=STOP.\"",
-    \""claim_retraction\"": \""Retracted 429 rate limit claim.\""
+  "gemini_429_evidence": {
+    "occurs": false,
+    "details": "No 429 errors or retry attempts are logged in crop_classifier_v21_ledger.jsonl. All 8 batches completed with canary_pass=true and finish_reason=STOP.",
+    "claim_retraction": "Retracted 429 rate limit claim."
   }
 }

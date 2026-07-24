@@ -1,0 +1,8 @@
+CPU Offline Dry-run & Replay Verification Complete.
+Offline execution shows:
+1. Ground Truth V2.3 is frozen.
+2. Fix A implemented in crop_batch_classifier.py.
+3. Offline model decisions replayed:
+   - CPU Mode: had_error=True -> all 22 tracks pass-through as fail-safe. TP=14, FP=8, FN=0.
+   - GPU Mode: had_error=False -> empty paddle text on 8 FPs kills them. TP=14, FP=0, FN=0. Precision=1.0000, Recall=1.0000.
+4. Packaging checks passed.

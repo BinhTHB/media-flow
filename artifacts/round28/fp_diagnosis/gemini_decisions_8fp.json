@@ -1,0 +1,363 @@
+{
+  "T030": [
+    {
+      "request_hash": "3a963a9fd9e6b387d8c8a66c644327a9719abf3bd9bbd5c9199aa48b5245c30a",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T030",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.9,
+        "text_echo": "OMEGA",
+        "reason": "Branding logo text on sports equipment (starting pistol)."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T022\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"e88\",\n    \"reason\": \"Text printed on a runner's jersey.\"\n  },\n  {\n    \"candidate_id\": \"T023\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"vận\",\n    \"reason\": \"Dialogue subtitle at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T024\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"2\",\n    \"reason\": \"Lane number painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T025\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"động\",\n    \"reason\": \"Dialogue subtitle at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T026\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"2\",\n    \"reason\": \"Lane number painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T027\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T028\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"On-screen timer / UI overlay.\"\n  },\n  {\n    \"candidate_id\": \"T029\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"4\",\n    \"reason\": \"Lane number painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T030\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Branding logo text on sports equipment (starting pistol).\"\n  },\n  {\n    \"candidate_id\": \"T031\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Decorative arrow graphic pointing towards an object.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary placeholder with no text.\"\n  }\n]"
+    },
+    {
+      "request_hash": "4b926d27c138ec036627cc3f3bc305ed293ac4a111db708f79eece51c95dc55e",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T030",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.9,
+        "text_echo": "0.0",
+        "reason": "On-screen graphics/timer indicating race time."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T022\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"e88\",\n    \"reason\": \"Text printed on the clothing of the athlete.\"\n  },\n  {\n    \"candidate_id\": \"T023\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"e88\",\n    \"reason\": \"Text printed on the clothing of the athlete.\"\n  },\n  {\n    \"candidate_id\": \"T024\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"2\",\n    \"reason\": \"Lane number printed on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T025\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"vận\",\n    \"reason\": \"Dialogue subtitle at the bottom of the screen translating speech.\"\n  },\n  {\n    \"candidate_id\": \"T026\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Hand/glove detail on the track.\"\n  },\n  {\n    \"candidate_id\": \"T027\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Hand/glove detail on the track.\"\n  },\n  {\n    \"candidate_id\": \"T028\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Branding logo text on starting equipment.\"\n  },\n  {\n    \"candidate_id\": \"T029\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"1\",\n    \"reason\": \"Lane number printed on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T030\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"On-screen graphics/timer indicating race time.\"\n  },\n  {\n    \"candidate_id\": \"T031\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Visual artifact near the edge of the frame.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary negative sample with no text.\"\n  }\n]"
+    },
+    {
+      "request_hash": "a1bb7d515b730998b796931a7debf1a2aade79a5b8b0fe1eb5a987d9f0c0ebd1",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T030",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "động",
+        "reason": "Vietnamese dialogue subtitle positioned at the bottom of the video frame."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T026\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"\",\n    \"reason\": \"Static scene element or marking on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T027\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"\",\n    \"reason\": \"Static scene element or marking on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T028\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"\",\n    \"reason\": \"Large lane number painted on the track surface.\"\n  },\n  {\n    \"candidate_id\": \"T029\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"\",\n    \"reason\": \"Static scene element or marking on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T030\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"động\",\n    \"reason\": \"Vietnamese dialogue subtitle positioned at the bottom of the video frame.\"\n  }\n]"
+    }
+  ],
+  "T041": [
+    {
+      "request_hash": "f8d8d58cd603a4d1271ac5e49710b324cf548fede0a6c737216f984d6725b283",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T041",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.9,
+        "text_echo": "động",
+        "reason": "Standard dialogue subtitle displayed at the bottom of the frame."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T032\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"This is a digital overlay tracking time on a running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T033\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"5\",\n    \"reason\": \"This is a lane number label embedded in the running track.\"\n  },\n  {\n    \"candidate_id\": \"T036\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"This is part of the starting block equipment structure.\"\n  },\n  {\n    \"candidate_id\": \"T040\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"6\",\n    \"reason\": \"Lane number printed on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"động\",\n    \"reason\": \"Standard dialogue subtitle displayed at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"41.0.0\",\n    \"reason\": \"Overlay timer/score text on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Lane number printed on the track surface.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number digit on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0\",\n    \"reason\": \"Part of the decimal digit overlay on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"watermark\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"Ω OMEGA\",\n    \"reason\": \"Brand logo text on equipment.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary non-subtitle sample.\"\n  }\n]"
+    },
+    {
+      "request_hash": "069a61ebacafae2467e65fd81323e14fd9e3f88ba573166b24035a00eb20f77c",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T041",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "20000.0s",
+        "reason": "Timer overlay display on track lane."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T032\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Static timer or counter overlay on the running track lane, not dialogue subtitle.\"\n  },\n  {\n    \"candidate_id\": \"T033\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer or counter overlay on track lane, not dialogue subtitle.\"\n  },\n  {\n    \"candidate_id\": \"T036\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer display on track lane.\"\n  },\n  {\n    \"candidate_id\": \"T040\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer overlay display on track.\"\n  },\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer overlay display on track lane.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer display overlay.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"28000.0\",\n    \"reason\": \"Timer overlay on track.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"động\",\n    \"reason\": \"Standard dialogue subtitle at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0\",\n    \"reason\": \"Timer overlay on track.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Branding logo text on starting block device.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary placeholder\"\n  }\n]"
+    },
+    {
+      "request_hash": "9a6b904fcba6712a58d67188abc6a86e9b181a4373af3a285f1b8fa81d0ef67c",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T041",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "đông",
+        "reason": "This is a dialogue subtitle positioned at the bottom center of the frame in a standard subtitle box background."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"đông\",\n    \"reason\": \"This is a dialogue subtitle positioned at the bottom center of the frame in a standard subtitle box background.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.00\",\n    \"reason\": \"Timer or overlay graphic showing race statistics/time.\"\n  },\n  {\n    \"candidate_id\": \"T043\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Static scene text showing lane number on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"đông\",\n    \"reason\": \"Dialogue subtitle positioned at the bottom center of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Static scene text showing a lane number on the running track.\"\n  }\n]"
+    }
+  ],
+  "T044": [
+    {
+      "request_hash": "f8d8d58cd603a4d1271ac5e49710b324cf548fede0a6c737216f984d6725b283",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T044",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "8",
+        "reason": "Lane number printed on the track surface."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T032\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"This is a digital overlay tracking time on a running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T033\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"5\",\n    \"reason\": \"This is a lane number label embedded in the running track.\"\n  },\n  {\n    \"candidate_id\": \"T036\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"This is part of the starting block equipment structure.\"\n  },\n  {\n    \"candidate_id\": \"T040\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"6\",\n    \"reason\": \"Lane number printed on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"động\",\n    \"reason\": \"Standard dialogue subtitle displayed at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"41.0.0\",\n    \"reason\": \"Overlay timer/score text on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Lane number printed on the track surface.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number digit on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0\",\n    \"reason\": \"Part of the decimal digit overlay on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"watermark\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"Ω OMEGA\",\n    \"reason\": \"Brand logo text on equipment.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary non-subtitle sample.\"\n  }\n]"
+    },
+    {
+      "request_hash": "069a61ebacafae2467e65fd81323e14fd9e3f88ba573166b24035a00eb20f77c",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T044",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "28000.0",
+        "reason": "Timer overlay on track."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T032\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Static timer or counter overlay on the running track lane, not dialogue subtitle.\"\n  },\n  {\n    \"candidate_id\": \"T033\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer or counter overlay on track lane, not dialogue subtitle.\"\n  },\n  {\n    \"candidate_id\": \"T036\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer display on track lane.\"\n  },\n  {\n    \"candidate_id\": \"T040\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer overlay display on track.\"\n  },\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer overlay display on track lane.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer display overlay.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"28000.0\",\n    \"reason\": \"Timer overlay on track.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"động\",\n    \"reason\": \"Standard dialogue subtitle at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0\",\n    \"reason\": \"Timer overlay on track.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Branding logo text on starting block device.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary placeholder\"\n  }\n]"
+    },
+    {
+      "request_hash": "9a6b904fcba6712a58d67188abc6a86e9b181a4373af3a285f1b8fa81d0ef67c",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T044",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "đông",
+        "reason": "Dialogue subtitle positioned at the bottom center of the frame."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"đông\",\n    \"reason\": \"This is a dialogue subtitle positioned at the bottom center of the frame in a standard subtitle box background.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.00\",\n    \"reason\": \"Timer or overlay graphic showing race statistics/time.\"\n  },\n  {\n    \"candidate_id\": \"T043\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Static scene text showing lane number on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"đông\",\n    \"reason\": \"Dialogue subtitle positioned at the bottom center of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Static scene text showing a lane number on the running track.\"\n  }\n]"
+    }
+  ],
+  "T047": [
+    {
+      "request_hash": "f8d8d58cd603a4d1271ac5e49710b324cf548fede0a6c737216f984d6725b283",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T047",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "0",
+        "reason": "Part of the decimal digit overlay on the running track."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T032\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"This is a digital overlay tracking time on a running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T033\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"5\",\n    \"reason\": \"This is a lane number label embedded in the running track.\"\n  },\n  {\n    \"candidate_id\": \"T036\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"This is part of the starting block equipment structure.\"\n  },\n  {\n    \"candidate_id\": \"T040\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"6\",\n    \"reason\": \"Lane number printed on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"động\",\n    \"reason\": \"Standard dialogue subtitle displayed at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"41.0.0\",\n    \"reason\": \"Overlay timer/score text on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"8\",\n    \"reason\": \"Lane number printed on the track surface.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number digit on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0\",\n    \"reason\": \"Part of the decimal digit overlay on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"watermark\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"Ω OMEGA\",\n    \"reason\": \"Brand logo text on equipment.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary non-subtitle sample.\"\n  }\n]"
+    },
+    {
+      "request_hash": "069a61ebacafae2467e65fd81323e14fd9e3f88ba573166b24035a00eb20f77c",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T047",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "20000.0",
+        "reason": "Timer overlay on track."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T032\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Static timer or counter overlay on the running track lane, not dialogue subtitle.\"\n  },\n  {\n    \"candidate_id\": \"T033\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer or counter overlay on track lane, not dialogue subtitle.\"\n  },\n  {\n    \"candidate_id\": \"T036\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer display on track lane.\"\n  },\n  {\n    \"candidate_id\": \"T040\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer overlay display on track.\"\n  },\n  {\n    \"candidate_id\": \"T041\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0s\",\n    \"reason\": \"Timer overlay display on track lane.\"\n  },\n  {\n    \"candidate_id\": \"T042\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer display overlay.\"\n  },\n  {\n    \"candidate_id\": \"T044\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"28000.0\",\n    \"reason\": \"Timer overlay on track.\"\n  },\n  {\n    \"candidate_id\": \"T045\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"động\",\n    \"reason\": \"Standard dialogue subtitle at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"20000.0\",\n    \"reason\": \"Timer overlay on track.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Branding logo text on starting block device.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary placeholder\"\n  }\n]"
+    },
+    {
+      "request_hash": "e1c9f40b764420cfb4511b527861585f2b2a4580f1fae6a9c64291e2abaddc18",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T047",
+        "is_subtitle": true,
+        "burn_in": false,
+        "category": "subtitle",
+        "confidence": 0.9,
+        "text_echo": "đông",
+        "reason": "Dialogue subtitle positioned at the bottom center of the frame with standard styling."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T046\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0\",\n    \"reason\": \"This is part of the scene elements (on-screen timer text attached to track markers).\"\n  },\n  {\n    \"candidate_id\": \"T047\",\n    \"is_subtitle\": true,\n    \"burn_in\": false,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"đông\",\n    \"reason\": \"Dialogue subtitle positioned at the bottom center of the frame with standard styling.\"\n  },\n  {\n    \"candidate_id\": \"T048\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"On-screen timer/counter text overlaying the track.\"\n  },\n  {\n    \"candidate_id\": \"T049\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0\",\n    \"reason\": \"On-screen timer text overlaying the track.\"\n  },\n  {\n    \"candidate_id\": \"T050\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"25\",\n    \"reason\": \"On-screen timer text overlaying the track.\"\n  }\n]"
+    }
+  ],
+  "T055": [
+    {
+      "request_hash": "366d5b04d6256e31f0757f5302107264b1c0c770e71ecd8ba385224bd8ba0e20",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T055",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "ký",
+        "reason": "Appears at the bottom of the frame over a gradient bar, displaying spoken dialogue text."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T055\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"ký\",\n    \"reason\": \"Appears at the bottom of the frame over a gradient bar, displaying spoken dialogue text.\"\n  },\n  {\n    \"candidate_id\": \"T056\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"Ω OMEGA\",\n    \"reason\": \"Text printed on a physical piece of equipment (starting pistol).\"\n  },\n  {\n    \"candidate_id\": \"T057\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0233s\",\n    \"reason\": \"UI timer/clock overlay tracking athletic performance.\"\n  },\n  {\n    \"candidate_id\": \"T059\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer overlay showing fractional seconds.\"\n  },\n  {\n    \"candidate_id\": \"T060\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer overlay showing fractional seconds.\"\n  },\n  {\n    \"candidate_id\": \"T063\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer overlay showing fractional seconds.\"\n  },\n  {\n    \"candidate_id\": \"T064\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer overlay showing fractional seconds.\"\n  },\n  {\n    \"candidate_id\": \"T065\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Timer overlay showing fractional seconds.\"\n  },\n  {\n    \"candidate_id\": \"T066\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"người\",\n    \"reason\": \"Appears at the bottom of the frame over a gradient bar, displaying spoken dialogue text.\"\n  },\n  {\n    \"candidate_id\": \"T067\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"AI\",\n    \"reason\": \"Appears at the bottom of the frame over a gradient bar, displaying spoken dialogue text.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary non-subtitle track.\"\n  }\n]"
+    },
+    {
+      "request_hash": "fa2f50405086a580af23d27caa62794c7ed7ae258712aeff9ff339fc36fad45a",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T055",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.9,
+        "text_echo": "đông / ký",
+        "reason": "This is a dialogue subtitle positioned at the bottom of the frame corresponding to spoken lyrics or text."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T051\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0000s\",\n    \"reason\": \"This is a timer/counter overlay on the track lane in the scene, not dialogue subtitles.\"\n  },\n  {\n    \"candidate_id\": \"T052\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"This is part of the timer overlay on the track lane in the scene.\"\n  },\n  {\n    \"candidate_id\": \"T053\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.233s\",\n    \"reason\": \"This is part of the timer overlay on the track lane in the scene.\"\n  },\n  {\n    \"candidate_id\": \"T054\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"This is part of the timer overlay on the track lane in the scene.\"\n  },\n  {\n    \"candidate_id\": \"T055\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"đông / ký\",\n    \"reason\": \"This is a dialogue subtitle positioned at the bottom of the frame corresponding to spoken lyrics or text.\"\n  }\n]"
+    },
+    {
+      "request_hash": "675f397e94baf990331ec67d0fbfa7b6bcdef450ff0d692f1418be28a1a4c5ef",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T055",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "kỹ",
+        "reason": "Vietnamese subtitle text displayed at the bottom of the frame with dialogue styling."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T055\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"kỹ\",\n    \"reason\": \"Vietnamese subtitle text displayed at the bottom of the frame with dialogue styling.\"\n  },\n  {\n    \"candidate_id\": \"T056\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"Ω OMEGA\",\n    \"reason\": \"Brand logo on a starting pistol in the scene.\"\n  },\n  {\n    \"candidate_id\": \"T057\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.023s\",\n    \"reason\": \"On-screen timer/graphic overlay tracking track runner reaction time.\"\n  },\n  {\n    \"candidate_id\": \"T059\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Part of the reaction time timer graphics on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T060\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Part of the timer graphics on the track.\"\n  },\n  {\n    \"candidate_id\": \"T063\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Part of the timer graphics on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T064\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.025s\",\n    \"reason\": \"On-screen timer graphic.\"\n  },\n  {\n    \"candidate_id\": \"T065\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Part of track timer graphics.\"\n  },\n  {\n    \"candidate_id\": \"T066\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"người\",\n    \"reason\": \"Vietnamese subtitle text displayed at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T067\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"cùng\",\n    \"reason\": \"Vietnamese subtitle text displayed at the bottom of the frame.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary non-subtitle track placeholder.\"\n  }\n]"
+    }
+  ],
+  "T071": [
+    {
+      "request_hash": "ae12b13eb0b6e70d735a92ee1ff04304c453b206705f02eacd94150ffc67a0e2",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T071",
+        "is_subtitle": false,
+        "burn_in": true,
+        "category": "other",
+        "confidence": 0.9,
+        "text_echo": "",
+        "reason": "Tracking numbers/graphics overlay on the running track."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T069\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"có\",\n    \"reason\": \"Dialogue subtitle at bottom of frame translating speech.\"\n  },\n  {\n    \"candidate_id\": \"T070\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Part of starting blocks mechanism/hardware on running track, not subtitle text.\"\n  },\n  {\n    \"candidate_id\": \"T071\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"other\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Tracking numbers/graphics overlay on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T072\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"other\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Dynamic camera tracking graphics/overlays.\"\n  },\n  {\n    \"candidate_id\": \"T073\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Starting block structure on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T075\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"other\",\n    \"confidence\": 0.85,\n    \"text_echo\": \"\",\n    \"reason\": \"Running track graphics overlay.\"\n  },\n  {\n    \"candidate_id\": \"T076\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"thể\",\n    \"reason\": \"Dialogue subtitle at bottom of frame translating speech.\"\n  },\n  {\n    \"candidate_id\": \"T077\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Starting blocks mechanism on running track.\"\n  },\n  {\n    \"candidate_id\": \"T080\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"other\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Running track graphic overlay.\"\n  },\n  {\n    \"candidate_id\": \"T086\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Brand logo printed on starting equipment.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"other\",\n    \"confidence\": 1.0,\n    \"text_echo\": \"\",\n    \"reason\": \"Canary placeholder for negative testing.\"\n  }\n]"
+    },
+    {
+      "request_hash": "d20c7a42927116149b41e812214470c997051a29fdf933ee1b94e1f49fee39bf",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T071",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.9,
+        "text_echo": "",
+        "reason": "Text or graphics overlay on the track."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T069\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"có\",\n    \"reason\": \"Lower third subtitle word appearing during spoken dialogue.\"\n  },\n  {\n    \"candidate_id\": \"T070\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Tracked region contains starting block mechanism or track markings.\"\n  },\n  {\n    \"candidate_id\": \"T071\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Text or graphics overlay on the track.\"\n  },\n  {\n    \"candidate_id\": \"T072\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"\",\n    \"reason\": \"Graphic element or overlay moving across the screen.\"\n  },\n  {\n    \"candidate_id\": \"T073\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Starting block mechanism.\"\n  },\n  {\n    \"candidate_id\": \"T075\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Graphic elements on track surface.\"\n  },\n  {\n    \"candidate_id\": \"T076\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"thể\",\n    \"reason\": \"Lower third subtitle word appearing during spoken dialogue.\"\n  },\n  {\n    \"candidate_id\": \"T077\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"\",\n    \"reason\": \"Timer display / digital text overlaid on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T080\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"nghe\",\n    \"reason\": \"Lower third subtitle word appearing during spoken dialogue.\"\n  },\n  {\n    \"candidate_id\": \"T086\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Tracked box is too small or static background element.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Brand logo on physical equipment (starting gun).\"\n  }\n]"
+    },
+    {
+      "request_hash": "244daae318fb0d2cf8ad88f4c1bc967675981b9ab946c223b6a52ae2088d2ac1",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T071",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "thế",
+        "reason": "Lower-center dialogue subtitle changing words over time."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T071\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"thế\",\n    \"reason\": \"Lower-center dialogue subtitle changing words over time.\"\n  },\n  {\n    \"candidate_id\": \"T072\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.98,\n    \"text_echo\": \"8900.0\",\n    \"reason\": \"On-screen timer/counter tracking runners' stats.\"\n  },\n  {\n    \"candidate_id\": \"T073\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"\",\n    \"reason\": \"Text or markings on starting blocks/objects on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T074\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"\",\n    \"reason\": \"Static tracking box or UI element on running track.\"\n  },\n  {\n    \"candidate_id\": \"T075\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.90,\n    \"text_echo\": \"\",\n    \"reason\": \"Text/marker on track obstacle.\"\n  }\n]"
+    }
+  ],
+  "T105": [
+    {
+      "request_hash": "7766aa60bbd9b55795262388a4076abd9a7f862a9e72da16b898d236979182b5",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T105",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.9,
+        "text_echo": "1",
+        "reason": "Scene text showing track numbers painted on the running track."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T087\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"2\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T092\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"1\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T093\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T094\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"10.0\",\n    \"reason\": \"Scene text / overlay graphics showing timing metrics on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T095\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"0.05332\",\n    \"reason\": \"Scene text / overlay graphics showing timing metrics.\"\n  },\n  {\n    \"candidate_id\": \"T105\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"1\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T108\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"3\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T109\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"6\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T110\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"3\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"T111\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"7\",\n    \"reason\": \"Scene text showing track numbers painted on the running track.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Brand text printed on the starting pistol object in the scene.\"\n  }\n]"
+    },
+    {
+      "request_hash": "ac09822051a193d5e070f00db62c65aeb1b21ed240f01ea5f0a49a3fb4091d98",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T105",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "S",
+        "reason": "Painted letter/number on running track surface."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T101\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T102\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"L\",\n    \"reason\": \"Painted number/letter on running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T103\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T104\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"4\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T105\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"S\",\n    \"reason\": \"Painted letter/number on running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T106\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T107\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T108\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T109\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"6\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T110\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"1\",\n    \"reason\": \"Lane number painted on the running track surface.\"\n  }\n]"
+    },
+    {
+      "request_hash": "bdb3cab576d0a24f1ffae21c8399ff79ec48ff212579769eb436e48ac9dafb8c",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T105",
+        "is_subtitle": false,
+        "burn_in": false,
+        "category": "scene_text",
+        "confidence": 0.95,
+        "text_echo": "5",
+        "reason": "Scene text printed on the running track lane."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T087\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"2\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T092\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"2\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T093\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"1\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T094\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"0.0\",\n    \"reason\": \"Scene text showing race statistics/timers on the track.\"\n  },\n  {\n    \"candidate_id\": \"T095\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"10.0\",\n    \"reason\": \"Scene text showing race statistics on the track.\"\n  },\n  {\n    \"candidate_id\": \"T105\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"5\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T108\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"5\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T109\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T110\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"T111\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"5\",\n    \"reason\": \"Scene text printed on the running track lane.\"\n  },\n  {\n    \"candidate_id\": \"canary_N001\",\n    \"is_subtitle\": false,\n    \"burn_in\": false,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"OMEGA\",\n    \"reason\": \"Brand logo/text on sports equipment (starting pistol).\"\n  }\n]"
+    },
+    {
+      "request_hash": "2b8a593af8b1561c8af08979d2994a62ad5f298f4d36c1dad2543dd43231db0b",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T105",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "đầu",
+        "reason": "Dialogue subtitle positioned at the bottom of the video frame, translating spoken words."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T101\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"This is a lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T102\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"1\",\n    \"reason\": \"This is a lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T103\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"3\",\n    \"reason\": \"This is a lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T104\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"2\",\n    \"reason\": \"This is a lane number painted on the running track surface.\"\n  },\n  {\n    \"candidate_id\": \"T105\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"đầu\",\n    \"reason\": \"Dialogue subtitle positioned at the bottom of the video frame, translating spoken words.\"\n  }\n]"
+    }
+  ],
+  "T061": [
+    {
+      "request_hash": "1284c6fd3c90c0ddc682ed76137792f54e5f14e17fd92f129ee8bb5c94c0f23a",
+      "model": "gemini-3.5-flash-lite",
+      "canary_passed_in_batch": true,
+      "raw_decision": {
+        "candidate_id": "T061",
+        "is_subtitle": true,
+        "burn_in": true,
+        "category": "subtitle",
+        "confidence": 0.95,
+        "text_echo": "người",
+        "reason": "Dialogue subtitle positioned at the bottom center of the frame."
+      },
+      "full_response_text": "[\n  {\n    \"candidate_id\": \"T061\",\n    \"is_subtitle\": true,\n    \"burn_in\": true,\n    \"category\": \"subtitle\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"người\",\n    \"reason\": \"Dialogue subtitle positioned at the bottom center of the frame.\"\n  },\n  {\n    \"candidate_id\": \"T062\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"ui\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Static video element/marker in the background.\"\n  },\n  {\n    \"candidate_id\": \"T063\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Object/hardware part in the video scene, not dialogue text.\"\n  },\n  {\n    \"candidate_id\": \"T064\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.95,\n    \"text_echo\": \"800.0\",\n    \"reason\": \"Timer/counter display embedded within the scene tracking race statistics.\"\n  },\n  {\n    \"candidate_id\": \"T065\",\n    \"is_subtitle\": false,\n    \"burn_in\": true,\n    \"category\": \"scene_text\",\n    \"confidence\": 0.9,\n    \"text_echo\": \"\",\n    \"reason\": \"Structural element in the scene.\"\n  }\n]"
+    }
+  ]
+}
