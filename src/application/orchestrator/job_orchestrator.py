@@ -1157,6 +1157,9 @@ class JobOrchestrator:
                     width=max(0.0, min(1.0, (right - left) / video_width)),
                     height=max(0.0, min(1.0, (bottom - top) / video_height)),
                     confidence=segment.confidence if segment.confidence_available else 1.0,
+                    classification_id=f"ocr_segment:{segment.id}",
+                    is_subtitle=True,
+                    classifier_model="ocr_fallback",
                 )
             )
         return regions

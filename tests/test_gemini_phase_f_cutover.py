@@ -252,6 +252,22 @@ def test_ocr_bbox_becomes_display_region_with_fallback_confidence():
         "height": 0.2,
         "confidence": 1.0,
     }
+    assert regions[0].to_dict(include_provenance=True) == {
+        "start_time": 1,
+        "end_time": 2,
+        "x": 0.1,
+        "y": 0.4,
+        "width": 0.4,
+        "height": 0.2,
+        "confidence": 1.0,
+        "classification_id": "ocr_segment:ocr-1",
+        "is_subtitle": True,
+        "classifier_model": "ocr_fallback",
+        "track_id": None,
+        "proposal_ids": [],
+        "category": None,
+        "classifier_confidence": None,
+    }
 
 
 def test_segment_cache_fields_preserve_gemini_geometry():
