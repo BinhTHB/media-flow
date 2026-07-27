@@ -451,6 +451,29 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         if not tracks:
             return []
 
+        # Product scope: only bottom-band burn-in dialogue subtitles are
+        # candidates. Apply this before every V2.1 discriminator and Gemini.
+        pre_band_count = len(tracks)
+        tracks = [
+            track for track in tracks
+            if passes_bottom_band(track, H, self._band_gate_threshold)
+        ]
+        self.band_gate_ledger = [
+            {
+                "track_id": track["track_id"],
+                "y1_norm": track_y1_norm(track, H),
+                "threshold": self._band_gate_threshold,
+                "passed": True,
+            }
+            for track in tracks
+        ]
+        logger.info(
+            "Bottom-band gate %.2f kept %d/%d V2.1 tracks before Gemini.",
+            self._band_gate_threshold, len(tracks), pre_band_count,
+        )
+        if not tracks:
+            return []
+
         # Map frame indexes
         if self.proposal_bundle is not None:
             frames_by_index = {

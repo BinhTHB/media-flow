@@ -18,8 +18,8 @@ class Proposal:
                 "frame_index": index,
                 "timestamp_ms": index * 500,
                 "candidate_id": f"F{index:05d}_C01",
-                "bbox_xyxy": [300.0, 300.0, 900.0, 600.0],
-                "bbox_normalized": [0.23, 0.42, 0.70, 0.83],
+                "bbox_xyxy": [300.0, 520.0, 900.0, 650.0],
+                "bbox_normalized": [0.23, 0.72, 0.70, 0.90],
                 "confidence": 0.9,
                 "class": "text",
             }
@@ -168,7 +168,7 @@ def test_region_provider_uses_real_frame_indices_for_sparse_bundle(tmp_path):
                 "frame_index": frame_index,
                 "timestamp_ms": frame_index / 30.0 * 1000,
                 "candidate_id": f"F{frame_index:05d}_C01",
-                "bbox_xyxy": [300.0, 300.0, 900.0, 600.0],
+                "bbox_xyxy": [300.0, 520.0, 900.0, 650.0],
                 "confidence": 0.9,
             }],
         )

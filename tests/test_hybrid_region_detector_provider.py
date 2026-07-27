@@ -627,6 +627,19 @@ def test_detect_regions_v21_fail_closed_no_client():
             "confidence": 0.9,
         }],
     )
+    bundle.add_frame(
+        frame_index=1,
+        timestamp_sec=1 / 30,
+        image=np.full((720, 1280, 3), 255, dtype=np.uint8),
+        image_path=None,
+        detections=[{
+            "frame_index": 1,
+            "timestamp_ms": 1000 / 30,
+            "candidate_id": "F00001_C01",
+            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+            "confidence": 0.9,
+        }],
+    )
     provider.proposal_bundle = bundle
     frames = [Frame(timestamp=0.0, image_path=None)]
 
@@ -666,6 +679,19 @@ def test_detect_regions_v21_fail_closed_batch_exception():
             "frame_index": 0,
             "timestamp_ms": 0.0,
             "candidate_id": "F00000_C01",
+            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+            "confidence": 0.9,
+        }],
+    )
+    bundle.add_frame(
+        frame_index=1,
+        timestamp_sec=1 / 30,
+        image=np.full((720, 1280, 3), 255, dtype=np.uint8),
+        image_path=None,
+        detections=[{
+            "frame_index": 1,
+            "timestamp_ms": 1000 / 30,
+            "candidate_id": "F00001_C01",
             "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
             "confidence": 0.9,
         }],
@@ -714,9 +740,73 @@ def test_detect_regions_v21_fail_closed_missing_decision():
             "confidence": 0.9,
         }],
     )
+    bundle.add_frame(
+        frame_index=1,
+        timestamp_sec=1 / 30,
+        image=np.full((720, 1280, 3), 255, dtype=np.uint8),
+        image_path=None,
+        detections=[{
+            "frame_index": 1,
+            "timestamp_ms": 1000 / 30,
+            "candidate_id": "F00001_C01",
+            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+            "confidence": 0.9,
+        }],
+    )
     provider.proposal_bundle = bundle
     frames = [Frame(timestamp=0.0, image_path=None)]
 
     regions = provider.detect_regions(frames)
     assert regions == []
     assert provider._v21_fail_counters["missing_decision"] == 1
+
+
+def test_detect_regions_v21_static_discriminator_rejects_before_gemini():
+    class SpyClassifier:
+        def __init__(self):
+            class Client:
+                pass
+            self.client = Client()
+            self.called = False
+
+        def classify_batch(self, *args, **kwargs):
+            self.called = True
+            return {}
+
+    classifier = SpyClassifier()
+    provider = HybridSubtitleRegionDetectorProvider(
+        use_v21_pipeline=True,
+        crop_batch_classifier=classifier,
+        static_variance_threshold=10.0,
+    )
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    bundle = ProposalBundle(
+        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
+    )
+    for frame_index in (0, 1):
+        bundle.add_frame(
+            frame_index=frame_index,
+            timestamp_sec=frame_index / 30,
+            image=image.copy(),
+            image_path=None,
+            detections=[{
+                "frame_index": frame_index,
+                "timestamp_ms": frame_index * 1000 / 30,
+                "candidate_id": f"F{frame_index:05d}_C01",
+                "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
+                "confidence": 0.9,
+            }],
+        )
+    provider.proposal_bundle = bundle
+
+    regions = provider.detect_regions([Frame(timestamp=0.0, image_path=None)])
+
+    assert regions == []
+    assert classifier.called is False
+    assert len(provider.static_variance_ledger) >= 1
+    entry = provider.static_variance_ledger[0]
+    assert entry["track_id"] == "T001"
+    assert entry["temporal_pixel_variance"] == 0.0
+    assert entry["rejected"] is True
+    assert entry["reason"] == "low_temporal_pixel_variance"
+    assert entry["threshold"] == 10.0
