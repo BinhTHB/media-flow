@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T042",
+    "is_subtitle": false,
+    "burn_in": true,
+    "category": "ui",
+    "confidence": 0.99,
+    "text_echo": "20000.0",
+    "reason": "The text displays green numbers representing a timer or counter overlaid on the video, not dialogue subtitles."
+  }
+]

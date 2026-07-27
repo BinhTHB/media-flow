@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T135",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "tiếng",
+    "reason": "The text displays spoken dialogue at the bottom of the video frame, functioning as a standard subtitle."
+  }
+]

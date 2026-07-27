@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T125",
+    "is_subtitle": false,
+    "burn_in": true,
+    "category": "scene_text",
+    "confidence": 0.95,
+    "text_echo": "3",
+    "reason": "The text is a number printed on a runner's bib/tag attached to their body, making it scene text rather than a dialogue subtitle."
+  }
+]

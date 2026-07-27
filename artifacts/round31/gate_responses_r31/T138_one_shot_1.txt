@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T138",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "phát",
+    "reason": "Positioned at the bottom center of the frame with a standard subtitle font style, appearing and changing with spoken dialogue."
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T116",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "tuy nhiên",
+    "reason": "Appears at the bottom of the frame with stylized font, changing text content representing spoken dialogue."
+  }
+]

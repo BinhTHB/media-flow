@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T126",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "độ",
+    "reason": "The text is positioned at the bottom center of the frame and functions as standard dialogue/speech subtitle transcription."
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T133",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "sẽ",
+    "reason": "The text 'sẽ' appears at the lower portion of the frame with standard subtitle formatting (white text with a thick black outline), corresponding to spoken dialogue in an educational/animated video."
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T019",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "đông người thấy",
+    "reason": "The text appears at the bottom center of the frame and changes content over time to transcribe spoken dialogue (Vietnamese subtitles)."
+  }
+]

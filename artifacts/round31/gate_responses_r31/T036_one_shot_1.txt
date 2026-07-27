@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T036",
+    "is_subtitle": false,
+    "burn_in": true,
+    "category": "scene_text",
+    "confidence": 1.0,
+    "text_echo": "1",
+    "reason": "The text shows the number '1' painted on the running track surface, which is physical scene text rather than a dialogue subtitle."
+  }
+]

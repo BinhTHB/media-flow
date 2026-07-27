@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T016",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "hợp",
+    "reason": "The text appears at the lower portion of the frame, styled with bright green fill and black outline typical of dynamic dialogue subtitles."
+  }
+]

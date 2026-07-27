@@ -1,0 +1,451 @@
+{
+  "timestamp_utc": "2026-07-27T07:23:07.978555+00:00",
+  "git_sha": "650ae8f63695cf4e741f123254b6414aaf127b03",
+  "gt_sha256": "99d1d75e04226c5b7946d3b24532167f6875da73be9ff69f40fbb2a8f3940bd5",
+  "layer_a": {
+    "local_results": {
+      "T003": {
+        "y1_norm": 0.7492,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T006": {
+        "y1_norm": 0.7516,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T010": {
+        "y1_norm": 0.7414,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T014": {
+        "y1_norm": 0.7656,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T016": {
+        "y1_norm": 0.7453,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T019": {
+        "y1_norm": 0.7469,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T036": {
+        "y1_norm": 0.8594,
+        "band_pass": true,
+        "temporal_variance": 1741.8877,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "PASS"
+      },
+      "T042": {
+        "y1_norm": 0.6695,
+        "band_pass": false,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T053": {
+        "y1_norm": 0.8172,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T116": {
+        "y1_norm": 0.75,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T120": {
+        "y1_norm": 0.7531,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T125": {
+        "y1_norm": 0.6734,
+        "band_pass": false,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T126": {
+        "y1_norm": 0.825,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T127": {
+        "y1_norm": 0.7555,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T133": {
+        "y1_norm": 0.7516,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T135": {
+        "y1_norm": 0.7414,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T137": {
+        "y1_norm": 0.7461,
+        "band_pass": true,
+        "temporal_variance": 3851.3667,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "PASS"
+      },
+      "T138": {
+        "y1_norm": 0.7453,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "T146": {
+        "y1_norm": 0.7453,
+        "band_pass": true,
+        "temporal_variance": null,
+        "discriminator_rejected": true,
+        "discriminator_reason": "pixel_variance_error",
+        "local_verdict": "REJECT"
+      },
+      "negative:T006": {
+        "y1_norm": 0.276,
+        "band_pass": false,
+        "temporal_variance": 3176.8911,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T013": {
+        "y1_norm": 0.4153,
+        "band_pass": false,
+        "temporal_variance": 2506.1174,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T026": {
+        "y1_norm": 0.5063,
+        "band_pass": false,
+        "temporal_variance": 2531.2246,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T038": {
+        "y1_norm": 0.5737,
+        "band_pass": false,
+        "temporal_variance": 2204.949,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T039": {
+        "y1_norm": 0.6568,
+        "band_pass": false,
+        "temporal_variance": 2666.3975,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T044": {
+        "y1_norm": 0.4179,
+        "band_pass": false,
+        "temporal_variance": 2224.7993,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T047": {
+        "y1_norm": 0.6378,
+        "band_pass": false,
+        "temporal_variance": 1678.2194,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T058": {
+        "y1_norm": 0.5717,
+        "band_pass": false,
+        "temporal_variance": 25.2572,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T064": {
+        "y1_norm": 0.6614,
+        "band_pass": false,
+        "temporal_variance": 127.5899,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T071": {
+        "y1_norm": 0.4871,
+        "band_pass": false,
+        "temporal_variance": 65.6675,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T074": {
+        "y1_norm": 0.2853,
+        "band_pass": false,
+        "temporal_variance": 748.0398,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T078": {
+        "y1_norm": 0.1657,
+        "band_pass": false,
+        "temporal_variance": 296.986,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T080": {
+        "y1_norm": 0.6573,
+        "band_pass": false,
+        "temporal_variance": 811.5551,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T100": {
+        "y1_norm": 0.3524,
+        "band_pass": false,
+        "temporal_variance": 1098.5588,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T111": {
+        "y1_norm": 0.4457,
+        "band_pass": false,
+        "temporal_variance": 1347.0482,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T112": {
+        "y1_norm": 0.4252,
+        "band_pass": false,
+        "temporal_variance": 863.592,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T127": {
+        "y1_norm": 0.3277,
+        "band_pass": false,
+        "temporal_variance": 1413.5018,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T138": {
+        "y1_norm": 0.4117,
+        "band_pass": false,
+        "temporal_variance": 2983.2217,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T140": {
+        "y1_norm": 0.4062,
+        "band_pass": false,
+        "temporal_variance": 2741.0544,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T141": {
+        "y1_norm": 0.4153,
+        "band_pass": false,
+        "temporal_variance": 2527.9761,
+        "discriminator_rejected": false,
+        "discriminator_reason": "passed",
+        "local_verdict": "REJECT"
+      },
+      "negative:T142": {
+        "y1_norm": 0.5948,
+        "band_pass": false,
+        "temporal_variance": 5.015,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T146": {
+        "y1_norm": 0.6256,
+        "band_pass": false,
+        "temporal_variance": 125.4662,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      },
+      "negative:T147": {
+        "y1_norm": 0.6484,
+        "band_pass": false,
+        "temporal_variance": 474.8709,
+        "discriminator_rejected": true,
+        "discriminator_reason": "low_temporal_pixel_variance",
+        "local_verdict": "REJECT"
+      }
+    },
+    "rejected_local": 40
+  },
+  "layer_b": {
+    "confusion_matrix": {
+      "tp": 11,
+      "fp": 2,
+      "tn": 4,
+      "fn": 1,
+      "unknown": 24
+    },
+    "precision": 0.8462,
+    "recall": 0.9167,
+    "total_tracks": 42,
+    "attempts_total": 60,
+    "retry_count": 24
+  },
+  "layer_c": {
+    "confusion_matrix": {
+      "tp": 0,
+      "fp": 0,
+      "tn": 28,
+      "fn": 14
+    },
+    "precision": 0.0,
+    "recall": 0.0
+  },
+  "named_tracks": {
+    "T013": {
+      "gt_is_subtitle": null,
+      "gemini_is_subtitle": null,
+      "text_echo": "",
+      "band_pass": null,
+      "discriminator_rejected": null
+    },
+    "T036": {
+      "gt_is_subtitle": false,
+      "gemini_is_subtitle": false,
+      "text_echo": "1",
+      "band_pass": true,
+      "discriminator_rejected": false
+    },
+    "T053": {
+      "gt_is_subtitle": false,
+      "gemini_is_subtitle": true,
+      "text_echo": "đông",
+      "band_pass": true,
+      "discriminator_rejected": true
+    },
+    "T126": {
+      "gt_is_subtitle": false,
+      "gemini_is_subtitle": true,
+      "text_echo": "độ",
+      "band_pass": true,
+      "discriminator_rejected": true
+    },
+    "T041": {
+      "gt_is_subtitle": null,
+      "gemini_is_subtitle": null,
+      "text_echo": "",
+      "band_pass": null,
+      "discriminator_rejected": null
+    },
+    "T105": {
+      "gt_is_subtitle": null,
+      "gemini_is_subtitle": null,
+      "text_echo": "",
+      "band_pass": null,
+      "discriminator_rejected": null
+    },
+    "T055": {
+      "gt_is_subtitle": null,
+      "gemini_is_subtitle": null,
+      "text_echo": "",
+      "band_pass": null,
+      "discriminator_rejected": null
+    }
+  },
+  "one_shot": {
+    "missing_ids": [
+      "T137",
+      "T146",
+      "negative:T006",
+      "negative:T013",
+      "negative:T026",
+      "negative:T038",
+      "negative:T039",
+      "negative:T044",
+      "negative:T047",
+      "negative:T058",
+      "negative:T064",
+      "negative:T071",
+      "negative:T074",
+      "negative:T078",
+      "negative:T080",
+      "negative:T100",
+      "negative:T112",
+      "negative:T127",
+      "negative:T138",
+      "negative:T140",
+      "negative:T141",
+      "negative:T142",
+      "negative:T146",
+      "negative:T147"
+    ],
+    "status": "FAIL"
+  },
+  "final_status": "FAIL"
+}

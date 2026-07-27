@@ -673,10 +673,11 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         # 11) Build SubtitleRegions
         regions: List[SubtitleRegion] = []
         for track in final_accepted:
+            classifier_decision = decisions.get(track["track_id"], {})
             decision = {
                 "model": "v21_pipeline",
-                "confidence": 0.85,
-                "category": "dialogue_subtitle",
+                "confidence": classifier_decision.get("confidence"),
+                "category": classifier_decision.get("category"),
             }
             conf = _clamp01(track.get("mean_detector_confidence", 0.0))
             if conf < self._min_confidence:

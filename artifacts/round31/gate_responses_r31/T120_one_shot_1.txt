@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T120",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.95,
+    "text_echo": "một",
+    "reason": "The text displays spoken dialogue transcription ('một', meaning 'one' in Vietnamese, likely part of a countdown for the race) positioned prominently near the bottom center of the frame with styling typical of video subtitles."
+  }
+]

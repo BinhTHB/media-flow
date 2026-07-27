@@ -1,0 +1,11 @@
+[
+  {
+    "candidate_id": "T014",
+    "is_subtitle": true,
+    "burn_in": true,
+    "category": "subtitle",
+    "confidence": 0.85,
+    "text_echo": "sử",
+    "reason": "Appears at the bottom of the video frame in standard dialogue subtitle position, displaying translated/transcribed text."
+  }
+]
