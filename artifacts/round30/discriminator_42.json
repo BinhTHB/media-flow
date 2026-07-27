@@ -1,0 +1,1104 @@
+{
+  "video": "E:\\projects\\media-flow\\test_videos\\real_mini_benchmark\\sample5.mp4",
+  "gt_source": "E:\\projects\\media-flow\\artifacts\\round28\\gt_v2_3.json",
+  "per_track": {
+    "T003": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3428.7458,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        294,
+        959,
+        413,
+        1019
+      ],
+      "timestamp_s": 0.35
+    },
+    "T006": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 2255.7939,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        282,
+        962,
+        444,
+        1037
+      ],
+      "timestamp_s": 1.085
+    },
+    "T010": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 1972.1771,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        276,
+        949,
+        445,
+        1040
+      ],
+      "timestamp_s": 2.865
+    },
+    "T014": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3756.1643,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        326,
+        980,
+        395,
+        1019
+      ],
+      "timestamp_s": 5.115
+    },
+    "T016": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 2649.2666,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        255,
+        954,
+        461,
+        1042
+      ],
+      "timestamp_s": 7.05
+    },
+    "T019": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 961.0449,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        264,
+        956,
+        451,
+        1043
+      ],
+      "timestamp_s": 8.715
+    },
+    "T036": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2589.6824,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        501,
+        1100,
+        604,
+        1259
+      ],
+      "timestamp_s": 8.02
+    },
+    "T042": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 179.717,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        484,
+        857,
+        679,
+        925
+      ],
+      "timestamp_s": 8.83
+    },
+    "T053": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 386.4611,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        8,
+        1046,
+        712,
+        1272
+      ],
+      "timestamp_s": 8.3
+    },
+    "T116": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 1134.1838,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        268,
+        960,
+        449,
+        1039
+      ],
+      "timestamp_s": 10.52
+    },
+    "T120": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3410.7498,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        298,
+        964,
+        431,
+        1037
+      ],
+      "timestamp_s": 11.335
+    },
+    "T125": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 793.4867,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        196,
+        862,
+        236,
+        903
+      ],
+      "timestamp_s": 12.285
+    },
+    "T126": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 453.2172,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        8,
+        1056,
+        195,
+        1198
+      ],
+      "timestamp_s": 12.3
+    },
+    "T127": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3699.0359,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        279,
+        967,
+        437,
+        1046
+      ],
+      "timestamp_s": 13.1
+    },
+    "T133": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 4411.3037,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        328,
+        962,
+        394,
+        1021
+      ],
+      "timestamp_s": 15.95
+    },
+    "T135": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3423.8391,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        305,
+        949,
+        376,
+        989
+      ],
+      "timestamp_s": 15.37
+    },
+    "T137": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3778.394,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        302,
+        955,
+        415,
+        1020
+      ],
+      "timestamp_s": 17.765
+    },
+    "T138": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 2080.0732,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        282,
+        954,
+        437,
+        1041
+      ],
+      "timestamp_s": 19.215
+    },
+    "T146": {
+      "expected_is_subtitle": true,
+      "temporal_pixel_variance": 3014.1917,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        279,
+        954,
+        447,
+        1039
+      ],
+      "timestamp_s": 22.265
+    },
+    "negative:T006": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 4078.7017,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        284.04,
+        353.34,
+        436.89,
+        423.35
+      ],
+      "timestamp_s": 0.7333
+    },
+    "negative:T013": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2509.1025,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        311.9,
+        531.55,
+        349.36,
+        581.61
+      ],
+      "timestamp_s": 2.6333
+    },
+    "negative:T026": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2309.353,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        0.42,
+        648.1,
+        436.2,
+        964.03
+      ],
+      "timestamp_s": 7.8667
+    },
+    "negative:T038": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2365.4675,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        222.76,
+        734.4,
+        556.25,
+        850.08
+      ],
+      "timestamp_s": 8.01665
+    },
+    "negative:T039": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2810.9438,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        327.77,
+        840.65,
+        450.95,
+        964.23
+      ],
+      "timestamp_s": 8.0
+    },
+    "negative:T044": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2565.3662,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        216.9,
+        534.9,
+        408.46,
+        592.53
+      ],
+      "timestamp_s": 8.0667
+    },
+    "negative:T047": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1971.7562,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        368.04,
+        816.38,
+        532.99,
+        869.47
+      ],
+      "timestamp_s": 8.1
+    },
+    "negative:T058": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 82.485,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        406.66,
+        731.74,
+        607.39,
+        816.54
+      ],
+      "timestamp_s": 9.08335
+    },
+    "negative:T064": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 344.0495,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        565.37,
+        846.55,
+        602.02,
+        858.24
+      ],
+      "timestamp_s": 8.8
+    },
+    "negative:T071": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 246.3884,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        426.34,
+        623.45,
+        460.05,
+        638.0
+      ],
+      "timestamp_s": 9.36665
+    },
+    "negative:T074": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 733.037,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        144.82,
+        365.16,
+        337.73,
+        406.14
+      ],
+      "timestamp_s": 9.2667
+    },
+    "negative:T078": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 948.6832,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        83.22,
+        212.05,
+        283.43,
+        302.91
+      ],
+      "timestamp_s": 9.5
+    },
+    "negative:T080": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1706.8435,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        565.62,
+        841.28,
+        601.26,
+        856.69
+      ],
+      "timestamp_s": 9.56665
+    },
+    "negative:T100": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1083.6218,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        119.44,
+        451.11,
+        615.71,
+        682.09
+      ],
+      "timestamp_s": 9.8
+    },
+    "negative:T111": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1318.6174,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        85.28,
+        570.56,
+        355.19,
+        725.61
+      ],
+      "timestamp_s": 10.0
+    },
+    "negative:T112": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1046.7311,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        56.93,
+        544.3,
+        430.2,
+        921.86
+      ],
+      "timestamp_s": 10.116700000000002
+    },
+    "negative:T127": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1560.6917,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        279.64,
+        419.41,
+        421.08,
+        480.76
+      ],
+      "timestamp_s": 12.9
+    },
+    "negative:T138": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 3584.0662,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        538.32,
+        526.97,
+        595.24,
+        694.74
+      ],
+      "timestamp_s": 20.2667
+    },
+    "negative:T140": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2873.7488,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        313.86,
+        519.9,
+        356.64,
+        757.32
+      ],
+      "timestamp_s": 20.8667
+    },
+    "negative:T141": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 2522.978,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        311.7,
+        531.54,
+        349.37,
+        580.87
+      ],
+      "timestamp_s": 20.9
+    },
+    "negative:T142": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 17.9293,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        235.11,
+        761.4,
+        299.86,
+        773.58
+      ],
+      "timestamp_s": 22.25
+    },
+    "negative:T146": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 319.5983,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        300.91,
+        800.75,
+        410.77,
+        839.3
+      ],
+      "timestamp_s": 23.1667
+    },
+    "negative:T147": {
+      "expected_is_subtitle": false,
+      "temporal_pixel_variance": 1050.9775,
+      "sample_count": 13,
+      "bbox_xyxy": [
+        350.44,
+        829.9,
+        442.99,
+        856.73
+      ],
+      "timestamp_s": 23.1667
+    }
+  },
+  "variance_distribution": {
+    "positive": {
+      "min": 961.0449,
+      "mean": 2855.354557142857,
+      "max": 4411.3037
+    },
+    "negative": {
+      "min": 17.9293,
+      "mean": 1516.2036428571432,
+      "max": 4078.7017
+    }
+  },
+  "sweep_table": [
+    {
+      "temporal_variance_threshold": 0.0,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 0,
+      "negatives_kept": 28
+    },
+    {
+      "temporal_variance_threshold": 55.14,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 1,
+      "negatives_kept": 27
+    },
+    {
+      "temporal_variance_threshold": 110.28,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 2,
+      "negatives_kept": 26
+    },
+    {
+      "temporal_variance_threshold": 165.42,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 2,
+      "negatives_kept": 26
+    },
+    {
+      "temporal_variance_threshold": 220.57,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 3,
+      "negatives_kept": 25
+    },
+    {
+      "temporal_variance_threshold": 275.71,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 4,
+      "negatives_kept": 24
+    },
+    {
+      "temporal_variance_threshold": 330.85,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 5,
+      "negatives_kept": 23
+    },
+    {
+      "temporal_variance_threshold": 385.99,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 6,
+      "negatives_kept": 22
+    },
+    {
+      "temporal_variance_threshold": 441.13,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 7,
+      "negatives_kept": 21
+    },
+    {
+      "temporal_variance_threshold": 496.27,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 8,
+      "negatives_kept": 20
+    },
+    {
+      "temporal_variance_threshold": 551.41,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 8,
+      "negatives_kept": 20
+    },
+    {
+      "temporal_variance_threshold": 606.55,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 8,
+      "negatives_kept": 20
+    },
+    {
+      "temporal_variance_threshold": 661.7,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 8,
+      "negatives_kept": 20
+    },
+    {
+      "temporal_variance_threshold": 716.84,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 8,
+      "negatives_kept": 20
+    },
+    {
+      "temporal_variance_threshold": 771.98,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 9,
+      "negatives_kept": 19
+    },
+    {
+      "temporal_variance_threshold": 827.12,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 10,
+      "negatives_kept": 18
+    },
+    {
+      "temporal_variance_threshold": 882.26,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 10,
+      "negatives_kept": 18
+    },
+    {
+      "temporal_variance_threshold": 937.4,
+      "positives_kept": 14,
+      "positives_lost": 0,
+      "negatives_rejected": 10,
+      "negatives_kept": 18
+    },
+    {
+      "temporal_variance_threshold": 992.54,
+      "positives_kept": 13,
+      "positives_lost": 1,
+      "negatives_rejected": 11,
+      "negatives_kept": 17
+    },
+    {
+      "temporal_variance_threshold": 1047.68,
+      "positives_kept": 13,
+      "positives_lost": 1,
+      "negatives_rejected": 12,
+      "negatives_kept": 16
+    },
+    {
+      "temporal_variance_threshold": 1102.83,
+      "positives_kept": 13,
+      "positives_lost": 1,
+      "negatives_rejected": 14,
+      "negatives_kept": 14
+    },
+    {
+      "temporal_variance_threshold": 1157.97,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 14,
+      "negatives_kept": 14
+    },
+    {
+      "temporal_variance_threshold": 1213.11,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 14,
+      "negatives_kept": 14
+    },
+    {
+      "temporal_variance_threshold": 1268.25,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 14,
+      "negatives_kept": 14
+    },
+    {
+      "temporal_variance_threshold": 1323.39,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 15,
+      "negatives_kept": 13
+    },
+    {
+      "temporal_variance_threshold": 1378.53,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 15,
+      "negatives_kept": 13
+    },
+    {
+      "temporal_variance_threshold": 1433.67,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 15,
+      "negatives_kept": 13
+    },
+    {
+      "temporal_variance_threshold": 1488.81,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 15,
+      "negatives_kept": 13
+    },
+    {
+      "temporal_variance_threshold": 1543.96,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 15,
+      "negatives_kept": 13
+    },
+    {
+      "temporal_variance_threshold": 1599.1,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 16,
+      "negatives_kept": 12
+    },
+    {
+      "temporal_variance_threshold": 1654.24,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 16,
+      "negatives_kept": 12
+    },
+    {
+      "temporal_variance_threshold": 1709.38,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 17,
+      "negatives_kept": 11
+    },
+    {
+      "temporal_variance_threshold": 1764.52,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 17,
+      "negatives_kept": 11
+    },
+    {
+      "temporal_variance_threshold": 1819.66,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 17,
+      "negatives_kept": 11
+    },
+    {
+      "temporal_variance_threshold": 1874.8,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 17,
+      "negatives_kept": 11
+    },
+    {
+      "temporal_variance_threshold": 1929.95,
+      "positives_kept": 12,
+      "positives_lost": 2,
+      "negatives_rejected": 17,
+      "negatives_kept": 11
+    },
+    {
+      "temporal_variance_threshold": 1985.09,
+      "positives_kept": 11,
+      "positives_lost": 3,
+      "negatives_rejected": 18,
+      "negatives_kept": 10
+    },
+    {
+      "temporal_variance_threshold": 2040.23,
+      "positives_kept": 11,
+      "positives_lost": 3,
+      "negatives_rejected": 18,
+      "negatives_kept": 10
+    },
+    {
+      "temporal_variance_threshold": 2095.37,
+      "positives_kept": 10,
+      "positives_lost": 4,
+      "negatives_rejected": 18,
+      "negatives_kept": 10
+    },
+    {
+      "temporal_variance_threshold": 2150.51,
+      "positives_kept": 10,
+      "positives_lost": 4,
+      "negatives_rejected": 18,
+      "negatives_kept": 10
+    },
+    {
+      "temporal_variance_threshold": 2205.65,
+      "positives_kept": 10,
+      "positives_lost": 4,
+      "negatives_rejected": 18,
+      "negatives_kept": 10
+    },
+    {
+      "temporal_variance_threshold": 2260.79,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 18,
+      "negatives_kept": 10
+    },
+    {
+      "temporal_variance_threshold": 2315.93,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 19,
+      "negatives_kept": 9
+    },
+    {
+      "temporal_variance_threshold": 2371.08,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 20,
+      "negatives_kept": 8
+    },
+    {
+      "temporal_variance_threshold": 2426.22,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 20,
+      "negatives_kept": 8
+    },
+    {
+      "temporal_variance_threshold": 2481.36,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 20,
+      "negatives_kept": 8
+    },
+    {
+      "temporal_variance_threshold": 2536.5,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 22,
+      "negatives_kept": 6
+    },
+    {
+      "temporal_variance_threshold": 2591.64,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 24,
+      "negatives_kept": 4
+    },
+    {
+      "temporal_variance_threshold": 2646.78,
+      "positives_kept": 9,
+      "positives_lost": 5,
+      "negatives_rejected": 24,
+      "negatives_kept": 4
+    },
+    {
+      "temporal_variance_threshold": 2701.92,
+      "positives_kept": 8,
+      "positives_lost": 6,
+      "negatives_rejected": 24,
+      "negatives_kept": 4
+    },
+    {
+      "temporal_variance_threshold": 2757.06,
+      "positives_kept": 8,
+      "positives_lost": 6,
+      "negatives_rejected": 24,
+      "negatives_kept": 4
+    },
+    {
+      "temporal_variance_threshold": 2812.21,
+      "positives_kept": 8,
+      "positives_lost": 6,
+      "negatives_rejected": 25,
+      "negatives_kept": 3
+    },
+    {
+      "temporal_variance_threshold": 2867.35,
+      "positives_kept": 8,
+      "positives_lost": 6,
+      "negatives_rejected": 25,
+      "negatives_kept": 3
+    },
+    {
+      "temporal_variance_threshold": 2922.49,
+      "positives_kept": 8,
+      "positives_lost": 6,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 2977.63,
+      "positives_kept": 8,
+      "positives_lost": 6,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3032.77,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3087.91,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3143.05,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3198.2,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3253.34,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3308.48,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3363.62,
+      "positives_kept": 7,
+      "positives_lost": 7,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3418.76,
+      "positives_kept": 6,
+      "positives_lost": 8,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3473.9,
+      "positives_kept": 4,
+      "positives_lost": 10,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3529.04,
+      "positives_kept": 4,
+      "positives_lost": 10,
+      "negatives_rejected": 26,
+      "negatives_kept": 2
+    },
+    {
+      "temporal_variance_threshold": 3584.18,
+      "positives_kept": 4,
+      "positives_lost": 10,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3639.33,
+      "positives_kept": 4,
+      "positives_lost": 10,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3694.47,
+      "positives_kept": 4,
+      "positives_lost": 10,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3749.61,
+      "positives_kept": 3,
+      "positives_lost": 11,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3804.75,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3859.89,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3915.03,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 3970.17,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 4025.31,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 27,
+      "negatives_kept": 1
+    },
+    {
+      "temporal_variance_threshold": 4080.46,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    },
+    {
+      "temporal_variance_threshold": 4135.6,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    },
+    {
+      "temporal_variance_threshold": 4190.74,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    },
+    {
+      "temporal_variance_threshold": 4245.88,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    },
+    {
+      "temporal_variance_threshold": 4301.02,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    },
+    {
+      "temporal_variance_threshold": 4356.16,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    },
+    {
+      "temporal_variance_threshold": 4411.3,
+      "positives_kept": 1,
+      "positives_lost": 13,
+      "negatives_rejected": 28,
+      "negatives_kept": 0
+    }
+  ],
+  "recommendation": {
+    "temporal_variance_threshold": 827.12,
+    "positives_kept": 14,
+    "negatives_rejected": 10,
+    "total_positives": 14,
+    "total_negatives": 28,
+    "confusion_matrix": {
+      "tp": 14,
+      "fn": 0,
+      "tn": 10,
+      "fp": 18
+    }
+  }
+}
