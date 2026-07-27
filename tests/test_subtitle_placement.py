@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.application.services.ass_generator import ASSGenerator
+from src.application.services.mask_authority import DecisionStore, MaskAuthority
 from src.application.services.subtitle_placement_service import SubtitlePlacementService
 from src.application.use_cases.calculate_subtitle_placement import (
     CalculateSubtitlePlacementUseCase,
@@ -460,16 +461,20 @@ def test_ass_generator_renders_mask_events_from_regions():
     
     # 2 windows of regions: y changes (moving).
     # Gate requires classifier provenance: classification_id + is_subtitle=True.
+    store = DecisionStore("placement-test")
+    authority = MaskAuthority(store)
     regions = [
-        SubtitleRegion(
-            start_time=1.0, end_time=3.0, x=0.1, y=0.8, width=0.5, height=0.1, confidence=0.9,
-            classification_id="T00001_R0", is_subtitle=True, classifier_model="gate-test",
-        ),
-        SubtitleRegion(
-            start_time=3.0, end_time=5.0, x=0.1, y=0.4, width=0.5, height=0.1, confidence=0.9,
-            classification_id="T00001_R1", is_subtitle=True, classifier_model="gate-test",
-        ),
+        authority.decide(
+            {
+                "start_time": start, "end_time": end, "x": 0.1, "y": y,
+                "width": 0.5, "height": 0.1, "confidence": 0.9,
+            },
+            {"is_subtitle": True},
+            model="v21_pipeline",
+        )
+        for start, end, y in ((1.0, 3.0, 0.8), (3.0, 5.0, 0.4))
     ]
+    assert all(region is not None for region in regions)
     
     placement = SubtitlePlacement(alignment=5, x=960, y=540)
     
@@ -480,6 +485,7 @@ def test_ass_generator_renders_mask_events_from_regions():
         play_res_x=1000,
         play_res_y=1000,
         mask_regions=regions,
+        decision_store=store,
     )
     
     # Must have 2 Mask events with different coordinates

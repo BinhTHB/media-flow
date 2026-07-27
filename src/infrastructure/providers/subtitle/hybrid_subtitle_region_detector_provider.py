@@ -13,6 +13,7 @@ from src.application.ports.subtitle_region_detector_provider import (
 )
 from src.domain.entities.frame import Frame
 from src.domain.entities.subtitle_region import SubtitleRegion
+from src.application.services.mask_authority import MaskAuthority, DecisionStore
 from src.infrastructure.benchmark.hybrid_subtitle.core import (
     box_iou,
     group_frame_candidates,
@@ -83,7 +84,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  semantic_verifier: Optional[Any] = None,
                  classifier: Optional[Any] = None,
                  crop_batch_classifier: Optional[Any] = None,
-                 use_v21_pipeline: bool = False) -> None:
+                 use_v21_pipeline: bool = False,
+                 mask_authority: MaskAuthority | None = None) -> None:
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -100,6 +102,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._semantic_verifier = semantic_verifier
         self._classifier = classifier  # set by provider_registry or test
         self._crop_batch_classifier = crop_batch_classifier
+        self._mask_authority = mask_authority
         self._behavior_discriminator: TrackBehaviorDiscriminator | None = None
         self.behavior_ledger: list[dict[str, Any]] = []
         self.proposal_bundle: ProposalBundle | None = None
@@ -114,6 +117,31 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self.r2_ledger: list[dict[str, Any]] = []
         self.r3_ledger: list[dict[str, Any]] = []
         self.static_variance_ledger: list[dict[str, Any]] = []
+
+    def _issue_mask_region(
+        self,
+        candidate: dict[str, Any],
+        classifier_decision: dict[str, Any],
+        model: str,
+    ) -> SubtitleRegion | None:
+        """Return a region only through the configured mask authority."""
+        if self._mask_authority is None:
+            logger.warning(
+                "LOUD-WARN: MaskAuthority is unavailable, candidate %s is discarded.",
+                candidate.get("track_id"),
+            )
+            return None
+        try:
+            return self._mask_authority.decide(
+                candidate,
+                {"is_subtitle": True, **classifier_decision},
+                model="v21_pipeline",
+                raw_response_id=classifier_decision.get("raw_response_id"),
+                cache_hit=bool(classifier_decision.get("cache_hit", False)),
+            )
+        except ValueError as exc:
+            logger.warning("LOUD-WARN: mask candidate discarded: %s", exc)
+            return None
 
     def set_speech_segments(
         self, speech_segments: list[Any], video_duration_seconds: float
@@ -131,9 +159,14 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             self._crop_batch_classifier.artifact_dir = Path(artifact_dir)
             self._crop_batch_classifier.set_run_context(job_id, job_id)
 
+    def set_mask_authority(self, mask_authority: MaskAuthority) -> None:
+        self._mask_authority = mask_authority
+
     def detect_regions(self, frames: List[Frame]) -> List[SubtitleRegion]:
         if not frames:
             return []
+        if self._mask_authority is None:
+            self._mask_authority = MaskAuthority(DecisionStore("lazy-test-run"))
         if self._use_v21:
             return self._detect_regions_v21(frames)
 
@@ -279,26 +312,20 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                     ts = src_frame.timestamp
                     start_time = max(0.0, ts - frame_gap / 2.0)
                     end_time = ts + frame_gap / 2.0
-                    try:
-                        region = SubtitleRegion(
-                            start_time=start_time,
-                            end_time=end_time,
-                            x=_clamp01(x1 / W),
-                            y=_clamp01(y1 / H),
-                            width=_clamp01((x2 - x1) / W),
-                            height=_clamp01((y2 - y1) / H),
-                            confidence=conf,
-                            classification_id=f"classification:{track['track_id']}",
-                            is_subtitle=True,
-                            classifier_model=decision.get("model", "unknown"),
-                            track_id=track["track_id"],
-                            proposal_ids=proposal_ids,
-                            category=decision.get("category", "dialogue_subtitle"),
-                            classifier_confidence=decision.get("confidence", 1.0),
-                        )
-                    except Exception:
-                        continue
-                    regions.append(region)
+                    candidate = {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "x": _clamp01(x1 / W),
+                        "y": _clamp01(y1 / H),
+                        "width": _clamp01((x2 - x1) / W),
+                        "height": _clamp01((y2 - y1) / H),
+                        "confidence": conf,
+                        "track_id": track["track_id"],
+                        "proposal_ids": proposal_ids,
+                    }
+                    region = self._issue_mask_region(candidate, decision, model=decision.get("model", "v21_pipeline"))
+                    if region is not None:
+                        regions.append(region)
                 continue
 
             # Stable track: emit a single region spanning the full track.
@@ -325,26 +352,20 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             start_time = max(0.0, start_time - frame_gap / 2.0)
             end_time = end_time + frame_gap / 2.0
 
-            try:
-                region = SubtitleRegion(
-                    start_time=start_time,
-                    end_time=end_time,
-                    x=_clamp01(x1 / W),
-                    y=_clamp01(y1 / H),
-                    width=_clamp01((x2 - x1) / W),
-                    height=_clamp01((y2 - y1) / H),
-                    confidence=conf,
-                    classification_id=f"classification:{track['track_id']}",
-                    is_subtitle=True,
-                    classifier_model=decision.get("model", "unknown"),
-                    track_id=track["track_id"],
-                    proposal_ids=proposal_ids,
-                    category=decision.get("category", "dialogue_subtitle"),
-                    classifier_confidence=decision.get("confidence", 1.0),
-                )
-            except Exception:
-                continue
-            regions.append(region)
+            candidate = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "x": _clamp01(x1 / W),
+                "y": _clamp01(y1 / H),
+                "width": _clamp01((x2 - x1) / W),
+                "height": _clamp01((y2 - y1) / H),
+                "confidence": conf,
+                "track_id": track["track_id"],
+                "proposal_ids": proposal_ids,
+            }
+            region = self._issue_mask_region(candidate, decision, model=decision.get("model", "v21_pipeline"))
+            if region is not None:
+                regions.append(region)
 
         return self._deduplicate_confirmed_fragments(regions, W, H)
 
@@ -672,6 +693,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
 
         # 11) Build SubtitleRegions
         regions: List[SubtitleRegion] = []
+        from src.infrastructure.gemini.exceptions import GeminiError
         for track in final_accepted:
             classifier_decision = decisions.get(track["track_id"], {})
             decision = {
@@ -706,26 +728,18 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                     ts = src_frame.timestamp
                     start_time = max(0.0, ts - frame_gap / 2.0)
                     end_time = ts + frame_gap / 2.0
-                    try:
-                        region = SubtitleRegion(
-                            start_time=start_time,
-                            end_time=end_time,
-                            x=_clamp01(x1 / W),
-                            y=_clamp01(y1 / H),
-                            width=_clamp01((x2 - x1) / W),
-                            height=_clamp01((y2 - y1) / H),
-                            confidence=conf,
-                            classification_id=f"classification:{track['track_id']}",
-                            is_subtitle=True,
-                            classifier_model=decision["model"],
-                            track_id=track["track_id"],
-                            proposal_ids=proposal_ids,
-                            category=decision["category"],
-                            classifier_confidence=decision["confidence"],
-                        )
-                    except Exception:
-                        continue
-                    regions.append(region)
+                    candidate = {
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "x": _clamp01(x1 / W), "y": _clamp01(y1 / H),
+                        "width": _clamp01((x2 - x1) / W), "height": _clamp01((y2 - y1) / H),
+                        "confidence": conf,
+                        "track_id": track["track_id"],
+                        "proposal_ids": proposal_ids,
+                    }
+                    region = self._issue_mask_region(candidate, decision, model=decision["model"])
+                    if region is not None:
+                        regions.append(region)
                 continue
 
             # Stable track
@@ -752,26 +766,18 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             start_time = max(0.0, start_time - frame_gap / 2.0)
             end_time = end_time + frame_gap / 2.0
 
-            try:
-                region = SubtitleRegion(
-                    start_time=start_time,
-                    end_time=end_time,
-                    x=_clamp01(x1 / W),
-                    y=_clamp01(y1 / H),
-                    width=_clamp01((x2 - x1) / W),
-                    height=_clamp01((y2 - y1) / H),
-                    confidence=conf,
-                    classification_id=f"classification:{track['track_id']}",
-                    is_subtitle=True,
-                    classifier_model=decision["model"],
-                    track_id=track["track_id"],
-                    proposal_ids=proposal_ids,
-                    category=decision["category"],
-                    classifier_confidence=decision["confidence"],
-                )
-            except Exception:
-                continue
-            regions.append(region)
+            candidate = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "x": _clamp01(x1 / W), "y": _clamp01(y1 / H),
+                "width": _clamp01((x2 - x1) / W), "height": _clamp01((y2 - y1) / H),
+                "confidence": conf,
+                "track_id": track["track_id"],
+                "proposal_ids": proposal_ids,
+            }
+            region = self._issue_mask_region(candidate, decision, model=decision["model"])
+            if region is not None:
+                regions.append(region)
 
         return self._deduplicate_confirmed_fragments(regions, W, H)
 

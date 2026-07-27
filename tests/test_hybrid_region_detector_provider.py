@@ -56,7 +56,7 @@ class GeometryAcceptingVerifier:
                 }
                 for candidate_id in candidate_ids
             ],
-            "model": "geometry-test-verifier",
+            "model": "v21_pipeline",
             "uncertain": False,
         }
 

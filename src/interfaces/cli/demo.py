@@ -22,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ocr", action="store_true", help="Enable OCR text detection")
     parser.add_argument("--skip-ocr", action="store_true")
     parser.add_argument("--reuse-ocr-cache", action="store_true")
+    parser.add_argument(
+        "--gemini-cache",
+        choices=["on", "off"],
+        default="on",
+        help="Gemini response-cache mode for this run",
+    )
     parser.add_argument("--skip-subtitle-region-detection", action="store_true")
     parser.add_argument("--reuse-subtitle-region-cache", action="store_true")
     parser.add_argument("--rerender-only", action="store_true")

@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 
 from src.application.services.ass_generator import ASSGenerator
+from src.application.services.mask_authority import DecisionStore, MaskAuthority
 from src.domain.entities.frame import Frame
 from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_region import SubtitleRegion
@@ -63,14 +64,14 @@ def test_positive_verifier_decision_creates_confirmed_mask_region(tmp_path):
             "confidence": 0.95,
             "reason_code": "spoken_dialogue",
         }],
-        "model": "test-model",
+        "model": "v21_pipeline",
         "uncertain": False,
     })).detect_regions(frames(tmp_path))
 
     assert len(result) == 1
     assert result[0].classification_id
     assert result[0].is_subtitle is True
-    assert result[0].classifier_model == "test-model"
+    assert result[0].classifier_model == "v21_pipeline"
     assert result[0].proposal_ids == ["F00000_C01", "F00001_C01", "F00002_C01"]
     assert result[0].track_id is not None
 
@@ -85,7 +86,7 @@ def test_negative_verifier_decision_does_not_create_mask_region(tmp_path):
             "confidence": 0.99,
             "reason_code": "brand_mark",
         }],
-        "model": "test-model",
+        "model": "v21_pipeline",
         "uncertain": False,
     })).detect_regions(frames(tmp_path))
 
@@ -109,7 +110,7 @@ def test_missing_matching_candidate_decision_fails_closed_without_mask_region(tm
             "confidence": 0.95,
             "reason_code": "wrong_id",
         }],
-        "model": "test-model",
+        "model": "v21_pipeline",
         "uncertain": False,
     })).detect_regions(frames(tmp_path))
 
@@ -133,17 +134,21 @@ def test_ass_generator_does_not_render_unconfirmed_region_as_mask():
 
 def test_ass_generator_renders_confirmed_region_with_classification_id():
     segment = Segment(id="s", start=0.0, end=1.0, text="source", translated_text="dịch", source="ocr")
-    confirmed = SubtitleRegion(
-        0.0, 1.0, 0.1, 0.7, 0.4, 0.1, 0.9,
-        classification_id="classification:T00001",
-        is_subtitle=True,
-        classifier_model="test-model",
-        track_id="T00001",
-        proposal_ids=["F00000_C01"],
+    store = DecisionStore("test-run")
+    confirmed = MaskAuthority(store).decide(
+        {
+            "start_time": 0.0, "end_time": 1.0, "x": 0.1, "y": 0.7,
+            "width": 0.4, "height": 0.1, "confidence": 0.9,
+            "track_id": "T00001", "proposal_ids": ["F00000_C01"],
+        },
+        {"is_subtitle": True, "category": "dialogue_subtitle"},
+        model="v21_pipeline",
     )
+    assert confirmed is not None
 
     ass = ASSGenerator.generate(
-        [segment], SubtitleStyle(), play_res_x=720, play_res_y=1280, mask_regions=[confirmed]
+        [segment], SubtitleStyle(), play_res_x=720, play_res_y=1280,
+        mask_regions=[confirmed], decision_store=store,
     )
 
     mask_lines = [
@@ -151,7 +156,7 @@ def test_ass_generator_renders_confirmed_region_with_classification_id():
         if line.startswith("Dialogue: 0,") and "m 0 0" in line
     ]
     assert len(mask_lines) == 1
-    assert "provenance=classification:T00001" in mask_lines[0]
+    assert f"provenance={confirmed.classification_id}" in mask_lines[0]
 
 
 def test_region_provider_uses_real_frame_indices_for_sparse_bundle(tmp_path):
@@ -177,7 +182,7 @@ def test_region_provider_uses_real_frame_indices_for_sparse_bundle(tmp_path):
         "decisions": [{
             "candidate_id": "G00000_01", "is_subtitle": True,
             "category": "dialogue_subtitle", "confidence": 0.95, "reason_code": "spoken",
-        }], "model": "test-model", "uncertain": False,
+        }], "model": "v21_pipeline", "uncertain": False,
     }))
     detector.proposal_bundle = bundle
 
@@ -192,17 +197,21 @@ def test_provenance_not_rendered_on_screen():
     segment = Segment(
         id="s", start=0.0, end=1.0, text="source", translated_text="dich", source="ocr"
     )
-    confirmed = SubtitleRegion(
-        0.0, 1.0, 0.1, 0.7, 0.4, 0.1, 0.9,
-        classification_id="classification:T00001",
-        is_subtitle=True,
-        classifier_model="test-model",
-        track_id="T00001",
-        proposal_ids=["F00000_C01"],
+    store = DecisionStore("test-run")
+    confirmed = MaskAuthority(store).decide(
+        {
+            "start_time": 0.0, "end_time": 1.0, "x": 0.1, "y": 0.7,
+            "width": 0.4, "height": 0.1, "confidence": 0.9,
+            "track_id": "T00001", "proposal_ids": ["F00000_C01"],
+        },
+        {"is_subtitle": True, "category": "dialogue_subtitle"},
+        model="v21_pipeline",
     )
+    assert confirmed is not None
 
     ass = ASSGenerator.generate(
-        [segment], SubtitleStyle(), play_res_x=720, play_res_y=1280, mask_regions=[confirmed]
+        [segment], SubtitleStyle(), play_res_x=720, play_res_y=1280,
+        mask_regions=[confirmed], decision_store=store,
     )
 
     mask_lines = [
@@ -210,7 +219,7 @@ def test_provenance_not_rendered_on_screen():
         if line.startswith("Dialogue: 0,") and "m 0 0" in line
     ]
     assert len(mask_lines) == 1
-    assert "provenance=classification:T00001" in mask_lines[0]
+    assert f"provenance={confirmed.classification_id}" in mask_lines[0]
     # Split on the drawing close tag to check what comes after
     split_text = r'{\p0}'
     parts = mask_lines[0].split(split_text)
@@ -245,7 +254,7 @@ def test_heuristic_negative_is_rejected_immediately_without_gemini(tmp_path):
             return {
                 "track_id": "T00001",
                 "decisions": [{"candidate_id": candidate_ids[0], "is_subtitle": True, "category": "dialogue_subtitle", "confidence": 0.95}],
-                "model": "test-model",
+                "model": "v21_pipeline",
                 "uncertain": False
             }
 

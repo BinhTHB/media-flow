@@ -4,6 +4,7 @@ from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_placement import SubtitlePlacement
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.domain.entities.subtitle_style import SubtitleStyle
+from src.application.services.mask_authority import DecisionStore
 
 class SubtitleProvider(ABC):
     @abstractmethod
@@ -19,5 +20,6 @@ class SubtitleProvider(ABC):
         play_res_x: int = 1920,
         play_res_y: int = 1080,
         mask_regions: Optional[List[SubtitleRegion]] = None,
+        decision_store: Optional[DecisionStore] = None,
     ) -> str:
         pass

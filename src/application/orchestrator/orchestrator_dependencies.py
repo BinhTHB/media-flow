@@ -22,6 +22,7 @@ from src.application.use_cases.mux_dubbed_video import MuxDubbedVideoUseCase
 from src.domain.entities.subtitle_style import SubtitleStyle
 from src.application.services.final_timeline_builder import FinalTimelineBuilder
 from src.application.services.final_render_manifest_service import FinalRenderManifestService
+from src.application.services.mask_authority import DecisionStore
 
 @dataclass
 class OrchestratorDependencies:
@@ -50,3 +51,4 @@ class OrchestratorDependencies:
     frame_interval: float = 1.0
     subtitle_format: str = "srt"
     subtitle_style: Optional[SubtitleStyle] = None
+    mask_decision_store: Optional[DecisionStore] = None

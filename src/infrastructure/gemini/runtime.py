@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from src.infrastructure.gemini.client import GeminiClient
@@ -94,11 +95,15 @@ class GeminiRuntime:
             namespace=self._config.cache_namespace,
             enabled=self._config.cache_enabled,
         )
-        logger.warning(
-            "Gemini response cache %s (dir=%s)",
-            "enabled" if self._cache.enabled else "disabled",
-            self._cache.path or self._config.cache_dir or "unset",
-        )
+        cache_dir_path = self._config.cache_dir
+        cache_status = "empty"
+        if cache_dir_path:
+            p = Path(cache_dir_path)
+            if p.exists() and any(p.iterdir()):
+                cache_status = "not empty"
+        status_msg = f"Gemini response cache {'enabled' if self._cache.enabled else 'disabled'} (dir={cache_dir_path or 'unset'}, state={cache_status})"
+        print(status_msg)
+        logger.warning(status_msg)
         self._usage = UsageRecorder(
             usage_callback=_create_ledger_callback(self._ledger_path_for(job_id), job_id)
         )

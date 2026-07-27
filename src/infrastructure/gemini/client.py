@@ -114,6 +114,11 @@ class GeminiClient:
             )
             cached = self._cache.get(cache_key)
             if cached is not None:
+                if not self._cache.enabled:
+                    raise RuntimeError(
+                        "LOUD-WARN: Cache hit detected while Gemini cache is disabled! "
+                        "Set --gemini-cache on to enable cache reads."
+                    )
                 resp = GeminiResponse.from_dict(cached)
                 resp.cache_hit = True
                 self._record_usage(request, resp, cache_hit=True, retry_count=0)

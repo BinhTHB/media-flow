@@ -4,6 +4,7 @@ from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_placement import SubtitlePlacement
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.domain.entities.subtitle_style import SubtitleStyle
+from src.application.services.mask_authority import DecisionStore
 from src.application.services.ass_generator import ASSGenerator
 from src.domain.entities.subtitle_item import SubtitleItem
 
@@ -29,7 +30,9 @@ class ASSSubtitleProvider(SubtitleProvider):
         play_res_x: int = 1920,
         play_res_y: int = 1080,
         mask_regions: Optional[List[SubtitleRegion]] = None,
+        decision_store: Optional[DecisionStore] = None,
     ) -> str:
         return ASSGenerator.generate(
-            segments, style, placements, play_res_x, play_res_y, mask_regions
+            segments, style, placements, play_res_x, play_res_y, mask_regions,
+            decision_store=decision_store,
         )

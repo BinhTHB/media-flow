@@ -3,6 +3,7 @@ from typing import List, Optional
 from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_placement import SubtitlePlacement
 from src.domain.entities.subtitle_style import SubtitleStyle
+from src.application.services.mask_authority import DecisionStore, has_verified_mask_provenance
 
 def _format_time(seconds: float) -> str:
     hours = int(seconds // 3600)
@@ -67,9 +68,15 @@ def generate_ass_header(
     lines.append("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text")
     return "\n".join(lines)
 
-def _has_mask_provenance(region: "SubtitleRegion") -> bool:
-    """A region is eligible for production masking only when it carries classifier provenance."""
-    return bool(getattr(region, "classification_id", None)) and bool(getattr(region, "is_subtitle", None)) and bool(getattr(region, "classifier_model", None))
+def _has_mask_provenance(
+    region: "SubtitleRegion", decision_store: DecisionStore | None
+) -> bool:
+    """A region is eligible only when its positive decision exists in this run."""
+    return bool(
+        decision_store
+        and getattr(region, "is_subtitle", None) is True
+        and has_verified_mask_provenance(region, decision_store)
+    )
 
 
 class ASSGenerator:
@@ -81,6 +88,7 @@ class ASSGenerator:
         play_res_x: int = 1920,
         play_res_y: int = 1080,
         mask_regions: Optional[List["SubtitleRegion"]] = None,
+        decision_store: DecisionStore | None = None,
     ) -> str:
         if not segments:
             return ""
@@ -90,7 +98,7 @@ class ASSGenerator:
         if mask_regions:
             for r in mask_regions:
                 # Gate: production mask regions must carry explicit confirmation provenance.
-                if not _has_mask_provenance(r):
+                if not _has_mask_provenance(r, decision_store):
                     logging.getLogger(__name__).warning(
                         "LOUD-WARN [ASSGenerator]: discarding mask_region without verified classifier provenance. "
                         "Region details: start=%.3f, end=%.3f, x=%.3f, y=%.3f",

@@ -38,6 +38,7 @@ from src.domain.entities.segment import Segment
 from src.domain.entities.subtitle_region import SubtitleRegion
 from src.domain.entities.frame import Frame
 from src.application.services.artifact_cache_validator import ArtifactCacheValidator
+from src.application.services.mask_authority import DecisionStore, MaskAuthority
 from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
 
 audit_logger = logging.getLogger(__name__)
@@ -76,10 +77,18 @@ class JobOrchestrator:
         self.frame_interval = dependencies.frame_interval
         self.subtitle_format = dependencies.subtitle_format
         self.subtitle_style = dependencies.subtitle_style if dependencies.subtitle_style else SubtitleStyle()
+        self.mask_decision_store = dependencies.mask_decision_store
         self.state_machine = JobStateMachine()
 
     def execute(self, job: VideoJob) -> VideoJob:
         self.state_machine.transition(job, JobStatus.RUNNING)
+        self.mask_decision_store = DecisionStore(
+            run_id=job.job_id,
+            path=os.path.join(
+                self.artifact_provider.debug_dir(job.job_id),
+                "mask_decisions.jsonl",
+            ),
+        )
         speech_segments = []
         ocr_segments = []
         frames = []
@@ -218,6 +227,9 @@ class JobOrchestrator:
                         )
                     if is_hybrid_region:
                         region_inner.proposal_bundle = bundle
+                        region_inner.set_mask_authority(
+                            MaskAuthority(self.mask_decision_store)
+                        )
                         region_inner.set_run_context(
                             job.job_id, self.artifact_provider.debug_dir(job.job_id)
                         )
@@ -492,8 +504,9 @@ class JobOrchestrator:
                 and video_width > 0
                 and video_height > 0
             ):
-                regions.extend(
-                    self._ocr_regions(ocr_segments, video_width, video_height)
+                audit_logger.warning(
+                    "LOUD-WARN: OCR segments have no MaskAuthority decision and "
+                    "are excluded from source-subtitle masks."
                 )
 
             # Translation Grouping
@@ -862,6 +875,7 @@ class JobOrchestrator:
                                     play_res_x=video_width,
                                     play_res_y=video_height,
                                     mask_regions=regions if replacement_required else None,
+                                    decision_store=self.mask_decision_store,
                                 )
                 self.artifact_provider.write_text(
                     self.artifact_provider.subtitle_ass_path(job.job_id), ass_content
@@ -1157,9 +1171,6 @@ class JobOrchestrator:
                     width=max(0.0, min(1.0, (right - left) / video_width)),
                     height=max(0.0, min(1.0, (bottom - top) / video_height)),
                     confidence=segment.confidence if segment.confidence_available else 1.0,
-                    classification_id=f"ocr_segment:{segment.id}",
-                    is_subtitle=True,
-                    classifier_model="ocr_fallback",
                 )
             )
         return regions

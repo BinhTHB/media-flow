@@ -79,6 +79,7 @@ class ApplicationBuilder:
         ffmpeg_nvenc_cq: int = 23,
         ffmpeg_nvenc_preset: str = "p5",
         use_v21_pipeline: bool = False,
+        gemini_cache: str = "on",
     ):
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
         self.config_path = config_path or os.path.join(base_dir, "config", "providers.yaml")
@@ -122,6 +123,7 @@ class ApplicationBuilder:
         self.ffmpeg_nvenc_cq = ffmpeg_nvenc_cq
         self.ffmpeg_nvenc_preset = ffmpeg_nvenc_preset
         self.use_v21_pipeline = use_v21_pipeline
+        self.gemini_cache = gemini_cache
 
     @classmethod
     def from_cli_args(cls, args: Any) -> "ApplicationBuilder":
@@ -165,6 +167,7 @@ class ApplicationBuilder:
             ffmpeg_nvenc_cq=getattr(args, "ffmpeg_nvenc_cq", 23),
             ffmpeg_nvenc_preset=getattr(args, "ffmpeg_nvenc_preset", "p5"),
             use_v21_pipeline=getattr(args, "use_v21_pipeline", False),
+            gemini_cache=getattr(args, "gemini_cache", "on"),
         )
 
     def build(self) -> MediaFlowApplication:
@@ -188,7 +191,10 @@ class ApplicationBuilder:
             quality_overrides["prefer_speech_over_ocr"] = False
         if self.enable_vietnamese_text_correction:
             quality_overrides["enable_vietnamese_text_correction"] = True
-        overrides = {"subtitle_quality": quality_overrides}
+        overrides = {
+            "subtitle_quality": quality_overrides,
+            "gemini": {"cache_enabled": self.gemini_cache == "on"},
+        }
         overrides["resource_policy"] = {"profile": self.resource_profile}
         overrides["ffmpeg"] = {
             "encoder": self.ffmpeg_encoder,

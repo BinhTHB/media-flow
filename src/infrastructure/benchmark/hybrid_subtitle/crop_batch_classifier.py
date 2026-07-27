@@ -23,6 +23,7 @@ import math
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 from .crop_extractor import TrackCropExtractor
 
@@ -175,6 +176,7 @@ class CropBatchClassifierV21:
         proposal_bundle: Any,
         canary_tracks: List[Dict[str, Any]],
         is_retry: bool = False,
+        parent_request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Classify one batch of tracks via V2.1 packet."""
         if self.requests_sent >= self.budget_limit:
@@ -215,6 +217,9 @@ class CropBatchClassifierV21:
             try:
                 from src.infrastructure.gemini.contracts import GeminiRequest
 
+                batch_candidate_ids = [ev.get("track_id") for ev in evidence_list]
+                unique_id = uuid.uuid4().hex[:6]
+                request_id_str = f"crop_batch_v21_{self.requests_sent}_{unique_id}"
                 req = GeminiRequest(
                     contents=[{"parts": prompt_parts}],
                     model=self.model,
@@ -223,7 +228,7 @@ class CropBatchClassifierV21:
                         "You are a subtitle detection assistant. Classify each candidate "
                         "as subtitle or non-subtitle. Default is NOT subtitle."
                     ),
-                    request_id=f"crop_batch_v21_{self.requests_sent}",
+                    request_id=request_id_str,
                     source_kind="crop_classifier_v21",
                     api_surface="benchmark",
                 )
@@ -269,7 +274,15 @@ class CropBatchClassifierV21:
                         canary_passed = False
 
                 if not canary_passed:
-                    self._log_ledger(resp, len(batch), False)
+                    self._log_ledger(
+                        resp,
+                        len(batch),
+                        False,
+                        request_id_str,
+                        parent_request_id=parent_request_id,
+                        phase="split_retry" if is_retry else "initial",
+                        candidate_ids=batch_candidate_ids,
+                    )
                     if is_retry:
                         logger.error(
                             "LOUD-WARN: Canary failed on retry. BLOCKED."
@@ -278,11 +291,13 @@ class CropBatchClassifierV21:
                     # Retry with half batch
                     half = max(1, len(batch) // 2)
                     res1 = self._classify_one_batch(
-                        batch[:half], proposal_bundle, canary_tracks, is_retry=True
+                        batch[:half], proposal_bundle, canary_tracks, is_retry=True,
+                        parent_request_id=request_id_str,
                     )
                     res2 = (
                         self._classify_one_batch(
-                            batch[half:], proposal_bundle, canary_tracks, is_retry=True
+                            batch[half:], proposal_bundle, canary_tracks, is_retry=True,
+                            parent_request_id=request_id_str,
                         )
                         if len(batch) > half
                         else {}
@@ -290,7 +305,15 @@ class CropBatchClassifierV21:
                     res1.update(res2)
                     return res1
 
-                self._log_ledger(resp, len(batch), canary_passed)
+                self._log_ledger(
+                    resp,
+                    len(batch),
+                    canary_passed,
+                    request_id_str,
+                    parent_request_id=parent_request_id,
+                    phase="split_retry" if is_retry else "initial",
+                    candidate_ids=batch_candidate_ids,
+                )
 
                 # Map decisions back to tracks (pass-through directly, no echo-check fallback)
                 mapped: Dict[str, Any] = {}
@@ -453,7 +476,16 @@ class CropBatchClassifierV21:
 
         return prompt_parts
 
-    def _log_ledger(self, resp: Any, batch_size: int, canary_passed: bool) -> None:
+    def _log_ledger(
+        self,
+        resp: Any,
+        batch_size: int,
+        canary_passed: bool,
+        request_id: str,
+        parent_request_id: Optional[str],
+        phase: str,
+        candidate_ids: List[str],
+    ) -> None:
         if self.artifact_dir is None:
             return
         try:
@@ -462,24 +494,35 @@ class CropBatchClassifierV21:
             
             # Extract request details
             echo_text = getattr(resp, "text", "")
-            usage_info = {}
+            u_info = {}
             if hasattr(resp, "usage") and resp.usage:
-                if hasattr(resp.usage, "to_dict"):
-                    usage_info = resp.usage.to_dict()
-                else:
-                    try:
-                        usage_info = dict(resp.usage)
-                    except Exception:
-                        pass
+                u_info = {
+                    "prompt_tokens": getattr(resp.usage, "prompt_token_count", 0),
+                    "candidates_tokens": getattr(resp.usage, "candidates_token_count", 0),
+                    "total_tokens": getattr(resp.usage, "total_token_count", 0),
+                }
             elif hasattr(resp, "usage_metadata") and resp.usage_metadata:
-                usage_info = {
-                    "input_tokens": getattr(resp.usage_metadata, "prompt_token_count", 0),
-                    "output_tokens": getattr(resp.usage_metadata, "candidates_token_count", 0),
-                    "total_tokens": getattr(resp.usage_metadata, "total_token_count", 0)
+                u_info = {
+                    "prompt_tokens": getattr(resp.usage_metadata, "prompt_token_count", 0),
+                    "candidates_tokens": getattr(resp.usage_metadata, "candidates_token_count", 0),
+                    "total_tokens": getattr(resp.usage_metadata, "total_token_count", 0),
+                }
+            else:
+                u_info = {
+                    "prompt_tokens": 0,
+                    "candidates_tokens": 0,
+                    "total_tokens": 0,
                 }
 
+            model_stage = getattr(resp, "model_stage", None)
+            if not model_stage or model_stage == "unknown":
+                if hasattr(resp, "provenance") and resp.provenance:
+                    model_stage = getattr(resp.provenance, "model_stage", None)
+            if not model_stage or model_stage == "unknown":
+                model_stage = "STABLE"
+
             # Generate request hash for traceability
-            prompt_content = getattr(resp, "request_id", "") + "_" + echo_text[:100]
+            prompt_content = request_id + "_" + echo_text[:100]
             import hashlib
             rhash = hashlib.sha256(prompt_content.encode("utf-8")).hexdigest()[:12]
 
@@ -487,16 +530,20 @@ class CropBatchClassifierV21:
                 "timestamp": time.time(),
                 "job_id": self.job_id,
                 "run_id": self.run_id,
-                "request_id": getattr(resp, "request_id", "") or f"crop_batch_v21_{self.requests_sent - 1}",
+                "request_id": request_id,
+                "retry_of": parent_request_id,
+                "phase": phase,
+                "candidate_ids": candidate_ids,
                 "request_hash": rhash,
                 "route": "crop_classifier_v21",
                 "live_or_cache": "cache" if getattr(resp, "cache_hit", False) else "live",
-                "cache_hit": getattr(resp, "cache_hit", False),
+                "cache_hit": bool(getattr(resp, "cache_hit", False)),
                 "variant": "separator_batch" if batch_size > 1 else "single_crop",
                 "batch_size": batch_size,
                 "canary_pass": canary_passed,
                 "model": self.model,
-                "tokens": usage_info,
+                "model_stage": model_stage,
+                "tokens": u_info,
                 "echo": echo_text,
                 "finish_reason": getattr(resp, "finish_reason", "STOP"),
                 "total_candidates": self.total_candidates,

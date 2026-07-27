@@ -226,7 +226,7 @@ def test_gemini_ocr_without_confidence_bypasses_confidence_filter():
     assert metrics["dropped_by_confidence"] == 0
 
 
-def test_ocr_bbox_becomes_display_region_with_fallback_confidence():
+def test_ocr_bbox_becomes_unconfirmed_display_region_with_fallback_confidence():
     from src.application.orchestrator.job_orchestrator import JobOrchestrator
 
     segment = Segment(
@@ -260,9 +260,9 @@ def test_ocr_bbox_becomes_display_region_with_fallback_confidence():
         "width": 0.4,
         "height": 0.2,
         "confidence": 1.0,
-        "classification_id": "ocr_segment:ocr-1",
-        "is_subtitle": True,
-        "classifier_model": "ocr_fallback",
+        "classification_id": None,
+        "is_subtitle": None,
+        "classifier_model": None,
         "track_id": None,
         "proposal_ids": [],
         "category": None,
