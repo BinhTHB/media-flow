@@ -19,6 +19,7 @@ import base64
 import cv2
 import json
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -209,107 +210,127 @@ class CropBatchClassifierV21:
         if not prompt_parts:
             return {}
 
-        try:
-            from src.infrastructure.gemini.contracts import GeminiRequest
+        max_rate_limit_retries = max(1, math.floor(self.total_candidates * 0.1))
+        while True:
+            try:
+                from src.infrastructure.gemini.contracts import GeminiRequest
 
-            req = GeminiRequest(
-                contents=[{"parts": prompt_parts}],
-                model=self.model,
-                generation_config={"temperature": 0.1},
-                system_instruction=(
-                    "You are a subtitle detection assistant. Classify each candidate "
-                    "as subtitle or non-subtitle. Default is NOT subtitle."
-                ),
-                request_id=f"crop_batch_v21_{self.requests_sent}",
-                source_kind="crop_classifier_v21",
-                api_surface="benchmark",
-            )
-            self.requests_sent += 1
-            resp = self.client.generate_content(req, use_cache=True)
-            text = resp.text if hasattr(resp, "text") else ""
-
-            from src.infrastructure.gemini.structured_output import parse_json
-            data = parse_json(text)
-            if not isinstance(data, list):
-                raise ValueError("Response is not a JSON list")
-
-            expected_ids = {ev["track_id"] for ev in evidence_list}
-            actual_ids = [
-                d.get("candidate_id", d.get("track_id", ""))
-                for d in data if isinstance(d, dict)
-            ]
-            # Map candidate_id or track_id
-            decisions: Dict[str, Any] = {}
-            for d in data:
-                if not isinstance(d, dict):
-                    continue
-                tid = d.get("candidate_id") or d.get("track_id", "")
-                decisions[tid] = d
-
-            if set(actual_ids) != expected_ids and not set(actual_ids).issuperset(expected_ids):
-                # Allow extra model metadata entries, but require all expected IDs
-                missing = expected_ids - set(actual_ids)
-                if missing:
-                    logger.warning(
-                        "LOUD-WARN: Missing IDs %s in response. Fail-closed for those.",
-                        missing,
-                    )
-
-            # Canary check
-            canary_passed = True
-            for cid in canary_ids:
-                decision = decisions.get(cid)
-                if decision and decision.get("is_subtitle") is True:
-                    logger.warning(
-                        "LOUD-WARN: Canary %s flagged as subtitle!", cid
-                    )
-                    canary_passed = False
-
-            if not canary_passed:
-                self._log_ledger(resp, len(batch), False)
-                if is_retry:
-                    logger.error(
-                        "LOUD-WARN: Canary failed on retry. BLOCKED."
-                    )
-                    raise RuntimeError("Canary validation failed twice. BLOCKED.")
-                # Retry with half batch
-                half = max(1, len(batch) // 2)
-                res1 = self._classify_one_batch(
-                    batch[:half], proposal_bundle, canary_tracks, is_retry=True
+                req = GeminiRequest(
+                    contents=[{"parts": prompt_parts}],
+                    model=self.model,
+                    generation_config={"temperature": 0.1},
+                    system_instruction=(
+                        "You are a subtitle detection assistant. Classify each candidate "
+                        "as subtitle or non-subtitle. Default is NOT subtitle."
+                    ),
+                    request_id=f"crop_batch_v21_{self.requests_sent}",
+                    source_kind="crop_classifier_v21",
+                    api_surface="benchmark",
                 )
-                res2 = (
-                    self._classify_one_batch(
-                        batch[half:], proposal_bundle, canary_tracks, is_retry=True
+                self.requests_sent += 1
+                resp = self.client.generate_content(req, use_cache=True)
+                text = resp.text if hasattr(resp, "text") else ""
+
+                from src.infrastructure.gemini.structured_output import parse_json
+                data = parse_json(text)
+                if not isinstance(data, list):
+                    raise ValueError("Response is not a JSON list")
+
+                expected_ids = {ev["track_id"] for ev in evidence_list}
+                actual_ids = [
+                    d.get("candidate_id", d.get("track_id", ""))
+                    for d in data if isinstance(d, dict)
+                ]
+                # Map candidate_id or track_id
+                decisions: Dict[str, Any] = {}
+                for d in data:
+                    if not isinstance(d, dict):
+                        continue
+                    tid = d.get("candidate_id") or d.get("track_id", "")
+                    decisions[tid] = d
+
+                if set(actual_ids) != expected_ids and not set(actual_ids).issuperset(expected_ids):
+                    # Allow extra model metadata entries, but require all expected IDs
+                    missing = expected_ids - set(actual_ids)
+                    if missing:
+                        logger.warning(
+                            "LOUD-WARN: Missing IDs %s in response. Fail-closed for those.",
+                            missing,
+                        )
+
+                # Canary check
+                canary_passed = True
+                for cid in canary_ids:
+                    decision = decisions.get(cid)
+                    if decision and decision.get("is_subtitle") is True:
+                        logger.warning(
+                            "LOUD-WARN: Canary %s flagged as subtitle!", cid
+                        )
+                        canary_passed = False
+
+                if not canary_passed:
+                    self._log_ledger(resp, len(batch), False)
+                    if is_retry:
+                        logger.error(
+                            "LOUD-WARN: Canary failed on retry. BLOCKED."
+                        )
+                        raise RuntimeError("Canary validation failed twice. BLOCKED.")
+                    # Retry with half batch
+                    half = max(1, len(batch) // 2)
+                    res1 = self._classify_one_batch(
+                        batch[:half], proposal_bundle, canary_tracks, is_retry=True
                     )
-                    if len(batch) > half
-                    else {}
-                )
-                res1.update(res2)
-                return res1
+                    res2 = (
+                        self._classify_one_batch(
+                            batch[half:], proposal_bundle, canary_tracks, is_retry=True
+                        )
+                        if len(batch) > half
+                        else {}
+                    )
+                    res1.update(res2)
+                    return res1
 
-            self._log_ledger(resp, len(batch), canary_passed)
+                self._log_ledger(resp, len(batch), canary_passed)
 
-            # Map decisions back to tracks (pass-through directly, no echo-check fallback)
-            mapped: Dict[str, Any] = {}
-            for t in batch:
-                tid = t["track_id"]
-                decision = decisions.get(tid)
-                if not decision:
+                # Map decisions back to tracks (pass-through directly, no echo-check fallback)
+                mapped: Dict[str, Any] = {}
+                for t in batch:
+                    tid = t["track_id"]
+                    decision = decisions.get(tid)
+                    if not decision:
+                        logger.warning(
+                            "LOUD-WARN: Missing decision for track %s. Fail-closed.",
+                            tid,
+                        )
+                        continue
+
+                    mapped[tid] = decision
+
+                return mapped
+
+            except Exception as exc:
+                from src.infrastructure.gemini.exceptions import GeminiRateLimitError
+
+                if (
+                    isinstance(exc, GeminiRateLimitError)
+                    and self.retry_count < max_rate_limit_retries
+                    and self.requests_sent < self.budget_limit
+                ):
+                    self.retry_count += 1
+                    wait_seconds = max(float(exc.retry_after or 1.0), 1.0)
                     logger.warning(
-                        "LOUD-WARN: Missing decision for track %s. Fail-closed.",
-                        tid,
+                        "LOUD-WARN: V2.1 rate limited, retry %d/%d after %.1fs.",
+                        self.retry_count,
+                        max_rate_limit_retries,
+                        wait_seconds,
                     )
+                    time.sleep(wait_seconds)
                     continue
 
-                mapped[tid] = decision
-
-            return mapped
-
-        except Exception as exc:
-            logger.error("LOUD-WARN: V2.1 batch classification failed: %s", exc)
-            if "BLOCKED" in str(exc):
-                raise exc
-            return {}
+                logger.error("LOUD-WARN: V2.1 batch classification failed: %s", exc)
+                if "BLOCKED" in str(exc):
+                    raise exc
+                return {}
 
     def _build_v21_prompt(
         self, evidence_list: List[Dict[str, Any]]
