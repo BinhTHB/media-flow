@@ -252,6 +252,16 @@ def verify(zip_path: Path, round_num: int) -> int:
                     if not sha_match:
                         print(f"        report SHA:  {report_sha}")
                         print(f"        current SHA: {current_sha}")
+
+                    gate_path = f"{artifacts_prefix}offline_gate_r{round_num}.json"
+                    gate_match = False
+                    if gate_path in names:
+                        gate_data = json.loads(zf.read(gate_path).decode("utf-8"))
+                        gate_match = gate_data.get("git_sha", "") == report_sha
+                    r_gate = _check(
+                        "offline gate git_sha matches package_report git_sha",
+                        gate_match,
+                    )
                     
                     # 2. Output verification matches round output flag
                     round_output_flag = report_data.get("included", {}).get(f"round{round_num}_output", False)
@@ -270,7 +280,7 @@ def verify(zip_path: Path, round_num: int) -> int:
                         print("        [INFO] self-referential ZIP hash in package_report.json is empty (delegated to sidecar .sha256 validation)")
                         r3 = True
                         
-                    all_pass = all_pass and r1 and r2 and r3
+                    all_pass = all_pass and r1 and r_gate and r2 and r3
                 except Exception as exc:
                     print(f"  [FAIL] package_report.json check error: {exc}")
                     all_pass = False
