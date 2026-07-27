@@ -41,6 +41,13 @@ from src.infrastructure.benchmark.hybrid_subtitle.r2_language import (
 from src.infrastructure.benchmark.hybrid_subtitle.behavior_discriminator import (
     R3StaticDiscriminator,
 )
+from src.infrastructure.benchmark.hybrid_subtitle.bottom_band_gate import (
+    passes_bottom_band,
+    track_y1_norm,
+)
+from src.infrastructure.benchmark.hybrid_subtitle.pixel_variance_discriminator import (
+    PixelVarianceDiscriminator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +75,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                  track_iou_threshold: float = 0.25,
                  track_max_gap_frames: int = 5,
                  bottom_ratio_threshold: float = 0.65,
+                 band_gate_threshold: float = 0.68,
+                 static_variance_threshold: float = 827.12,
                  min_confidence: float = 0.40,
                  proposal_provider: Optional[Any] = None,
                  device: str = "cpu",
@@ -83,6 +92,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._track_iou_threshold = track_iou_threshold
         self._track_max_gap_frames = track_max_gap_frames
         self._bottom_ratio_threshold = bottom_ratio_threshold
+        self._band_gate_threshold = band_gate_threshold
+        self._static_variance_threshold = static_variance_threshold
         self._min_confidence = min_confidence
         self._proposal = proposal_provider  # lazy-init trong detect_regions
         self._device = device
@@ -102,6 +113,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self.r1_ledger: list[dict[str, Any]] = []
         self.r2_ledger: list[dict[str, Any]] = []
         self.r3_ledger: list[dict[str, Any]] = []
+        self.static_variance_ledger: list[dict[str, Any]] = []
 
     def set_speech_segments(
         self, speech_segments: list[Any], video_duration_seconds: float
@@ -171,6 +183,29 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             flat_groups,
             iou_threshold=self._track_iou_threshold,
             max_gap_frames=self._track_max_gap_frames,
+        )
+        if not tracks:
+            return []
+
+        # Product scope: only bottom-band burn-in dialogue subtitles are
+        # candidates. This runs before tiering and Gemini, saving requests.
+        pre_band_count = len(tracks)
+        tracks = [
+            track for track in tracks
+            if passes_bottom_band(track, H, self._band_gate_threshold)
+        ]
+        self.band_gate_ledger = [
+            {
+                "track_id": track["track_id"],
+                "y1_norm": track_y1_norm(track, H),
+                "threshold": self._band_gate_threshold,
+                "passed": passes_bottom_band(track, H, self._band_gate_threshold),
+            }
+            for track in tracks
+        ]
+        logger.info(
+            "Bottom-band gate %.2f kept %d/%d tracks before Gemini.",
+            self._band_gate_threshold, len(tracks), pre_band_count,
         )
         if not tracks:
             return []
@@ -451,6 +486,9 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             frame_height=H,
             speech_segments=[],
         )
+        static_discriminator = PixelVarianceDiscriminator(
+            min_temporal_variance=self._static_variance_threshold
+        )
         v21_classifier: Any = self._crop_batch_classifier or CropBatchClassifierV21(
             gemini_client=None,  # Will be set before use
         )
@@ -474,9 +512,25 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         self._r3_static.set_sub_band_from_sure_yes(sure_yes)
         self._r2_language.set_target_from_sure_yes(sure_yes, bundle)
 
+        # Reject static low-variance tracks after bottom-band filtering but
+        # before Gemini. Any measurement error is reject-only (fail-closed).
+        def passes_static_discriminator(track: Dict) -> bool:
+            evidence = static_discriminator.evaluate(track, bundle)
+            self.static_variance_ledger.append({
+                "track_id": track["track_id"],
+                "temporal_pixel_variance": evidence.temporal_pixel_variance,
+                "sample_count": evidence.sample_count,
+                "rejected": evidence.rejected,
+                "reason": evidence.reason,
+                "threshold": self._static_variance_threshold,
+            })
+            return not evidence.rejected
+
         # 8) Process sure-YES: must pass R1 + R3
         accepted_sure_yes: List[Dict] = []
         for track in sure_yes:
+            if not passes_static_discriminator(track):
+                continue
             r1 = self._r1_motion.evaluate(track, bundle)
             self.r1_ledger.append({
                 "track_id": track["track_id"],
@@ -496,6 +550,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         # 9) Process gray zone through R1 -> R2 -> R3 -> survivors
         gray_survivors: List[Dict] = []
         for track in gray_zone:
+            if not passes_static_discriminator(track):
+                continue
             r1 = self._r1_motion.evaluate(track, bundle)
             self.r1_ledger.append({
                 "track_id": track["track_id"],

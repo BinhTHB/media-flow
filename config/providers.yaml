@@ -118,6 +118,9 @@ providers:
       device: cuda
       gemini_verify: true
       gemini_model: gemini-3.5-flash-lite
+      band_gate_threshold: 0.68
+      band_gate_enabled: true
+      static_variance_threshold: 827.12
 
   subtitle_placement_debug:
     pillow: {}

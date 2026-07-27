@@ -121,6 +121,10 @@ def _create_hybrid_yolo(options):
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
         min_confidence=float(options.get("min_confidence", 0.40)),
+        band_gate_threshold=float(options.get("band_gate_threshold", 0.68)),
+        static_variance_threshold=float(
+            options.get("static_variance_threshold", 827.12)
+        ),
         device=options.get("device", "cpu"),
         semantic_verifier=semantic_verifier,
         crop_batch_classifier=crop_batch_classifier,
