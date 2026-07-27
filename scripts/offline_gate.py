@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline gate v31 — send ALL 42 GT V2.3 entries through Gemini classifier.
+"""Parameterized offline gate for GT V2.3 subtitle classification.
 
 Unlike r30 which only sent 14 positives, this script bypasses the band gate
 and discriminator for the gate evaluation, sending every GT track to Gemini.
@@ -13,13 +13,14 @@ Changes from r30:
   - Verifies bleed tracks from v29: T041, T105, T055.
 
 Usage:
-    .venv/Scripts/python scripts/offline_gate_r31.py
+    .venv/Scripts/python scripts/offline_gate.py --round 34
 
 Exit:
     0 if PASS, 2 if FAIL (non-zero for CI integration).
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -45,8 +46,6 @@ from src.infrastructure.gemini.structured_output import parse_json
 from src.infrastructure.benchmark.hybrid_subtitle.bottom_band_gate import passes_bottom_band, track_y1_norm
 from src.infrastructure.benchmark.hybrid_subtitle.pixel_variance_discriminator import PixelVarianceDiscriminator
 
-ARTIFACT_DIR = ROOT / "artifacts" / "round33"
-GT_PATH = ROOT / "artifacts" / "round28" / "gt_v2_3.json"
 BASELINE_PATH = ROOT / "artifacts" / "round23" / "baseline_tracks_conf_0.30.json"
 VIDEO_PATH = ROOT / "test_videos" / "real_mini_benchmark" / "sample5.mp4"
 GEMINI_MODEL = "gemini-3.5-flash-lite"
@@ -54,8 +53,6 @@ FRAME_HEIGHT = 1280
 
 BAND_THRESHOLD = 0.68
 VARIANCE_THRESHOLD = 827.12
-POSITIVE_IDS = ["T003", "T006", "T010", "T014", "T016", "T019",
-                "T116", "T120", "T127", "T133", "T135", "T137", "T138", "T146"]
 BLEED_IDS = ["T041", "T105", "T055"]  # v29 bleed negatives
 CANARY_ID = "T013"  # negative track from GT v2.3 (named negative:T013 in entries)
 
@@ -67,8 +64,8 @@ def load_key() -> str:
     raise RuntimeError("GEMINI_API_KEY unavailable")
 
 
-def load_gt_entries() -> list[dict]:
-    raw = json.loads(GT_PATH.read_text(encoding="utf-8"))
+def load_gt_entries(gt_path: Path) -> list[dict]:
+    raw = json.loads(gt_path.read_text(encoding="utf-8"))
     return raw["entries"]
 
 
@@ -219,10 +216,12 @@ def run_gemini_classifier(
     proposal_bundle: ProposalBundle,
     canary_tracks: list[dict],
     classifier: CropBatchClassifierV21,
+    artifact_dir: Path,
+    round_number: int,
 ) -> tuple[dict[str, dict], int, int, list[str]]:
     """Run all primary requests first, then explicit retries with 4s pacing."""
-    events_path = ARTIFACT_DIR / "gate_attempt_events_r33.jsonl"
-    responses_dir = ARTIFACT_DIR / "gate_responses_r33"
+    events_path = artifact_dir / f"gate_attempt_events_r{round_number}.jsonl"
+    responses_dir = artifact_dir / f"gate_responses_r{round_number}"
     responses_dir.mkdir(parents=True, exist_ok=True)
     one_shot: dict[str, dict] = {}
     final: dict[str, dict] = {}
@@ -284,10 +283,13 @@ def run_gemini_classifier(
             )
             if not isinstance(decision, dict) or not isinstance(decision.get("is_subtitle"), bool):
                 raise ValueError("missing or invalid target decision")
+            decision = dict(decision)
+            decision["response_id"] = response.request_id
             finished = {
                 "event": "attempt_finished", "attempt_id": attempt_id, "track_id": tid,
                 "phase": phase, "outcome": "accepted", "cache_hit": bool(response.cache_hit),
-                "tokens": response.usage.to_dict(), "response_path": str(raw_path),
+                "response_id": response.request_id, "tokens": response.usage.to_dict(),
+                "response_path": str(raw_path),
                 "decision": decision,
             }
             with events_path.open("a", encoding="utf-8") as out:
@@ -333,8 +335,37 @@ def run_gemini_classifier(
     return final, attempts_total, retries, missing_ids
 
 
+def resolve_named_id(name: str, gt_map: dict[str, dict]) -> str | None:
+    """Resolve named negative aliases such as T013 to negative:T013."""
+    if name in gt_map:
+        return name
+    negative_name = f"negative:{name}"
+    return negative_name if negative_name in gt_map else None
+
+
 def main() -> None:
-    artifact_dir = ARTIFACT_DIR
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--round", type=int, default=34, help="Round identifier for outputs.")
+    parser.add_argument(
+        "--gt",
+        type=Path,
+        default=ROOT / "artifacts" / "round28" / "gt_v2_3.json",
+        help="Ground-truth JSON path.",
+    )
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=None,
+        help="Directory for gate artifacts (defaults to artifacts/round<round>).",
+    )
+    args = parser.parse_args()
+    round_number = args.round
+    gt_path = args.gt.resolve()
+    artifact_dir = (
+        args.artifact_dir.resolve()
+        if args.artifact_dir is not None
+        else ROOT / "artifacts" / f"round{round_number}"
+    )
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Git SHA ──────────────────────────────────────────────────
@@ -343,9 +374,10 @@ def main() -> None:
     ).strip()
 
     print("=" * 70)
-    print("OFFLINE GATE R32 — ALL 42 GT V2.3 tracks → Gemini")
+    print(f"OFFLINE GATE R{round_number} — ALL GT V2.3 tracks → Gemini")
     print(f"GIT_SHA:        {git_sha}")
-    print(f"GT V2.3 SHA:    99d1d75e04226c5b7946d3b24532167f6875da73be9ff69f40fbb2a8f3940bd5")
+    print(f"GT:             {gt_path}")
+    print(f"GT V2.3 SHA:    {hashlib.sha256(gt_path.read_bytes()).hexdigest()}")
     print(f"Video:          {VIDEO_PATH.name}")
     print(f"Baseline:       {BASELINE_PATH.name}")
     print(f"Band threshold: {BAND_THRESHOLD}")
@@ -359,7 +391,7 @@ def main() -> None:
     print(smi.stdout, end="")
 
     # ── Load GT ──────────────────────────────────────────────────
-    entries = load_gt_entries()
+    entries = load_gt_entries(gt_path)
     print(f"[GT] Loaded {len(entries)} entries")
 
     # Build ID → GT entry map
@@ -420,6 +452,12 @@ def main() -> None:
                 else "passed"
             ),
         })
+        local_rule_state: list[str] = []
+        if discriminator_rejected:
+            local_rule_state.append(local_results[eid]["discriminator_reason"])
+        if local_results[eid].get("band_pass") is False:
+            local_rule_state.append("outside_bottom_band")
+        local_results[eid]["local_rule_state"] = local_rule_state
         if discriminator_rejected:
             local_results[eid]["local_verdict"] = "REJECT"
         elif local_results[eid].get("band_pass") is False:
@@ -443,35 +481,58 @@ def main() -> None:
             a_reject += 1
         print(f"  {eid:<20} {gt_lbl:<10} {r['y1_norm'] or 'N/A':<10} {b:<8} {v_str:<10} {d:<10} {vrd}")
 
+    layer_a_fp_blocked = sorted(
+        eid
+        for eid, result in local_results.items()
+        if result["local_verdict"] == "REJECT" and not gt_map[eid]["is_subtitle"]
+    )
+    assert all(
+        local_results[eid]["local_verdict"] == "REJECT"
+        for eid in layer_a_fp_blocked
+    ), "layer_a_fp_blocked contains a track not rejected by Layer A"
+    assert all(
+        not gt_map[eid]["is_subtitle"] for eid in layer_a_fp_blocked
+    ), "layer_a_fp_blocked contains a GT-positive track"
+    negative_survivors = sum(
+        1
+        for entry in entries
+        if not entry["is_subtitle"]
+        and local_results[entry["id"]]["local_verdict"] != "REJECT"
+    )
     print(f"\nLayer A summary: {a_reject} rejected locally, "
-          f"{sum(1 for e in entries if not e['is_subtitle']) - a_reject} false negatives still alive")
+          f"{negative_survivors} GT negatives still alive")
 
     # ── LAYER B: Gemini on ALL 42 ───────────────────────────────────
     print("\n" + "=" * 70)
-    print("LAYER B — Gemini Classifier on ALL 42 GT V2.3 tracks")
+    print(f"LAYER B — Gemini Classifier on ALL GT V2.3 tracks (round {round_number})")
     print("=" * 70)
 
     client = GeminiClient(api_key=load_key(), model=GEMINI_MODEL)
     classifier = CropBatchClassifierV21(
         client, model=GEMINI_MODEL, budget_limit=60,
-        artifact_dir=artifact_dir, job_id="round33-offline", run_id="all42",
+        artifact_dir=artifact_dir, job_id=f"round{round_number}-offline", run_id="all42",
     )
 
     # Build canary track for T013
     canary_tracks_list = []
     canary_id_canonical = CANARY_ID  # GT entry uses "T013" with is_subtitle=false
-    if canary_id_canonical in baseline_tracks:
+    # Use resolve_named_id to get the correct GT map key
+    resolved_canary = resolve_named_id(canary_id_canonical, gt_map)
+    if resolved_canary:
+        entry = gt_map[resolved_canary]
+        canary_tracks_list = [build_synthetic_track_from_gt(entry, fps)]
+        canary_source = resolved_canary
+    elif canary_id_canonical in baseline_tracks:
         canary_tracks_list = [baseline_tracks[canary_id_canonical]]
+        canary_source = canary_id_canonical
     else:
-        entry = gt_map.get(canary_id_canonical)
-        if entry:
-            canary_tracks_list = [build_synthetic_track_from_gt(entry, fps)]
-    print(f"[CANARY] Negative track for canary: {CANARY_ID}")
+        canary_source = None
+    print(f"[CANARY] Negative track for canary: {CANARY_ID} (resolved as {canary_source})")
 
     # Send ALL 42 tracks to Gemini
     start_b = time.monotonic()
     final_decisions, attempts_total, retry_count, missing_ids = run_gemini_classifier(
-        all_tracks, bundle, canary_tracks_list, classifier
+        all_tracks, bundle, canary_tracks_list, classifier, artifact_dir, round_number
     )
     elapsed_b = time.monotonic() - start_b
 
@@ -512,28 +573,36 @@ def main() -> None:
     named_ids = [CANARY_ID, "T036", "T053", "T126"] + BLEED_IDS
     print(f"\nNamed track results:")
     print(f"{'ID':<10} {'GT':<8} {'Gemini':<8} {'Band':<8} {'Disc':<10} {'echo'}")
+    named_tracks_report = {}
     for nid in named_ids:
-        if nid in gt_map:
-            gt_lbl = "sub" if gt_map[nid]["is_subtitle"] else "NOSUB"
-            dec = final_decisions.get(nid, {})
-            gem_lbl = "YES" if dec.get("is_subtitle") is True else "NO"
-            echo = str(dec.get("text_echo", ""))[:30]
-            lr = local_results.get(nid, {})
-            b = "P" if lr.get("band_pass") else "R"
-            d = "P" if not lr.get("discriminator_rejected") else "R"
-            print(f"  {nid:<8} {gt_lbl:<8} {gem_lbl:<8} {b:<8} {d:<10} {echo}")
-        elif nid in baseline_tracks:
-            # Some BLEED_IDS like T041 might be standard negative IDs
-            gt_lbl = "NOSUB"  # known negative
-            dec = final_decisions.get(nid, {})
-            gem_lbl = "YES" if dec.get("is_subtitle") is True else "NO"
-            echo = str(dec.get("text_echo", ""))[:30]
-            lr = local_results.get(nid, {})
-            b = "P" if lr.get("band_pass") else "R"
-            d = "P" if not lr.get("discriminator_rejected") else "R"
-            print(f"  {nid:<8} {gt_lbl:<8} {gem_lbl:<8} {b:<8} {d:<10} {echo}")
+        resolved_id = resolve_named_id(nid, gt_map)
+        if resolved_id:
+            gt_lbl = "sub" if gt_map[resolved_id]["is_subtitle"] else "NOSUB"
+            dec = final_decisions.get(resolved_id, {})
+            lr = local_results.get(resolved_id, {})
         else:
-            print(f"  {nid:<8} — not found in GT v2.3")
+            gt_lbl = "NOSUB"
+            dec = final_decisions.get(nid, {})
+            lr = local_results.get(nid, {})
+
+        gem_lbl = "YES" if dec.get("is_subtitle") is True else "NO"
+        echo = str(dec.get("text_echo", ""))[:30]
+        b = "P" if lr.get("band_pass") else ("R" if lr.get("band_pass") is False else "-")
+        d = "P" if lr.get("discriminator_rejected") is False else ("R" if lr.get("discriminator_rejected") is True else "-")
+        print(f"  {nid:<8} {gt_lbl:<8} {gem_lbl:<8} {b:<8} {d:<10} {echo}")
+
+        named_tracks_report[nid] = {
+            "gt_is_subtitle": gt_map[resolved_id]["is_subtitle"] if resolved_id else False,
+            "gemini_is_subtitle": dec.get("is_subtitle"),
+            "text_echo": str(dec.get("text_echo", "")),
+            "band_pass": lr.get("band_pass"),
+            "discriminator_rejected": lr.get("discriminator_rejected"),
+            "band_score": lr.get("y1_norm"),
+            "temporal_variance": lr.get("temporal_variance"),
+            "local_verdict": lr.get("local_verdict"),
+            "local_rule_state": lr.get("local_rule_state", []),
+            "response_id": dec.get("response_id"),
+        }
 
     # ── LAYER C: Combined pipeline ────────────────────────────────
     print("\n" + "=" * 70)
@@ -592,10 +661,11 @@ def main() -> None:
     report = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "git_sha": git_sha,
-        "gt_sha256": "99d1d75e04226c5b7946d3b24532167f6875da73be9ff69f40fbb2a8f3940bd5",
+        "gt_sha256": hashlib.sha256(gt_path.read_bytes()).hexdigest(),
         "layer_a": {
             "local_results": local_results,
             "rejected_local": a_reject,
+            "layer_a_fp_blocked": layer_a_fp_blocked,
         },
         "layer_b": {
             "confusion_matrix": {"tp": b_tp, "fp": b_fp, "tn": b_tn, "fn": b_fn, "unknown": b_unknown},
@@ -610,13 +680,7 @@ def main() -> None:
             "precision": round(precision_c, 4),
             "recall": round(recall_c, 4),
         },
-        "named_tracks": {nid: {
-            "gt_is_subtitle": gt_map.get(nid, {}).get("is_subtitle"),
-            "gemini_is_subtitle": final_decisions.get(nid, {}).get("is_subtitle"),
-            "text_echo": str(final_decisions.get(nid, {}).get("text_echo", "")),
-            "band_pass": local_results.get(nid, {}).get("band_pass"),
-            "discriminator_rejected": local_results.get(nid, {}).get("discriminator_rejected"),
-        } for nid in named_ids},
+        "named_tracks": named_tracks_report,
         "one_shot": {
             "missing_ids": missing_ids,
             "status": "FAIL" if one_shot_fail else "PASS",
@@ -624,7 +688,7 @@ def main() -> None:
         "final_status": "FAIL" if final_fail else "PASS",
     }
 
-    report_path = artifact_dir / "offline_gate_r33.json"
+    report_path = artifact_dir / f"offline_gate_r{round_number}.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"\n[REPORT] Written to {report_path}")
     print("GATE:", report["final_status"])
