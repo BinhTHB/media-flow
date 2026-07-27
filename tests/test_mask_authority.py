@@ -52,6 +52,22 @@ def test_missing_decision_store_record_is_discarded() -> None:
     assert not _has_mask_provenance(region, store)
 
 
+def test_negative_decision_store_verdict_is_discarded() -> None:
+    store = DecisionStore("run-1")
+    classification_id = "negative-decision"
+    store.record(
+        classification_id=classification_id,
+        model="v21_pipeline",
+        verdict=False,
+        raw_response_id="response-negative",
+        cache_hit=False,
+        live_or_cache="live",
+    )
+    region = _region(classification_id, "v21_pipeline")
+
+    assert not _has_mask_provenance(region, store)
+
+
 def test_verified_positive_decision_renders_mask() -> None:
     store = DecisionStore("run-1")
     authority = MaskAuthority(store)
