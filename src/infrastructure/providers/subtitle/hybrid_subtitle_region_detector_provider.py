@@ -124,7 +124,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
 
     def static_rule_ledger(self) -> list[dict[str, Any]]:
         """Return JSON-safe local rule metadata collected for the current run."""
-        return list(self.behavior_ledger)
+        return list(self.static_variance_ledger)
 
     def set_run_context(self, job_id: str, artifact_dir: str) -> None:
         if self._crop_batch_classifier is not None:

@@ -810,3 +810,4 @@ def test_detect_regions_v21_static_discriminator_rejects_before_gemini():
     assert entry["rejected"] is True
     assert entry["reason"] == "low_temporal_pixel_variance"
     assert entry["threshold"] == 10.0
+    assert provider.static_rule_ledger() == provider.static_variance_ledger
