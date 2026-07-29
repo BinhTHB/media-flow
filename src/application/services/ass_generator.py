@@ -69,13 +69,15 @@ def generate_ass_header(
     return "\n".join(lines)
 
 def _has_mask_provenance(
-    region: "SubtitleRegion", decision_store: DecisionStore | None
+    region: "SubtitleRegion",
+    decision_store: DecisionStore | None,
+    expected_run_id: str | None = None,
 ) -> bool:
-    """A region is eligible only when its positive decision exists in this run."""
+    """A region is eligible only when its track_id has a positive decision."""
     return bool(
         decision_store
-        and getattr(region, "is_subtitle", None) is True
-        and has_verified_mask_provenance(region, decision_store)
+        and getattr(region, "track_id", None) is not None
+        and has_verified_mask_provenance(region, decision_store, expected_run_id)
     )
 
 
@@ -124,7 +126,7 @@ class ASSGenerator:
                     rf"{{\an7\pos({round(left)},{round(top)})"
                     rf"\p1\1c&H000000&\1a&H00&}}"
                     f"m 0 0 l {width} 0 l {width} {height} l 0 {height}"
-                    rf"{{\p0}}{{provenance={r.classification_id}}}"
+                    rf"{{\p0}}{{track={r.track_id}}}"
                 )
 
         for index, seg in enumerate(segments):

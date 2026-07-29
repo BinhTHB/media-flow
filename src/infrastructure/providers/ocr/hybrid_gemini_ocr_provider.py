@@ -17,9 +17,6 @@ from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
     HybridSubtitleClassifier,
     HeuristicSubtitleClassifier,
 )
-from src.infrastructure.benchmark.hybrid_subtitle.behavior_discriminator import (
-    TrackBehaviorDiscriminator,
-)
 
 
 class HybridGeminiOCRProvider(OCRProvider):
@@ -50,16 +47,12 @@ class HybridGeminiOCRProvider(OCRProvider):
         self._track_iou_threshold = track_iou_threshold
         self._track_max_gap_frames = track_max_gap_frames
         self._crop_batch_classifier = crop_batch_classifier
-        self._behavior_discriminator: TrackBehaviorDiscriminator | None = None
-        self.behavior_ledger: list[dict[str, Any]] = []
         self.proposal_bundle: ProposalBundle | None = None
 
     def set_speech_segments(
         self, speech_segments: list[Any], video_duration_seconds: float
     ) -> None:
-        self._behavior_discriminator = TrackBehaviorDiscriminator(
-            speech_segments, video_duration_seconds
-        )
+        del speech_segments, video_duration_seconds
 
     def set_run_context(self, job_id: str, artifact_dir: str) -> None:
         if self._crop_batch_classifier is not None:
@@ -116,24 +109,9 @@ class HybridGeminiOCRProvider(OCRProvider):
         heuristic = HeuristicSubtitleClassifier()
         uncertain = []
         canaries = []
-        self.behavior_ledger = []
         for track in tracks:
             if heuristic.classify(track, frame_height).is_subtitle:
                 continue
-            if self._behavior_discriminator is not None:
-                evidence = self._behavior_discriminator.evaluate_static_content(
-                    track, self.proposal_bundle
-                )
-                self.behavior_ledger.append(
-                    {
-                        "track_id": track["track_id"],
-                        **evidence.__dict__,
-                        "ocr_text_samples": list(evidence.ocr_text_samples),
-                    }
-                )
-                if evidence.rule_fired:
-                    continue
-                track = {**track, "behavior": evidence.__dict__}
             duration_ms = (
                 track["groups"][-1]["timestamp_ms"]
                 - track["groups"][0]["timestamp_ms"]

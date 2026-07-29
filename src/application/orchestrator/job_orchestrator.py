@@ -35,10 +35,9 @@ from src.application.services.vietnamese_text_quality_auditor import (
 from src.application.services.final_timeline_builder import FinalTimelineBuilder
 from src.application.services.final_render_manifest_service import FinalRenderManifestService
 from src.domain.entities.segment import Segment
-from src.domain.entities.subtitle_region import SubtitleRegion
 from src.domain.entities.frame import Frame
 from src.application.services.artifact_cache_validator import ArtifactCacheValidator
-from src.application.services.mask_authority import DecisionStore, MaskAuthority
+from src.application.services.mask_authority import DecisionStore
 from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
 
 audit_logger = logging.getLogger(__name__)
@@ -227,21 +226,10 @@ class JobOrchestrator:
                         )
                     if is_hybrid_region:
                         region_inner.proposal_bundle = bundle
-                        region_inner.set_mask_authority(
-                            MaskAuthority(self.mask_decision_store)
-                        )
+                        region_inner.set_decision_store(self.mask_decision_store)
                         region_inner.set_run_context(
                             job.job_id, self.artifact_provider.debug_dir(job.job_id)
                         )
-                    if job.features.speech_to_text:
-                        if is_hybrid_ocr:
-                            ocr_inner.set_speech_segments(
-                                speech_segments, video_duration
-                            )
-                        if is_hybrid_region:
-                            region_inner.set_speech_segments(
-                                speech_segments, video_duration
-                            )
                     self.artifact_provider.write_json(
                         os.path.join(
                             self.artifact_provider.debug_dir(job.job_id),
@@ -256,7 +244,12 @@ class JobOrchestrator:
                         self.artifact_provider.frames_dir(job.job_id),
                     )
 
-            if job.features.ocr and controls.run_ocr and not controls.reuse_ocr_cache:
+            if (
+                job.features.ocr
+                and controls.run_ocr
+                and not controls.reuse_ocr_cache
+                and not replacement_required
+            ):
                 started = time.monotonic()
                 self.state_machine.transition(job, JobStatus.DETECTING_TEXT)
                 logger = FeatureLogger("OCR")
@@ -368,7 +361,11 @@ class JobOrchestrator:
                 )
                 logger.done()
                 timings["ocr_content"] = round(time.monotonic() - started, 3)
-            elif job.features.ocr and controls.reuse_ocr_cache:
+            elif (
+                job.features.ocr
+                and controls.reuse_ocr_cache
+                and not replacement_required
+            ):
                 cache_root = controls.debug_from_artifacts or self.artifact_provider.debug_dir(job.job_id)
                 metadata = self.artifact_provider.read_json(
                     os.path.join(cache_root, "debug", "ocr_cache_metadata.json")
@@ -406,6 +403,10 @@ class JobOrchestrator:
             ):
                 started = time.monotonic()
                 regions = self.detect_subtitle_region_uc.execute(frames)
+                if replacement_required:
+                    ocr_segments = self._ocr_segments_for_confirmed_tracks(
+                        regions, video_width, video_height
+                    )
                 self.artifact_provider.write_json(
                     os.path.join(
                         self.artifact_provider.debug_dir(job.job_id),
@@ -498,16 +499,6 @@ class JobOrchestrator:
                     ]
             else:
                 segments = self.merge_segments_uc.execute(speech_segments, ocr_segments)
-
-            if (
-                placement_config.placement_mode == "replace_source_subtitle"
-                and video_width > 0
-                and video_height > 0
-            ):
-                audit_logger.warning(
-                    "LOUD-WARN: OCR segments have no MaskAuthority decision and "
-                    "are excluded from source-subtitle masks."
-                )
 
             # Translation Grouping
             segments = self.group_segments_uc.execute(segments, job.source_language)
@@ -1123,6 +1114,25 @@ class JobOrchestrator:
         }
         self.artifact_provider.write_json(path, metadata)
 
+    def _ocr_segments_for_confirmed_tracks(
+        self,
+        regions: list[SubtitleRegion],
+        video_width: int,
+        video_height: int,
+    ) -> list[Segment]:
+        """Read text only for geometry that already has a positive track decision."""
+        if not regions:
+            return []
+        provider = self.detect_onscreen_text_uc.ocr_provider
+        read_track = getattr(provider, "read_confirmed_tracks", None)
+        if not callable(read_track):
+            audit_logger.warning(
+                "LOUD-WARN: configured OCR provider cannot read confirmed tracks; "
+                "no OCR subtitle segments will be rendered."
+            )
+            return []
+        return read_track(regions, video_width, video_height)
+
     @staticmethod
     def _provider_provenance(provider: object) -> dict:
         raw_record = getattr(provider, "provenance", None)
@@ -1150,30 +1160,6 @@ class JobOrchestrator:
             record["escalation_count"] = getattr(primary, "_escalation_requests", 0)
             record["exact_model_id"] = getattr(primary, "model", None)
         return record
-
-    @staticmethod
-    def _ocr_regions(
-        segments: list[Segment], video_width: int, video_height: int
-    ) -> list[SubtitleRegion]:
-        regions = []
-        for segment in segments:
-            bbox = segment.bbox
-            if segment.source != "ocr" or bbox is None:
-                continue
-            left, top = bbox["left"], bbox["top"]
-            right, bottom = bbox["right"], bbox["bottom"]
-            regions.append(
-                SubtitleRegion(
-                    start_time=segment.start,
-                    end_time=segment.end,
-                    x=max(0.0, min(1.0, left / video_width)),
-                    y=max(0.0, min(1.0, top / video_height)),
-                    width=max(0.0, min(1.0, (right - left) / video_width)),
-                    height=max(0.0, min(1.0, (bottom - top) / video_height)),
-                    confidence=segment.confidence if segment.confidence_available else 1.0,
-                )
-            )
-        return regions
 
     @staticmethod
     def _segment_fields(item: dict) -> dict:

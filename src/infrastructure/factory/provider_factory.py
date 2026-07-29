@@ -114,7 +114,7 @@ class ProviderFactory:
 
     def create_subtitle_region_detector_provider(self, name: str | None = None, overrides: dict[str, Any] | None = None):
         provider_name, options = self._merged_options("subtitle_region_detector", name, overrides)
-        if options.get("gemini_verify"):
+        if provider_name == "hybrid_yolo":
             options["runtime"] = self._get_gemini_runtime(options)
         return self.registry.create("subtitle_region_detector", provider_name, options)
 

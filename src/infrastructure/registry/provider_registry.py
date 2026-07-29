@@ -54,19 +54,6 @@ def _create_hybrid_gemini_ocr(options):
     runtime = options.get("runtime")
     model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
     verifier = GeminiTrackVerifier(runtime, model=model) if runtime else None
-    crop_batch_classifier = None
-    if runtime:
-        from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
-            CropBatchClassifier,
-        )
-        crop_batch_classifier = CropBatchClassifier(
-            runtime.get_client(model=model),
-            model=model,
-            budget_limit=int(options.get("crop_classifier_max_requests", 60)),
-            artifact_dir=options.get("crop_classifier_artifact_dir"),
-            job_id=str(options.get("job_id", "")),
-            run_id=str(options.get("run_id", "")),
-        )
     proposal = YoloTextProposalProvider(
         weights_path=options.get("weights", "best.pt"),
         conf=options.get("conf", 0.05),
@@ -78,7 +65,7 @@ def _create_hybrid_gemini_ocr(options):
         proposal_provider=proposal,
         semantic_verifier=verifier,
         min_confidence=float(options.get("min_confidence", 0.40)),
-        crop_batch_classifier=crop_batch_classifier,
+        crop_batch_classifier=None,
     )
 
 
@@ -88,22 +75,17 @@ def _create_hybrid_yolo(options):
     )
     from src.infrastructure.benchmark.hybrid_subtitle.config import DEFAULT_GEMINI_MODEL
     from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
-    gemini_verify = bool(options.get("gemini_verify", False))
     runtime = options.get("runtime")
-    semantic_verifier = None
     crop_batch_classifier = None
-    if gemini_verify and runtime is not None:
-        # Lazily import to keep the registry import-light.
-        from src.infrastructure.benchmark.hybrid_subtitle.gemini_verifier import GeminiTrackVerifier
+    if runtime is not None:
         from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
             CropBatchClassifier,
         )
         model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
-        semantic_verifier = GeminiTrackVerifier(runtime, model=model)
         crop_batch_classifier = CropBatchClassifier(
             runtime.get_client(model=model),
             model=model,
-            budget_limit=int(options.get("crop_classifier_max_requests", 60)),
+            budget_limit=3,
             artifact_dir=options.get("crop_classifier_artifact_dir"),
             job_id=str(options.get("job_id", "")),
             run_id=str(options.get("run_id", "")),
@@ -126,7 +108,6 @@ def _create_hybrid_yolo(options):
             options.get("static_variance_threshold", 827.12)
         ),
         device=options.get("device", "cpu"),
-        semantic_verifier=semantic_verifier,
         crop_batch_classifier=crop_batch_classifier,
         proposal_provider=proposal_provider,
         use_v21_pipeline=bool(options.get("use_v21_pipeline", False)),
