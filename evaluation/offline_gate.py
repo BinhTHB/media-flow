@@ -294,8 +294,16 @@ def main() -> None:
         default=None,
         help="Directory for gate artifacts (defaults to artifacts/round<round>).",
     )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Gemini model name (overrides GEMINI_MODEL constant).",
+    )
     args = parser.parse_args()
     round_number = args.round
+    if args.model:
+        GEMINI_MODEL = args.model
     run_id = f"r{round_number}-gate-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     gt_path = args.gt.resolve()
     artifact_dir = (
