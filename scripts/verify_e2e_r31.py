@@ -33,6 +33,10 @@ DARK_THRESHOLD = 60         # gray < DARK_THRESHOLD → pixel counts as "dark"
 DARK_RATIO_MIN = 0.90       # minimum acceptable dark_ratio_bbox
 T003_SEEK_MSEC = 350        # T003 timestamp = 0.35 s
 T003_ID = "T003"
+T003_PROVENANCE_MARKERS = (
+    "provenance=classification:T003",
+    "{track=T003}",
+)
 
 # Default input paths — caller may override via --video / --ass
 VIDEO = ROOT / "output" / "round31-sample5" / "final.mp4"
@@ -137,20 +141,20 @@ def main() -> None:
     if ass_path and ass_path.exists():
         ass_text = ass_path.read_text(encoding="utf-8")
         mask_count = ass_text.count(r"\p1")
-        t003_provenance = "provenance=classification:T003" in ass_text
+        t003_provenance = any(marker in ass_text for marker in T003_PROVENANCE_MARKERS)
     elif ass_path is None:
         # Auto-detect ASS alongside video
         candidate = video_path.parent / "subtitles" / "subtitle.ass"
         if candidate.exists():
             ass_text = candidate.read_text(encoding="utf-8")
             mask_count = ass_text.count(r"\p1")
-            t003_provenance = "provenance=classification:T003" in ass_text
+            t003_provenance = any(marker in ass_text for marker in T003_PROVENANCE_MARKERS)
         elif video_path.parent.name.endswith("-sample5"):
             candidate2 = video_path.parent / video_path.parent.name / "subtitles" / "subtitle.ass"
             if candidate2.exists():
                 ass_text = candidate2.read_text(encoding="utf-8")
                 mask_count = ass_text.count(r"\p1")
-                t003_provenance = "provenance=classification:T003" in ass_text
+                t003_provenance = any(marker in ass_text for marker in T003_PROVENANCE_MARKERS)
 
     checks = {
         "ass_has_t003_provenance": t003_provenance,
