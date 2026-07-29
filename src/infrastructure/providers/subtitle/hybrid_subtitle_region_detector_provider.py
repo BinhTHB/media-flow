@@ -244,6 +244,8 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 logger.warning("LOUD-WARN: track_id=%s rejected for mask rendering.", track_id)
                 continue
             confidence = _clamp01(track.get("mean_detector_confidence", 0.0))
+            # Each frame group preserves its source geometry. A positive
+            # track decision authorizes every geometry window of that track.
             for group in track.get("groups", []):
                 bbox = group.get("union_bbox_xyxy", [])
                 if len(bbox) != 4:
@@ -254,9 +256,11 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                 regions.append(SubtitleRegion(
                     start_time=start, end_time=end,
                     x=_clamp01(x1 / width), y=_clamp01(y1 / height),
-                    width=_clamp01((x2 - x1) / width), height=_clamp01((y2 - y1) / height),
+                    width=_clamp01((x2 - x1) / width),
+                    height=_clamp01((y2 - y1) / height),
                     confidence=confidence, track_id=track_id,
                 ))
+
         return regions
 
     def _timestamps(self, frames: List[Frame]) -> Dict[int, tuple[float, float]]:

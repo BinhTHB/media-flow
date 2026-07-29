@@ -1,6 +1,6 @@
 {
-  "timestamp_utc": "2026-07-27T07:08:32.719001+00:00",
-  "video": "E:\\projects\\media-flow\\output\\round30-sample5\\final.mp4",
+  "timestamp_utc": "2026-07-29T08:05:53.116186+00:00",
+  "video": "output\\r35_e2e\\r35_e2e\\videos\\output.mp4",
   "gt_source": "E:\\projects\\media-flow\\artifacts\\round28\\gt_v2_3.json",
   "t003_bbox_gt": [
     294,
@@ -19,11 +19,11 @@
   },
   "checks": {
     "ass_has_t003_provenance": true,
-    "ass_mask_count": 235,
+    "ass_mask_count": 564,
     "h264_720x1280": true,
     "t003_frame_read": true,
-    "t003_dark_ratio_bbox": 0.933894,
-    "t003_dark_ratio_fullframe": 0.243307,
+    "t003_dark_ratio_bbox": 0.902941,
+    "t003_dark_ratio_fullframe": 0.242935,
     "t003_dark_ratio_high": true
   },
   "status": "PASS"
