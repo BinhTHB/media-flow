@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import base64
+from typing import Any, Dict, List, Optional
 
 import cv2
 from pathlib import Path
@@ -9,6 +10,7 @@ from src.application.dto.proposal_bundle import ProposalBundle
 from src.application.ports.ocr_provider import OCRProvider
 from src.domain.entities.frame import Frame
 from src.domain.entities.segment import Segment
+from src.domain.entities.subtitle_region import SubtitleRegion
 from src.infrastructure.benchmark.hybrid_subtitle.core import (
     build_tracks,
     group_frame_candidates,
@@ -22,14 +24,8 @@ from src.infrastructure.benchmark.hybrid_subtitle.subtitle_classifier import (
 class HybridGeminiOCRProvider(OCRProvider):
     """Emit OCR segments from accepted hybrid-verifier transcriptions.
 
-    Supports two modes:
-    1. **Legacy** (``proposal_bundle`` is None): calls ``detect_images``
-       on the interval-extracted frame paths, triggering a separate YOLO pass.
-    2. **Single-decode** (``proposal_bundle`` is set): reuses the pre-computed
-       detections and frame images from one YOLO-on-video pass,
-       avoiding a second decode + predict.
-
-    Set ``proposal_bundle`` before calling ``detect_text()`` to use mode 2.
+    V4: provide ``read_confirmed_tracks(regions, frames, width, height)`` for
+    post-decision OCR reading. Legacy ``detect_text()`` kept for backward compat.
     """
 
     def __init__(
@@ -58,6 +54,73 @@ class HybridGeminiOCRProvider(OCRProvider):
         if self._crop_batch_classifier is not None:
             self._crop_batch_classifier.artifact_dir = Path(artifact_dir)
             self._crop_batch_classifier.set_run_context(job_id, job_id)
+
+    def read_confirmed_tracks(
+        self,
+        regions: List[SubtitleRegion],
+        frames: List[Frame],
+        video_width: int,
+        video_height: int,
+    ) -> List[Segment]:
+        """Transcribe only geometry belonging to already confirmed track IDs."""
+        if not regions or not frames or self._semantic_verifier is None:
+            return []
+        by_track: Dict[str, List[SubtitleRegion]] = {}
+        for region in regions:
+            if region.track_id:
+                by_track.setdefault(region.track_id, []).append(region)
+        segments: List[Segment] = []
+        for track_id, track_regions in by_track.items():
+            region = track_regions[len(track_regions) // 2]
+            frame = min(frames, key=lambda item: abs(item.timestamp - region.start_time))
+            image = cv2.imread(frame.image_path)
+            if image is None:
+                continue
+            x1 = max(0, round(region.x * video_width))
+            y1 = max(0, round(region.y * video_height))
+            x2 = min(image.shape[1], round((region.x + region.width) * video_width))
+            y2 = min(image.shape[0], round((region.y + region.height) * video_height))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            ok, encoded = cv2.imencode(".png", image[y1:y2, x1:x2])
+            if not ok:
+                continue
+            try:
+                from src.infrastructure.gemini.contracts import GeminiRequest
+                from src.infrastructure.gemini.structured_output import parse_json
+
+                response = self._semantic_verifier._resolve_client().generate_content(
+                    GeminiRequest(
+                        contents=[{"parts": [
+                            {"text": "Transcribe this confirmed subtitle crop exactly. Return only JSON: {\"text\":\"string\"}. Do not classify it or return coordinates."},
+                            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(encoded.tobytes()).decode("ascii")}},
+                        ]}],
+                        model=self._semantic_verifier._model,
+                        generation_config={"temperature": 0.0},
+                        request_id=f"ocr_{track_id}",
+                        source_kind="confirmed_track_ocr_v4",
+                        api_surface="generate_content",
+                    ),
+                    use_cache=False,
+                )
+                payload = parse_json(response.text)
+            except Exception:
+                continue
+            text = payload.get("text") if isinstance(payload, dict) else None
+            if not isinstance(text, str) or not text.strip():
+                continue
+            segments.append(Segment(
+                id=f"ocr_{track_id}",
+                start=min(item.start_time for item in track_regions),
+                end=max(item.end_time for item in track_regions),
+                text=text.strip(),
+                source="ocr",
+                confidence=0.0,
+                confidence_available=False,
+                bbox={"left": x1, "top": y1, "right": x2, "bottom": y2},
+                metadata={"provider": self.__class__.__name__, "track_id": track_id},
+            ))
+        return segments
 
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
         if not frames or self._semantic_verifier is None:

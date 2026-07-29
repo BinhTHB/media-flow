@@ -1,813 +1,144 @@
-import os
-import pytest
-import cv2
+﻿import cv2
 import numpy as np
-import tempfile
 
+from src.application.services.mask_authority import DecisionStore
 from src.domain.entities.frame import Frame
 from src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider import (
     HybridSubtitleRegionDetectorProvider,
 )
-from src.domain.entities.subtitle_region import SubtitleRegion
-from src.application.dto.proposal_bundle import ProposalBundle
 
-from src.infrastructure.registry.provider_registry import ProviderRegistry
-
-requires_yolo_weights = pytest.mark.skipif(
-    not os.path.exists("best.pt"),
-    reason="requires local YOLO weights best.pt",
-)
 
 class FakeProposalProvider:
-    def __init__(self, bbox_xyxy, confidence=0.9):
-        self._bbox = bbox_xyxy
-        self._confidence = confidence
+    def __init__(self, boxes, confidence=0.9):
+        self.boxes = boxes
+        self.confidence = confidence
 
     def detect_images(self, image_paths):
-        dets = []
-        for fi, p in enumerate(image_paths):
-            dets.append({
-                "frame_index": fi,
-                "timestamp_ms": round(fi * 1000.0, 1),
-                "candidate_id": f"F{fi:05d}_C01",
-                "bbox_xyxy": self._bbox,
-                "bbox_normalized": [
-                    self._bbox[0]/1280, self._bbox[1]/720,
-                    self._bbox[2]/1280, self._bbox[3]/720
-                ],
-                "confidence": self._confidence,
-                "class": "text",
-            })
-        return dets
+        boxes = self.boxes if isinstance(self.boxes[0], list) else [self.boxes] * len(image_paths)
+        return [
+            {
+                "frame_index": index,
+                "timestamp_ms": index * 500.0,
+                "candidate_id": f"F{index:05d}_C01",
+                "bbox_xyxy": box,
+                "confidence": self.confidence,
+            }
+            for index, box in enumerate(boxes)
+        ]
 
 
-class GeometryAcceptingVerifier:
-    """Deterministic semantic confirmation for geometry-only tests."""
+class FakeClassifier:
+    def __init__(self, verdict=True):
+        self.verdict = verdict
+        self.calls = []
 
-    def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
+    def classify_batch(self, tracks, _bundle):
+        self.calls.append(tracks)
         return {
-            "track_id": track.track_id,
-            "decisions": [
-                {
-                    "candidate_id": candidate_id,
-                    "is_subtitle": True,
-                    "category": "dialogue_subtitle",
-                    "confidence": 0.95,
-                }
-                for candidate_id in candidate_ids
-            ],
-            "model": "v21_pipeline",
-            "uncertain": False,
+            track["track_id"]: {
+                "is_subtitle": self.verdict,
+                "model": "fake-gemini",
+                "response_ref": "responses/request_01.json",
+                "cache_hit": False,
+            }
+            for track in tracks
         }
 
 
-def test_detect_regions_empty_frames():
-    provider = HybridSubtitleRegionDetectorProvider(proposal_provider=FakeProposalProvider([100, 100, 200, 200]))
+def _frames(tmp_path, timestamps=(0.0, 0.5, 1.0)):
+    frames = []
+    for index, timestamp in enumerate(timestamps):
+        path = tmp_path / f"frame_{index}.png"
+        cv2.imwrite(str(path), np.zeros((720, 1280, 3), dtype=np.uint8))
+        frames.append(Frame(timestamp=timestamp, image_path=str(path)))
+    return frames
+
+
+def _provider(tmp_path, proposal, classifier):
+    response = tmp_path / "responses" / "request_01.json"
+    response.parent.mkdir(exist_ok=True)
+    response.write_text("[]", encoding="utf-8")
+    return HybridSubtitleRegionDetectorProvider(
+        proposal_provider=proposal,
+        crop_batch_classifier=classifier,
+        decision_store=DecisionStore("v4-test", path=tmp_path / "mask_decisions.jsonl"),
+        static_variance_threshold=-1.0,
+    )
+
+
+def test_detect_regions_empty_frames(tmp_path):
+    provider = _provider(tmp_path, FakeProposalProvider([100, 600, 300, 650]), FakeClassifier())
     assert provider.detect_regions([]) == []
 
-def test_detect_regions_returns_normalized_bottom_region():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(3):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
 
-        frames = [
-            Frame(timestamp=0.0, image_path=paths[0]),
-            Frame(timestamp=0.5, image_path=paths[1]),
-            Frame(timestamp=1.0, image_path=paths[2]),
-        ]
-
-        fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(
-            proposal_provider=fake_proposal,
-            semantic_verifier=GeometryAcceptingVerifier(),
-        )
-
-        regions = provider.detect_regions(frames)
-        assert len(regions) >= 1
-        r = regions[0]
-        assert 0.0 <= r.x <= 1.0
-        assert 0.0 <= r.y <= 1.0
-        assert r.y >= 0.5
-        assert r.end_time >= r.start_time
-        assert r.confidence == 0.9
-
-def test_scene_text_top_region_filtered():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(3):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
-
-        frames = [
-            Frame(timestamp=0.0, image_path=paths[0]),
-            Frame(timestamp=0.5, image_path=paths[1]),
-            Frame(timestamp=1.0, image_path=paths[2]),
-        ]
-
-        fake_proposal = FakeProposalProvider([300.0, 100.0, 900.0, 180.0], 0.9)
-        # Without verifier: fail-closed, so no region is produced.
-        provider = HybridSubtitleRegionDetectorProvider(proposal_provider=fake_proposal)
-        regions = provider.detect_regions(frames)
-        assert regions == []
-
-def test_registry_creates_hybrid_provider():
-    registry = ProviderRegistry()
-    provider = registry.create("subtitle_region_detector", "hybrid_yolo", {})
-    assert provider.__class__.__name__ == "HybridSubtitleRegionDetectorProvider"
-
-@requires_yolo_weights
-def test_detect_regions_with_real_yolo_weights(tmp_path):
-    frames = []
-    for i in range(5):
-        image_path = tmp_path / f"frame_{i}.png"
-        image = np.zeros((720, 1280, 3), dtype=np.uint8)
-        cv2.putText(
-            image, "SUBTITLE TEXT", (300, 680),
-            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2,
-        )
-        cv2.imwrite(str(image_path), image)
-        frames.append(Frame(timestamp=i * 0.5, image_path=str(image_path)))
-
-    regions = HybridSubtitleRegionDetectorProvider().detect_regions(frames)
-    assert all(region.__class__.__name__ == "SubtitleRegion" for region in regions)
-
-@requires_yolo_weights
-def test_detect_regions_real_yolo_guarded():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(5):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.putText(img, "SUBTITLE TEST", (300, 680), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
-
-        frames = [
-            Frame(timestamp=i * 0.5, image_path=paths[i])
-            for i in range(5)
-        ]
-
-        provider = HybridSubtitleRegionDetectorProvider()
-        regions = provider.detect_regions(frames)
-        assert isinstance(regions, list)
-        for r in regions:
-            assert isinstance(r, SubtitleRegion)
-            assert 0.0 <= r.x <= 1.0
-            assert 0.0 <= r.y <= 1.0
-            assert 0.0 <= r.width <= 1.0
-            assert 0.0 <= r.height <= 1.0
-            assert r.end_time >= r.start_time
-            assert 0.0 <= r.confidence <= 1.0
-
-def test_detect_regions_pads_half_frame_gap():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(3):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
-
-        frames = [
-            Frame(timestamp=0.25, image_path=paths[0]),
-            Frame(timestamp=0.75, image_path=paths[1]),
-            Frame(timestamp=1.25, image_path=paths[2]),
-        ]
-
-        fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(
-            proposal_provider=fake_proposal,
-            semantic_verifier=GeometryAcceptingVerifier(),
-        )
-
-        regions = provider.detect_regions(frames)
-        assert len(regions) >= 1
-        r = regions[0]
-        assert 0.0 <= r.x <= 1.0
-        assert 0.0 <= r.y <= 1.0
-        assert r.y >= 0.5
-        assert r.end_time >= r.start_time
-        assert r.confidence == 0.9
-        assert r.start_time == 0.0
-        assert abs(r.end_time - 1.5) < 1e-6
-
-def test_provider_accepts_device_option():
-    provider = HybridSubtitleRegionDetectorProvider(
-        proposal_provider=FakeProposalProvider([100, 100, 200, 200]),
-        device="cuda",
-    )
-    assert provider._device == "cuda"
-
-class FakeDriftingProposalProvider:
-    def __init__(self, bboxes, confidence=0.9):
-        self._bboxes = bboxes
-        self._confidence = confidence
-
-    def detect_images(self, image_paths):
-        dets = []
-        for fi, p in enumerate(image_paths):
-            bbox = self._bboxes[fi]
-            dets.append({
-                "frame_index": fi,
-                "timestamp_ms": round(fi * 1000.0, 1),
-                "candidate_id": f"F{fi:05d}_C01",
-                "bbox_xyxy": bbox,
-                "bbox_normalized": [
-                    bbox[0]/1280, bbox[1]/720,
-                    bbox[2]/1280, bbox[3]/720
-                ],
-                "confidence": self._confidence,
-                "class": "text",
-            })
-        return dets
-
-def test_detect_regions_moving_track_emits_per_frame_regions():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(3):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
-
-        frames = [
-            Frame(timestamp=0.25, image_path=paths[0]),
-            Frame(timestamp=0.75, image_path=paths[1]),
-            Frame(timestamp=1.25, image_path=paths[2]),
-        ]
-
-        # Drifting x coords that stay in same track (adjacent IoU > 0.25)
-        # but first-last IoU < 0.30 to trigger per-frame region emission.
-        bboxes = [
-            [100.0, 600.0, 300.0, 650.0],
-            [200.0, 600.0, 400.0, 650.0],
-            [300.0, 600.0, 500.0, 650.0],
-        ]
-        fake_proposal = FakeDriftingProposalProvider(bboxes, 0.9)
-        provider = HybridSubtitleRegionDetectorProvider(
-            proposal_provider=fake_proposal,
-            semantic_verifier=GeometryAcceptingVerifier(),
-        )
-        regions = provider.detect_regions(frames)
-        assert len(regions) == 3
-        assert abs(regions[0].x - 100.0/1280) < 1e-6
-        assert abs(regions[1].x - 200.0/1280) < 1e-6
-        assert abs(regions[2].x - 300.0/1280) < 1e-6
-        assert abs(regions[0].start_time - 0.0) < 1e-6
-        assert abs(regions[0].end_time - 0.5) < 1e-6
-        assert abs(regions[1].start_time - 0.5) < 1e-6
-        assert abs(regions[1].end_time - 1.0) < 1e-6
-        assert abs(regions[2].start_time - 1.0) < 1e-6
-        assert abs(regions[2].end_time - 1.5) < 1e-6
-
-class FakeVerifier:
-    def __init__(self, decisions):
-        self._decisions = decisions
-
-    def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
-        return {"track_id": track.track_id, "decisions": self._decisions, "uncertain": False}
-
-def test_detect_regions_rule_rejected_track_accepted_with_fake_verifier():
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        paths = []
-        for i in range(3):
-            img_path = os.path.join(tmp_dir, f"frame_{i}.png")
-            img = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.imwrite(img_path, img)
-            paths.append(img_path)
-
-        frames = [
-            Frame(timestamp=0.0, image_path=paths[0]),
-            Frame(timestamp=0.5, image_path=paths[1]),
-            Frame(timestamp=1.0, image_path=paths[2]),
-        ]
-
-        # Middle-of-frame bbox: y2=380, H=720, ratio=0.528 <= 0.65
-        # Rule classify_track_by_position labels it scene_text -> is_subtitle=False -> rule rejects.
-        middle_bbox = [300.0, 300.0, 900.0, 380.0]
-
-        # Without verifier: rule rejects all -> 0 regions.
-        provider_no_verifier = HybridSubtitleRegionDetectorProvider(
-            proposal_provider=FakeProposalProvider(middle_bbox, 0.9),
-        )
-        regions_no_v = provider_no_verifier.detect_regions(frames)
-        assert len(regions_no_v) == 0
-
-        # A heuristic-negative track must remain rejected even if Gemini says subtitle.
-        fake_decisions = [
-            {"candidate_id": "G00000_01", "is_subtitle": True, "category": "subtitle", "confidence": 0.9}
-        ]
-        fake_verifier = FakeVerifier(fake_decisions)
-        provider_with_v = HybridSubtitleRegionDetectorProvider(
-            proposal_provider=FakeProposalProvider(middle_bbox, 0.9),
-            semantic_verifier=fake_verifier,
-        )
-        regions_with_v = provider_with_v.detect_regions(frames)
-        assert len(regions_with_v) == 0
-
-
-from unittest import mock
-
-
-def test_detect_regions_track_without_temporal_union_falls_back():
-    """Regression: track dict with no temporal_union_bbox_xyxy must fall back
-    to median_bbox_xyxy without raising NameError."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        img_path = os.path.join(tmp_dir, "frame.png")
-        img = np.zeros((720, 1280, 3), dtype=np.uint8)
-        cv2.imwrite(img_path, img)
-        frames = [Frame(timestamp=0.25, image_path=img_path), Frame(timestamp=0.75, image_path=img_path)]
-
-        # Patch build_tracks in the ADAPTER namespace so detect_regions
-        # receives a track without temporal_union_bbox_xyxy.
-        patched_track = {
-            "track_id": "T001",
-            "median_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
-            "mean_detector_confidence": 0.9,
-            "groups": [
-                {
-                    "frame_index": 0,
-                    "candidate_group_id": "G00000_01",
-                    "union_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
-                    "timestamp_ms": 0,
-                },
-                {
-                    "frame_index": 1,
-                    "candidate_group_id": "G00001_01",
-                    "union_bbox_xyxy": [300.0, 620.0, 900.0, 700.0],
-                    "timestamp_ms": 500,
-                }
-            ],
-        }
-
-        def fake_build_tracks(groups, **kwargs):
-            return [patched_track]
-
-        fake_proposal = FakeProposalProvider([300.0, 620.0, 900.0, 700.0], 0.9)
-
-        with mock.patch(
-            "src.infrastructure.providers.subtitle.hybrid_subtitle_region_detector_provider.build_tracks",
-            side_effect=fake_build_tracks,
-        ):
-            provider = HybridSubtitleRegionDetectorProvider(
-                proposal_provider=fake_proposal,
-                semantic_verifier=GeometryAcceptingVerifier(),
-            )
-            regions = provider.detect_regions(frames)
-
-        assert len(regions) == 1
-
-
-def test_registry_wires_semantic_verifier_with_fake_runtime():
-    class DummyClient:
-        pass
-
-    class FakeRuntime:
-        def get_client(self, model=None, **kwargs):
-            return DummyClient()
-
-    registry = ProviderRegistry()
-
-    # Case 1: gemini_verify=True and runtime provided -> semantic_verifier wired
-    provider_with_v = registry.create(
-        "subtitle_region_detector",
-        "hybrid_yolo",
-        {"gemini_verify": True, "runtime": FakeRuntime()},
-    )
-    assert provider_with_v._semantic_verifier is not None
-
-    # Case 2: gemini_verify=False -> semantic_verifier is None
-    provider_off = registry.create(
-        "subtitle_region_detector",
-        "hybrid_yolo",
-        {"gemini_verify": False, "runtime": FakeRuntime()},
-    )
-    assert provider_off._semantic_verifier is None
-
-    # Case 3: gemini_verify=True but runtime is None -> semantic_verifier is None
-    provider_no_runtime = registry.create(
-        "subtitle_region_detector",
-        "hybrid_yolo",
-        {"gemini_verify": True, "runtime": None},
-    )
-    assert provider_no_runtime._semantic_verifier is None
-
-
-def test_low_confidence_proposal_cannot_swallow_subtitle_group(tmp_path):
-    class PerFrameProposal:
-        def detect_images(self, image_paths):
-            boxes_by_frame = [
-                [[300.0, 500.0, 500.0, 540.0, 0.90]],
-                [
-                    [300.0, 520.0, 500.0, 560.0, 0.90],
-                    [2.0, 100.0, 1270.0, 400.0, 0.05],
-                ],
-                [[300.0, 540.0, 500.0, 580.0, 0.90]],
-            ]
-            detections = []
-            for frame_index, boxes in enumerate(boxes_by_frame):
-                for candidate_index, (x1, y1, x2, y2, confidence) in enumerate(boxes, 1):
-                    detections.append({
-                        "frame_index": frame_index,
-                        "timestamp_ms": frame_index * 500,
-                        "candidate_id": f"F{frame_index:05d}_C{candidate_index:02d}",
-                        "bbox_xyxy": [x1, y1, x2, y2],
-                        "bbox_normalized": [x1 / 1280, y1 / 720, x2 / 1280, y2 / 720],
-                        "confidence": confidence,
-                        "class": "text",
-                    })
-            return detections
-
-    class AcceptingVerifier:
-        def classify_track(self, track, frame_bgr, candidate_ids, candidate_bboxes):
-            return {
-                "track_id": track.track_id,
-                "decisions": [
-                    {
-                        "candidate_id": candidate_id,
-                        "is_subtitle": True,
-                        "category": "dialogue_subtitle",
-                        "confidence": 0.9,
-                    }
-                    for candidate_id in candidate_ids
-                ],
-                "uncertain": False,
-            }
-
-    frames = []
-    for index, timestamp in enumerate((0.0, 0.5, 1.0)):
-        image_path = tmp_path / f"frame_{index}.png"
-        cv2.imwrite(str(image_path), np.zeros((720, 1280, 3), dtype=np.uint8))
-        frames.append(Frame(timestamp=timestamp, image_path=str(image_path)))
-
-    regions = HybridSubtitleRegionDetectorProvider(
-        proposal_provider=PerFrameProposal(),
-        semantic_verifier=AcceptingVerifier(),
-    ).detect_regions(frames)
-
-    target = [300 / 1280, 520 / 720, 500 / 1280, 560 / 720]
-    active = [region for region in regions if region.start_time <= 0.5 <= region.end_time]
-    assert active
-    assert max(
-        _normalized_iou(
-            [region.x, region.y, region.x + region.width, region.y + region.height],
-            target,
-        )
-        for region in active
-    ) >= 0.5
-
-
-def test_uncertain_middle_track_uses_crop_classifier_with_local_canary():
-    class CropClassifier:
-        def __init__(self):
-            self.uncertain = []
-            self.canaries = []
-
-        def classify_batch(self, tracks, bundle, batch_size, canary_tracks):
-            self.uncertain = tracks
-            self.canaries = canary_tracks
-            return {
-                track["track_id"]: {
-                    "track_id": track["track_id"],
-                    "is_subtitle": True,
-                    "category": "dialogue_subtitle",
-                    "confidence": 0.95,
-                    "transcription": "moving middle subtitle",
-                }
-                for track in tracks
-            }
-
-    image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    bundle = ProposalBundle(
-        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
-    )
-    for frame_index, timestamp_ms in ((0, 0.0), (10, 333.3), (20, 666.7)):
-        bundle.add_frame(
-            frame_index=frame_index,
-            timestamp_sec=timestamp_ms / 1000.0,
-            image=image.copy(),
-            image_path=None,
-            detections=[],
-        )
-    uncertain = {
-        "track_id": "T100",
-        "groups": [
-            {
-                "frame_index": 0,
-                "timestamp_ms": 0.0,
-                "union_bbox_xyxy": [300.0, 300.0, 700.0, 360.0],
-            },
-            {
-                "frame_index": 20,
-                "timestamp_ms": 666.7,
-                "union_bbox_xyxy": [320.0, 330.0, 720.0, 390.0],
-            },
-        ],
-    }
-    canary = {
-        "track_id": "T101",
-        "groups": [{
-            "frame_index": 10,
-            "timestamp_ms": 333.3,
-            "union_bbox_xyxy": [10.0, 20.0, 100.0, 70.0],
-        }],
-    }
-    crop_classifier = CropClassifier()
-    provider = HybridSubtitleRegionDetectorProvider(
-        crop_batch_classifier=crop_classifier,
-    )
-    provider.proposal_bundle = bundle
-
-    decisions = provider._crop_decisions_for_uncertain_tracks(
-        [uncertain, canary], frame_height=720
-    )
-
-    assert list(decisions) == ["T100"]
-    assert crop_classifier.uncertain == [uncertain]
-    assert crop_classifier.canaries == [canary]
-
-
-def test_short_bottom_track_uses_crop_semantic_fallback_not_canary():
-    class CropClassifier:
-        def __init__(self):
-            self.tracks = None
-
-        def classify_batch(self, tracks, *_args, **_kwargs):
-            self.tracks = tracks
-            return {}
-
-    image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    bundle = ProposalBundle(
-        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
-    )
-    bundle.add_frame(
-        frame_index=0, timestamp_sec=0.0, image=image, image_path=None, detections=[]
-    )
-    short_bottom = {
-        "track_id": "T100",
-        "median_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
-        "groups": [
-            {
-                "frame_index": 0,
-                "timestamp_ms": 0.0,
-                "union_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
-            },
-            {
-                "frame_index": 0,
-                "timestamp_ms": 200.0,
-                "union_bbox_xyxy": [300.0, 650.0, 700.0, 710.0],
-            },
-        ],
-    }
-    scene_canary = {
-        "track_id": "T101",
-        "median_bbox_xyxy": [10.0, 20.0, 100.0, 70.0],
-        "groups": [{
-            "frame_index": 0,
-            "timestamp_ms": 0.0,
-            "union_bbox_xyxy": [10.0, 20.0, 100.0, 70.0],
-        }],
-    }
-    crop_classifier = CropClassifier()
-    provider = HybridSubtitleRegionDetectorProvider(
-        crop_batch_classifier=crop_classifier,
-    )
-    provider.proposal_bundle = bundle
-
-    decisions = provider._crop_decisions_for_uncertain_tracks(
-        [short_bottom, scene_canary], frame_height=720
-    )
-
-    assert decisions == {}
-    assert crop_classifier.tracks == [short_bottom]
-
-
-def _normalized_iou(left, right):
-    x1 = max(left[0], right[0])
-    y1 = max(left[1], right[1])
-    x2 = min(left[2], right[2])
-    y2 = min(left[3], right[3])
-    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-    left_area = (left[2] - left[0]) * (left[3] - left[1])
-    right_area = (right[2] - right[0]) * (right[3] - right[1])
-    union = left_area + right_area - intersection
-    return intersection / union if union else 0.0
-
-
-def test_detect_regions_v21_fail_closed_no_client():
-    from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import CropBatchClassifierV21
-    from src.domain.entities.frame import Frame
-
-    # Setup provider in v2.1 mode
-    provider = HybridSubtitleRegionDetectorProvider(
-        use_v21_pipeline=True,
-        crop_batch_classifier=CropBatchClassifierV21(gemini_client=None), # client is None!
-    )
-
-    image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    bundle = ProposalBundle(
-        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
-    )
-    bundle.add_frame(
-        frame_index=0,
-        timestamp_sec=0.0,
-        image=image,
-        image_path=None,
-        detections=[{
-            "frame_index": 0,
-            "timestamp_ms": 0.0,
-            "candidate_id": "F00000_C01",
-            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-            "confidence": 0.9,
-        }],
-    )
-    bundle.add_frame(
-        frame_index=1,
-        timestamp_sec=1 / 30,
-        image=np.full((720, 1280, 3), 255, dtype=np.uint8),
-        image_path=None,
-        detections=[{
-            "frame_index": 1,
-            "timestamp_ms": 1000 / 30,
-            "candidate_id": "F00001_C01",
-            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-            "confidence": 0.9,
-        }],
-    )
-    provider.proposal_bundle = bundle
-    frames = [Frame(timestamp=0.0, image_path=None)]
+def test_v4_positive_track_emits_track_scoped_geometry(tmp_path):
+    frames = _frames(tmp_path)
+    provider = _provider(tmp_path, FakeProposalProvider([300, 620, 900, 700]), FakeClassifier(True))
 
     regions = provider.detect_regions(frames)
-    # Fail-closed: should return empty list on missing classifier client
-    assert regions == []
-    assert hasattr(provider, "_v21_fail_counters")
-    assert provider._v21_fail_counters["client_unavailable"] == 1
+
+    assert len(regions) == 3
+    assert {region.track_id for region in regions} == {"T001"}
+    assert regions[0].x == 300 / 1280
+    assert regions[0].y == 620 / 720
+    assert all(provider._decision_store.permits_mask(region.track_id) for region in regions)
 
 
-def test_detect_regions_v21_fail_closed_batch_exception():
+def test_v4_negative_track_emits_no_geometry(tmp_path):
+    frames = _frames(tmp_path)
+    provider = _provider(tmp_path, FakeProposalProvider([300, 620, 900, 700]), FakeClassifier(False))
+
+    assert provider.detect_regions(frames) == []
+
+
+def test_v4_top_band_is_rejected_before_gemini(tmp_path):
+    frames = _frames(tmp_path)
+    classifier = FakeClassifier(True)
+    provider = _provider(tmp_path, FakeProposalProvider([300, 100, 900, 180]), classifier)
+
+    assert provider.detect_regions(frames) == []
+    assert classifier.calls == []
+
+
+def test_v4_missing_decision_fails_closed(tmp_path):
+    class MissingDecisionClassifier(FakeClassifier):
+        def classify_batch(self, tracks, _bundle):
+            return {}
+
+    frames = _frames(tmp_path)
+    provider = _provider(
+        tmp_path, FakeProposalProvider([300, 620, 900, 700]), MissingDecisionClassifier()
+    )
+
+    assert provider.detect_regions(frames) == []
+
+
+def test_v4_timestamps_pad_half_frame_gap(tmp_path):
+    frames = _frames(tmp_path, (0.25, 0.75, 1.25))
+    provider = _provider(tmp_path, FakeProposalProvider([300, 620, 900, 700]), FakeClassifier())
+
+    regions = provider.detect_regions(frames)
+
+    assert regions[0].start_time == 0.0
+    assert regions[-1].end_time == 1.5
+
+
+def test_v4_moving_track_keeps_per_frame_geometry(tmp_path):
+    frames = _frames(tmp_path, (0.25, 0.75, 1.25))
+    boxes = [[100, 600, 300, 650], [200, 600, 400, 650], [300, 600, 500, 650]]
+    provider = _provider(tmp_path, FakeProposalProvider(boxes), FakeClassifier())
+
+    regions = provider.detect_regions(frames)
+
+    assert [region.x for region in regions] == [100 / 1280, 200 / 1280, 300 / 1280]
+
+
+def test_v4_classifier_failure_fails_closed(tmp_path):
     class BrokenClassifier:
-        def __init__(self):
-            class Client:
-                pass
-            self.client = Client()
+        def classify_batch(self, _tracks, _bundle):
+            raise RuntimeError("Gemini unavailable")
 
-        def classify_batch(self, *args, **kwargs):
-            raise RuntimeError("Budget limit reached (60 requests).")
+    frames = _frames(tmp_path)
+    provider = _provider(tmp_path, FakeProposalProvider([300, 620, 900, 700]), BrokenClassifier())
 
-    from src.domain.entities.frame import Frame
-    provider = HybridSubtitleRegionDetectorProvider(
-        use_v21_pipeline=True,
-        crop_batch_classifier=BrokenClassifier()
-    )
-
-    image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    bundle = ProposalBundle(
-        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
-    )
-    bundle.add_frame(
-        frame_index=0,
-        timestamp_sec=0.0,
-        image=image,
-        image_path=None,
-        detections=[{
-            "frame_index": 0,
-            "timestamp_ms": 0.0,
-            "candidate_id": "F00000_C01",
-            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-            "confidence": 0.9,
-        }],
-    )
-    bundle.add_frame(
-        frame_index=1,
-        timestamp_sec=1 / 30,
-        image=np.full((720, 1280, 3), 255, dtype=np.uint8),
-        image_path=None,
-        detections=[{
-            "frame_index": 1,
-            "timestamp_ms": 1000 / 30,
-            "candidate_id": "F00001_C01",
-            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-            "confidence": 0.9,
-        }],
-    )
-    provider.proposal_bundle = bundle
-    frames = [Frame(timestamp=0.0, image_path=None)]
-
-    regions = provider.detect_regions(frames)
-    assert regions == []
-    assert provider._v21_fail_counters["budget_limit"] == 1
-
-
-def test_detect_regions_v21_fail_closed_missing_decision():
-    class MissingDecisionClassifier:
-        def __init__(self):
-            class Client:
-                pass
-            self.client = Client()
-
-        def classify_batch(self, *args, **kwargs):
-            # Returns decisions for other tracks, misses our T001
-            return {
-                "some_other_id": {"is_subtitle": True}
-            }
-
-    from src.domain.entities.frame import Frame
-    provider = HybridSubtitleRegionDetectorProvider(
-        use_v21_pipeline=True,
-        crop_batch_classifier=MissingDecisionClassifier()
-    )
-
-    image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    bundle = ProposalBundle(
-        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
-    )
-    bundle.add_frame(
-        frame_index=0,
-        timestamp_sec=0.0,
-        image=image,
-        image_path=None,
-        detections=[{
-            "frame_index": 0,
-            "timestamp_ms": 0.0,
-            "candidate_id": "F00000_C01",
-            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-            "confidence": 0.9,
-        }],
-    )
-    bundle.add_frame(
-        frame_index=1,
-        timestamp_sec=1 / 30,
-        image=np.full((720, 1280, 3), 255, dtype=np.uint8),
-        image_path=None,
-        detections=[{
-            "frame_index": 1,
-            "timestamp_ms": 1000 / 30,
-            "candidate_id": "F00001_C01",
-            "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-            "confidence": 0.9,
-        }],
-    )
-    provider.proposal_bundle = bundle
-    frames = [Frame(timestamp=0.0, image_path=None)]
-
-    regions = provider.detect_regions(frames)
-    assert regions == []
-    assert provider._v21_fail_counters["missing_decision"] == 1
-
-
-def test_detect_regions_v21_static_discriminator_rejects_before_gemini():
-    class SpyClassifier:
-        def __init__(self):
-            class Client:
-                pass
-            self.client = Client()
-            self.called = False
-
-        def classify_batch(self, *args, **kwargs):
-            self.called = True
-            return {}
-
-    classifier = SpyClassifier()
-    provider = HybridSubtitleRegionDetectorProvider(
-        use_v21_pipeline=True,
-        crop_batch_classifier=classifier,
-        static_variance_threshold=10.0,
-    )
-    image = np.zeros((720, 1280, 3), dtype=np.uint8)
-    bundle = ProposalBundle(
-        "video.mp4", fps=30.0, stride=1, video_width=1280, video_height=720
-    )
-    for frame_index in (0, 1):
-        bundle.add_frame(
-            frame_index=frame_index,
-            timestamp_sec=frame_index / 30,
-            image=image.copy(),
-            image_path=None,
-            detections=[{
-                "frame_index": frame_index,
-                "timestamp_ms": frame_index * 1000 / 30,
-                "candidate_id": f"F{frame_index:05d}_C01",
-                "bbox_xyxy": [100.0, 600.0, 300.0, 650.0],
-                "confidence": 0.9,
-            }],
-        )
-    provider.proposal_bundle = bundle
-
-    regions = provider.detect_regions([Frame(timestamp=0.0, image_path=None)])
-
-    assert regions == []
-    assert classifier.called is False
-    assert len(provider.static_variance_ledger) >= 1
-    entry = provider.static_variance_ledger[0]
-    assert entry["track_id"] == "T001"
-    assert entry["temporal_pixel_variance"] == 0.0
-    assert entry["rejected"] is True
-    assert entry["reason"] == "low_temporal_pixel_variance"
-    assert entry["threshold"] == 10.0
-    assert provider.static_rule_ledger() == provider.static_variance_ledger
+    assert provider.detect_regions(frames) == []

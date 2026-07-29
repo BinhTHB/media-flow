@@ -36,6 +36,7 @@ from src.application.services.final_timeline_builder import FinalTimelineBuilder
 from src.application.services.final_render_manifest_service import FinalRenderManifestService
 from src.domain.entities.segment import Segment
 from src.domain.entities.frame import Frame
+from src.domain.entities.subtitle_region import SubtitleRegion
 from src.application.services.artifact_cache_validator import ArtifactCacheValidator
 from src.application.services.mask_authority import DecisionStore
 from src.application.ports.ocr_provider import VideoSubtitleOCRProvider
@@ -405,7 +406,7 @@ class JobOrchestrator:
                 regions = self.detect_subtitle_region_uc.execute(frames)
                 if replacement_required:
                     ocr_segments = self._ocr_segments_for_confirmed_tracks(
-                        regions, video_width, video_height
+                        regions, frames, video_width, video_height
                     )
                 self.artifact_provider.write_json(
                     os.path.join(
@@ -1117,6 +1118,7 @@ class JobOrchestrator:
     def _ocr_segments_for_confirmed_tracks(
         self,
         regions: list[SubtitleRegion],
+        frames: list[Frame],
         video_width: int,
         video_height: int,
     ) -> list[Segment]:
@@ -1131,7 +1133,7 @@ class JobOrchestrator:
                 "no OCR subtitle segments will be rendered."
             )
             return []
-        return read_track(regions, video_width, video_height)
+        return read_track(regions, frames, video_width, video_height)
 
     @staticmethod
     def _provider_provenance(provider: object) -> dict:

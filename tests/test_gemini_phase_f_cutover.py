@@ -226,7 +226,7 @@ def test_gemini_ocr_without_confidence_bypasses_confidence_filter():
     assert metrics["dropped_by_confidence"] == 0
 
 
-def test_ocr_bbox_becomes_unconfirmed_display_region_with_fallback_confidence():
+def test_ocr_bbox_does_not_create_region_without_track_decision():
     from src.application.orchestrator.job_orchestrator import JobOrchestrator
 
     segment = Segment(
@@ -240,34 +240,10 @@ def test_ocr_bbox_becomes_unconfirmed_display_region_with_fallback_confidence():
         bbox={"left": 100, "top": 200, "right": 500, "bottom": 300},
     )
 
-    regions = JobOrchestrator._ocr_regions([segment], 1000, 500)
-
-    assert len(regions) == 1
-    assert regions[0].to_dict() == {
-        "start_time": 1,
-        "end_time": 2,
-        "x": 0.1,
-        "y": 0.4,
-        "width": 0.4,
-        "height": 0.2,
-        "confidence": 1.0,
-    }
-    assert regions[0].to_dict(include_provenance=True) == {
-        "start_time": 1,
-        "end_time": 2,
-        "x": 0.1,
-        "y": 0.4,
-        "width": 0.4,
-        "height": 0.2,
-        "confidence": 1.0,
-        "classification_id": None,
-        "is_subtitle": None,
-        "classifier_model": None,
-        "track_id": None,
-        "proposal_ids": [],
-        "category": None,
-        "classifier_confidence": None,
-    }
+    del segment
+    # V4 deliberately removed OCR→region conversion. Geometry must come from
+    # the text-finder and carries a positive track decision before OCR runs.
+    assert not hasattr(JobOrchestrator, "_ocr_regions")
 
 
 def test_segment_cache_fields_preserve_gemini_geometry():

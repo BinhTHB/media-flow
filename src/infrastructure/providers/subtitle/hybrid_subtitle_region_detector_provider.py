@@ -130,13 +130,13 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             decoded = cv2.imread(frame.image_path)
             if decoded is None:
                 raise RuntimeError(f"Unable to read detector frame: {frame.image_path}")
-        bundle.add_frame(
-            frame_index=index,
-            timestamp_sec=frame.timestamp,
-            image=decoded,
-            image_path=frame.image_path,
-            detections=[],
-        )
+            bundle.add_frame(
+                frame_index=index,
+                timestamp_sec=frame.timestamp,
+                image=decoded,
+                image_path=frame.image_path,
+                detections=[],
+            )
         detections = self._proposal.detect_images([frame.image_path for frame in frames])
         return bundle, detections, width, height
 
