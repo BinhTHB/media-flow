@@ -79,6 +79,10 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
             self._crop_batch_classifier.artifact_dir = Path(artifact_dir)
             self._crop_batch_classifier.set_run_context(job_id, job_id)
 
+    @property
+    def use_gpu(self) -> bool:
+        return self._device in {"cuda", "gpu"}
+
     def static_rule_ledger(self) -> list[dict[str, Any]]:
         return list(self.static_variance_ledger)
 

@@ -30,6 +30,10 @@ def include(path: Path) -> bool:
     rel = path.relative_to(ROOT)
     if any(part in EXCLUDED_PARTS for part in rel.parts):
         return False
+    if rel.parts[:2] == ("artifacts", f"round{ROUND}") and any(
+        part.startswith("gate_responses") for part in rel.parts[2:]
+    ):
+        return False
     if path.suffix.lower() in EXCLUDED_SUFFIXES or path.name in EXCLUDED_NAMES:
         return False
     if rel.parts[0] == "output":

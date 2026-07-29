@@ -1,5 +1,6 @@
 import subprocess
 import os
+import logging
 from pathlib import Path
 from src.domain.entities.resource_policy import FFmpegConfig, ResourcePolicy
 from src.application.ports.video_provider import VideoProvider
@@ -7,6 +8,9 @@ from src.infrastructure.runtime.ffmpeg_capability_detector import detect_ffmpeg_
 from src.infrastructure.runtime.ffmpeg_encode import build_ffmpeg_encode_args
 from src.infrastructure.runtime.resource_usage_report import write_resource_usage_report
 from src.shared.exceptions import ProviderError
+
+logger = logging.getLogger(__name__)
+
 
 class FFmpegVideoProvider(VideoProvider):
     def __init__(
@@ -132,6 +136,13 @@ class FFmpegVideoProvider(VideoProvider):
         )
         cmd = list(plan.args)
         cmd[cmd.index("-i") + 2:cmd.index("-c:v")] = ["-vf", filter_str]
+        encoder_settings = (
+            f"encoder={plan.encoder_used} configured_encoder={self.ffmpeg_config.encoder} "
+            f"preset={self.ffmpeg_config.nvenc_preset if plan.encoder_used.endswith('_nvenc') else self.ffmpeg_config.cpu_preset} "
+            f"{'cq=' + str(self.ffmpeg_config.nvenc_cq) if plan.encoder_used.endswith('_nvenc') else 'crf=' + str(self.ffmpeg_config.cpu_crf)} "
+            f"gpu_decode={plan.gpu_decode_used}"
+        )
+        logger.info("FFMPEG_RENDER %s", encoder_settings)
         
         try:
             subprocess.run(cmd, capture_output=True, check=True, timeout=300)

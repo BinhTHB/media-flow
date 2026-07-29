@@ -51,6 +51,10 @@ def _create_hybrid_gemini_ocr(options):
     from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
     from src.infrastructure.providers.ocr.hybrid_gemini_ocr_provider import HybridGeminiOCRProvider
 
+    device = options.get("device", "cpu")
+    if "use_gpu" in options:
+        device = "cuda" if options["use_gpu"] else "cpu"
+
     runtime = options.get("runtime")
     model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
     verifier = GeminiTrackVerifier(runtime, model=model) if runtime else None
@@ -59,7 +63,7 @@ def _create_hybrid_gemini_ocr(options):
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
-        device=options.get("device", "cpu"),
+        device=device,
     )
     return HybridGeminiOCRProvider(
         proposal_provider=proposal,
@@ -75,6 +79,11 @@ def _create_hybrid_yolo(options):
     )
     from src.infrastructure.benchmark.hybrid_subtitle.config import DEFAULT_GEMINI_MODEL
     from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
+
+    device = options.get("device", "cpu")
+    if "use_gpu" in options:
+        device = "cuda" if options["use_gpu"] else "cpu"
+
     runtime = options.get("runtime")
     crop_batch_classifier = None
     if runtime is not None:
@@ -95,7 +104,7 @@ def _create_hybrid_yolo(options):
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
-        device=options.get("device", "cpu"),
+        device=device,
     )
     return HybridSubtitleRegionDetectorProvider(
         weights=options.get("weights", "best.pt"),
@@ -107,7 +116,7 @@ def _create_hybrid_yolo(options):
         static_variance_threshold=float(
             options.get("static_variance_threshold", 827.12)
         ),
-        device=options.get("device", "cpu"),
+        device=device,
         crop_batch_classifier=crop_batch_classifier,
         proposal_provider=proposal_provider,
     )

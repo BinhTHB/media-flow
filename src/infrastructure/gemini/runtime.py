@@ -105,6 +105,7 @@ class GeminiRuntime:
         status_msg = f"Gemini response cache {'enabled' if self._cache.enabled else 'disabled'} (dir={cache_dir_path or 'unset'}, state={cache_status})"
         print(status_msg)
         logger.warning(status_msg)
+        self._reset_ledger_file(self._ledger_path_for(job_id))
         self._usage = UsageRecorder(
             usage_callback=_create_ledger_callback(self._ledger_path_for(job_id), job_id)
         )
@@ -118,10 +119,18 @@ class GeminiRuntime:
     def set_job_id(self, job_id: str) -> None:
         """Set per-job identifier and recreate ledger callback to write to the per-job ledger file."""
         self._job_id = job_id
+        self._reset_ledger_file(self._ledger_path_for(job_id))
         self._usage = UsageRecorder(
             usage_callback=_create_ledger_callback(self._ledger_path_for(job_id), job_id)
         )
         self._clients.clear()
+
+    @staticmethod
+    def _reset_ledger_file(ledger_path: str) -> None:
+        """Truncate the per-run audit ledger before recording a new job."""
+        path = Path(ledger_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
 
     def _ledger_path_for(self, job_id: str) -> str:
         """Derive ledger file path from RuntimeConfig.ledger_path.

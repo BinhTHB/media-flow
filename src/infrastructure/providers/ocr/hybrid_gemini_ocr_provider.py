@@ -58,6 +58,10 @@ class HybridGeminiOCRProvider(OCRProvider):
             self._crop_batch_classifier.artifact_dir = self.artifact_dir
             self._crop_batch_classifier.set_run_context(job_id, job_id)
 
+    @property
+    def use_gpu(self) -> bool:
+        return getattr(self._proposal, "_device", "cpu") in {"cuda", "gpu"}
+
     def read_confirmed_tracks(
         self,
         regions: List[SubtitleRegion],

@@ -95,6 +95,44 @@ def test_runtime_uses_configured_ledger_and_job_id(tmp_path):
     assert entry["purpose"] == "translation"
     assert runtime.get_client()._job_id == "job-round20"
 
+
+def test_runtime_resets_ledger_for_each_run(tmp_path):
+    from src.infrastructure.gemini.runtime import GeminiRuntime, RuntimeConfig
+
+    ledger = tmp_path / "ledger_repeat-run.jsonl"
+    ledger.write_text('{"job_id":"old-run"}\n', encoding="utf-8")
+    runtime = GeminiRuntime.create(
+        RuntimeConfig(api_key="fake", ledger_path=str(ledger)),
+        job_id="repeat-run",
+    )
+
+    assert ledger.read_text(encoding="utf-8") == ""
+
+    runtime.usage_recorder.record(UsageRecord(
+        model="gemini-3.5-flash-lite",
+        source_kind="translation",
+        job_id="repeat-run",
+        success=True,
+        request_id="req-first",
+    ))
+    runtime.set_job_id("repeat-run")
+
+    assert ledger.read_text(encoding="utf-8") == ""
+    runtime.usage_recorder.record(UsageRecord(
+        model="gemini-3.5-flash-lite",
+        source_kind="translation",
+        job_id="repeat-run",
+        success=True,
+        request_id="req-second",
+    ))
+    entries = [
+        json.loads(line)
+        for line in ledger.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(entries) == 1
+    assert entries[0]["job_id"] == "repeat-run"
+    assert entries[0]["request_id_or_hash"] == "req-second"
+
 def test_ledger_writes_image_purpose_with_media_sha256():
     with tempfile.TemporaryDirectory() as tmp:
         ledger = os.path.join(tmp, "ledger.jsonl")

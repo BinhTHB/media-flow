@@ -76,6 +76,7 @@ def verify(zip_path: Path, round_num: int) -> int:
     e2e_log_path = f"{artifacts_prefix}e2e_round{round_num}.log"
     package_report_path = f"{artifacts_prefix}package_report.json"
     blocked_status_path = f"{artifacts_prefix}blocked_status.json"
+    test_audit_report_path = f"{artifacts_prefix}test_audit_report.json"
 
     # Calculate actual zip SHA256
     sha256 = hashlib.sha256()
@@ -227,6 +228,24 @@ def verify(zip_path: Path, round_num: int) -> int:
                     all_pass = all_pass and r1 and r2
                 except Exception as exc:
                     print(f"  [FAIL] e2e log inspection error: {exc}")
+                    all_pass = False
+
+            test_audit_report_present = test_audit_report_path in names
+            r = _check("test_audit_report.json present", test_audit_report_present)
+            all_pass = all_pass and r
+            if test_audit_report_present:
+                try:
+                    audit_report = json.loads(
+                        zf.read(test_audit_report_path).decode("utf-8")
+                    )
+                    r = _check(
+                        "test_audit_report.json has round mapping",
+                        audit_report.get("round") == round_num
+                        and isinstance(audit_report.get("mapping"), dict),
+                    )
+                    all_pass = all_pass and r
+                except Exception as exc:
+                    print(f"  [FAIL] test_audit_report.json check error: {exc}")
                     all_pass = False
 
             # --- package_report.json verification ---
