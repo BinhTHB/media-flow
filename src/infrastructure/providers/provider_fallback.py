@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List
 
+from src.domain.entities.subtitle_region import SubtitleRegion
 from src.application.ports.ocr_provider import OCRProvider
 from src.application.ports.speech_provider import SpeechProvider
 from src.domain.entities.frame import Frame
@@ -98,6 +99,23 @@ class FallbackOCRProvider(_FallbackProvider, OCRProvider):
     def detect_text(self, frames: List[Frame]) -> List[Segment]:
         self.fallback_call = lambda: self.fallback.detect_text(frames)
         return self._run(lambda: self.primary.detect_text(frames))
+
+    def read_confirmed_tracks(
+        self,
+        regions: List[SubtitleRegion],
+        frames: List[Frame],
+        video_width: int,
+        video_height: int,
+    ) -> List[Segment]:
+        read_track = getattr(self.primary, "read_confirmed_tracks", None)
+        if not callable(read_track):
+            raise NotImplementedError("Primary OCR provider does not support read_confirmed_tracks")
+        self.fallback_call = lambda: (
+            self.fallback.read_confirmed_tracks(regions, frames, video_width, video_height)
+            if hasattr(self.fallback, "read_confirmed_tracks")
+            else []
+        )
+        return self._run(lambda: read_track(regions, frames, video_width, video_height))
 
 
 class FallbackSpeechProvider(_FallbackProvider, SpeechProvider):
