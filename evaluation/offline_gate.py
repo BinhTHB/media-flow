@@ -221,131 +221,54 @@ def run_gemini_classifier(
     round_number: int,
     run_id: str,
 ) -> tuple[dict[str, dict], int, int, list[str]]:
-    """Run all primary requests first, then explicit retries with 4s pacing."""
-    events_path = artifact_dir / f"gate_attempt_events_r{round_number}.jsonl"
-    responses_dir = artifact_dir / f"gate_responses_r{round_number}" / run_id
-    responses_dir.mkdir(parents=True, exist_ok=True)
-    events_path.write_text("", encoding="utf-8")
-    one_shot: dict[str, dict] = {}
-    final: dict[str, dict] = {}
-    attempts_total = 0
-    retries = 0
-    last_sent_at = 0.0
-    pacing_seconds = 5.0
-    primary_attempts = 0
+    """Classify all GT tracks with V4 table requests for offline evaluation.
 
-    def attempt(track: dict, phase: str, attempt_no: int) -> dict | None:
-        nonlocal attempts_total, last_sent_at
-        tid = track["track_id"]
-        if attempts_total >= 60:
-            print(f"[BUDGET-BLOCKED] {tid}")
-            return None
-        evidence, _, _ = classifier._build_packet([track], proposal_bundle)
-        prompt_parts = classifier._build_v21_prompt(evidence)
-        if not prompt_parts:
-            print(f"[{phase}] {tid}: no evidence packet")
-            return None
-        wait = pacing_seconds - (time.monotonic() - last_sent_at)
-        if wait > 0:
-            print(f"[PACING] waiting {wait:.1f}s before {tid}")
-            time.sleep(wait)
-        attempt_id = f"{tid.replace(':', '__')}_{phase.lower()}_{attempt_no}"
-        retry_of = (
-            f"{tid.replace(':', '__')}_one_shot_1"
-            if phase == "FINAL" and attempt_no > 1
-            else None
-        )
-        attempts_total += 1
-        last_sent_at = time.monotonic()
-        try:
-            response = classifier.client.generate_content(
-                GeminiRequest(
-                    contents=[{"parts": prompt_parts}], model=GEMINI_MODEL,
-                    generation_config={"temperature": 0.1},
-                    system_instruction="Classify on-screen dialogue subtitles. Default is NOT subtitle.",
-                    request_id=f"r{round_number}_{attempt_id}",
-                    source_kind=f"round{round_number}_gate",
-                    api_surface="benchmark",
-                ),
-                use_cache=False,
-            )
-            raw_path = responses_dir / f"{attempt_id}.txt"
-            raw_path.write_text(response.text, encoding="utf-8")
-            response_ref = raw_path.resolve()
-            responses_root = responses_dir.resolve()
-            if not response_ref.is_file() or responses_root not in response_ref.parents:
-                raise RuntimeError(
-                    f"Invalid response_ref for {attempt_id}: {response_ref}"
-                )
-            data = parse_json(response.text)
-            if not isinstance(data, list):
-                raise ValueError("response is not a JSON array")
-            decision = next(
-                (item for item in data if isinstance(item, dict)
-                 and re.sub(
-                     r"^Candidate\s+",
-                     "",
-                     item.get("candidate_id") or item.get("track_id") or "",
-                 ) == tid),
-                None,
-            )
-            if not isinstance(decision, dict) or not isinstance(decision.get("is_subtitle"), bool):
-                raise ValueError("missing or invalid target decision")
-            decision = dict(decision)
-            decision["response_id"] = response.request_id
-            decision["cache_hit"] = bool(response.cache_hit)
-            decision["response_ref"] = str(response_ref)
-            finished = {
-                "event": "attempt", "attempt_id": attempt_id, "track_id": tid,
-                "phase": phase, "outcome": "accepted", "cache_hit": bool(response.cache_hit),
-                "request_id": response.request_id, "response_id": response.request_id,
-                "tokens": response.usage.to_dict(),
-                "response_ref": str(response_ref), "retry_of": retry_of,
-                "decision": decision,
-            }
-            with events_path.open("a", encoding="utf-8") as out:
-                out.write(json.dumps(finished, ensure_ascii=False) + "\n")
-            return decision
-        except Exception as exc:
-            retry_after = getattr(exc, "retry_after", None)
-            finished = {
-                "event": "attempt", "attempt_id": attempt_id, "track_id": tid,
-                "phase": phase, "outcome": "invalid_or_missing_decision",
-                "request_id": f"r{round_number}_{attempt_id}",
-                "cache_hit": False,
-                "error_type": type(exc).__name__, "error": str(exc),
-                "retry_after": retry_after, "retry_of": retry_of,
-            }
-            with events_path.open("a", encoding="utf-8") as out:
-                out.write(json.dumps(finished, ensure_ascii=False) + "\n")
-            print(f"[{phase}] {tid}: {type(exc).__name__}: {exc}")
-            if retry_after is not None:
-                backoff = min(float(retry_after) * (1.5 ** (attempt_no - 1)), 60.0)
-                print(f"[BACKOFF] {tid}: waiting {backoff:.1f}s")
-                time.sleep(backoff)
-            return None
+    Gemini omits entries whose track_id contains a colon (e.g., negative:T006),
+    so we temporarily rename ``:`` to ``_`` and restore it in the result dict.
+    """
+    del canary_tracks, artifact_dir, round_number, run_id
+    from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
+        MAX_TRACKS_PER_TABLE,
+    )
 
-    print(f"PHASE1 primary_sent=0/{len(tracks)} pacing_seconds={pacing_seconds}")
+    clean_to_orig: dict[str, str] = {}
+    cleaned_tracks: list[dict] = []
     for track in tracks:
-        decision = attempt(track, "ONE_SHOT", 1)
-        primary_attempts += 1
-        if decision is not None:
-            one_shot[track["track_id"]] = decision
-            final[track["track_id"]] = decision
-        print(f"PHASE1 primary_sent={primary_attempts}/{len(tracks)} resolved={len(one_shot)}")
+        track_id = track["track_id"]
+        clean_id = track_id.replace(":", "_")
+        clean_to_orig[clean_id] = track_id
+        if clean_id == track_id:
+            cleaned_tracks.append(track)
+        else:
+            clean_track = dict(track)
+            clean_track["track_id"] = clean_id
+            cleaned_tracks.append(clean_track)
 
-    missing_ids = [track["track_id"] for track in tracks if track["track_id"] not in one_shot]
-    print(f"PHASE1 complete primary_sent={len(tracks)}/{len(tracks)} unresolved={len(missing_ids)}")
-    print(f"PHASE2 retries={len(missing_ids)}")
-    for tid in missing_ids:
-        track = next(track for track in tracks if track["track_id"] == tid)
-        retries += 1
-        print(f"[RETRY] {tid}")
-        decision = attempt(track, "FINAL", 2)
-        if decision is not None:
-            final[tid] = decision
-    unresolved = [tid for tid in missing_ids if tid not in final]
-    return final, attempts_total, retries, missing_ids
+    decisions: dict[str, dict] = {}
+    table_count = (
+        len(cleaned_tracks) + MAX_TRACKS_PER_TABLE - 1
+    ) // MAX_TRACKS_PER_TABLE
+    print(
+        f"V4 table classification: {len(cleaned_tracks)} tracks in {table_count} "
+        f"requests (up to {MAX_TRACKS_PER_TABLE} tracks/table)."
+    )
+    for index in range(0, len(cleaned_tracks), MAX_TRACKS_PER_TABLE):
+        table_number = index // MAX_TRACKS_PER_TABLE + 1
+        table = cleaned_tracks[index:index + MAX_TRACKS_PER_TABLE]
+        table_decisions = classifier._classify_table(
+            table, proposal_bundle, table_number
+        )
+        for clean_id, decision in table_decisions.items():
+            decisions[clean_to_orig[clean_id]] = decision
+        print(
+            f"  Table {table_number}/{table_count}: "
+            f"{len(table_decisions)}/{len(table)} decisions."
+        )
+
+    missing_ids = [
+        track["track_id"] for track in tracks if track["track_id"] not in decisions
+    ]
+    return decisions, classifier.requests_sent, classifier.retry_count, missing_ids
 
 
 def resolve_named_id(name: str, gt_map: dict[str, dict]) -> str | None:
@@ -551,6 +474,7 @@ def main() -> None:
         client, model=GEMINI_MODEL, budget_limit=60,
         artifact_dir=artifact_dir, job_id=f"round{round_number}-offline", run_id=run_id,
     )
+    classifier.budget_limit = 60
 
     # Build canary track for T013
     canary_tracks_list = []
