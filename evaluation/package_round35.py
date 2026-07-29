@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 import subprocess
 import zipfile
+import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +23,7 @@ VIDEO = ROOT / "output" / "sample5_v4.mp4"
 EXCLUDED_PARTS = {".git", ".venv", "__pycache__", ".pytest_cache__", ".ruff_cache", "frames"}
 EXCLUDED_SUFFIXES = {".pyc", ".wav", ".pt"}
 EXCLUDED_NAMES = {".env", "config.yml"}
+SHA256_PLACEHOLDER = "PLACEHOLDER_SHA256_HASH_R35_ZIP_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 
 
 def include(path: Path) -> bool:
@@ -33,7 +36,7 @@ def include(path: Path) -> bool:
         return False
     if rel.parts[0] == "artifacts":
         return len(rel.parts) > 1 and rel.parts[1] in {"round26", "round28", f"round{ROUND}"}
-    return rel.parts[0] in {"src", "tests", "scripts", "config", "artifacts", "evaluation"}
+    return rel.parts[0] in {"src", "tests", "scripts", "config", "artifacts", "evaluation", "docs"}
 
 
 def add_aliases(archive: zipfile.ZipFile) -> None:
@@ -43,13 +46,16 @@ def add_aliases(archive: zipfile.ZipFile) -> None:
         RUN_DIR / "subtitles" / "subtitle.ass": prefix / "subtitles" / "subtitle.ass",
         RUN_DIR / "debug" / "subtitle_regions.json": prefix / "subtitle_regions.json",
     }
-    aliases.update(
-        {
-            source: prefix / "debug" / source.name
-            for source in (RUN_DIR / "debug").iterdir()
-            if source.is_file()
-        }
-    )
+    for source in (RUN_DIR / "debug").iterdir():
+        if source.is_file():
+            aliases[source] = prefix / "debug" / source.name
+    
+    responses_dir = RUN_DIR / "debug" / "responses"
+    if responses_dir.is_dir():
+        for source in responses_dir.iterdir():
+            if source.is_file():
+                aliases[source] = prefix / "debug" / "responses" / source.name
+
     for source, target in aliases.items():
         if not source.is_file():
             raise RuntimeError(f"Required package input missing: {source}")
@@ -72,6 +78,22 @@ def add_aliases(archive: zipfile.ZipFile) -> None:
     archive.writestr(str(ledger_target), "\n".join(lines) + "\n")
 
 
+def _patch_zip_crc(
+    data: bytearray, info: zipfile.ZipInfo, filename: str, crc: int, start_dir: int
+) -> None:
+    struct.pack_into("<I", data, info.header_offset + 14, crc)
+    offset = start_dir
+    target = filename.encode("utf-8")
+    while data[offset : offset + 4] == b"PK\x01\x02":
+        name_len, extra_len, comment_len = struct.unpack_from("<HHH", data, offset + 28)
+        name_start = offset + 46
+        if bytes(data[name_start : name_start + name_len]) == target:
+            struct.pack_into("<I", data, offset + 16, crc)
+            return
+        offset = name_start + name_len + extra_len + comment_len
+    raise RuntimeError(f"Could not locate central directory entry for {filename}")
+
+
 def main() -> None:
     required = [
         VIDEO,
@@ -89,11 +111,13 @@ def main() -> None:
     git_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
+
     report = {
         "round": ROUND,
         "root": ROOT_NAME,
         "zip": str(ZIP),
-        "sha256": "",
+        "sha256": SHA256_PLACEHOLDER,
+        "sha256_scheme": "zip-template-v1",
         "git_sha": git_sha,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "gt_v2_3": "artifacts/round28/gt_v2_3.json",
@@ -116,7 +140,10 @@ def main() -> None:
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED) as archive:
         for path in ROOT.rglob("*"):
             if path.is_file() and include(path):
-                archive.write(path, Path(ROOT_NAME) / path.relative_to(ROOT))
+                if path.name == "package_report.json":
+                    archive.write(path, Path(ROOT_NAME) / path.relative_to(ROOT), compress_type=zipfile.ZIP_STORED)
+                else:
+                    archive.write(path, Path(ROOT_NAME) / path.relative_to(ROOT))
         add_aliases(archive)
 
     with zipfile.ZipFile(ZIP) as archive:
@@ -124,7 +151,30 @@ def main() -> None:
     if len(names) != len(set(names)):
         raise RuntimeError("Duplicate ZIP entries detected.")
 
-    digest = hashlib.sha256(ZIP.read_bytes()).hexdigest()
+    zip_bytes = bytearray(ZIP.read_bytes())
+    placeholder_bytes = SHA256_PLACEHOLDER.encode("ascii")
+    idx = zip_bytes.find(placeholder_bytes)
+    if idx == -1:
+        raise RuntimeError("Could not find sha256 placeholder in ZIP bytes.")
+
+    placeholder_hash = hashlib.sha256(zip_bytes).hexdigest()
+    zip_bytes[idx : idx + 64] = placeholder_hash.encode("ascii")
+    report["sha256"] = placeholder_hash
+    report_bytes = json.dumps(report, indent=2).encode("utf-8")
+    placeholder_report = dict(report)
+    placeholder_report["sha256"] = SHA256_PLACEHOLDER
+    placeholder_crc = zlib.crc32(json.dumps(placeholder_report, indent=2).encode("utf-8"))
+    with zipfile.ZipFile(ZIP) as archive:
+        report_name = f"{ROOT_NAME}/artifacts/round{ROUND}/package_report.json"
+        info = archive.getinfo(report_name)
+        _patch_zip_crc(zip_bytes, info, report_name, zlib.crc32(report_bytes), archive.start_dir)
+    ZIP.write_bytes(zip_bytes)
+
+    (ARTIFACT_DIR / "package_report.json").write_text(
+        json.dumps(report, indent=2), encoding="utf-8"
+    )
+
+    digest = hashlib.sha256(zip_bytes).hexdigest()
     SIDECAR.write_text(f"{digest}  {ZIP.name}\n", encoding="ascii")
     print(f"ZIP={ZIP}")
     print(f"SHA256={digest}")

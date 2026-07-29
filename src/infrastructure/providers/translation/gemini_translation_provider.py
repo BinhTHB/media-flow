@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import List, Optional
 
 from src.application.ports.translation_provider import TranslationProvider
@@ -19,6 +20,11 @@ class GeminiTranslationProvider(TranslationProvider):
         self._runtime = runtime or GeminiRuntime.create()
         self.model = model
         self.max_retries = max_retries
+        self.artifact_dir: Path | None = None
+
+    def set_run_context(self, job_id: str, artifact_dir: str) -> None:
+        del job_id
+        self.artifact_dir = Path(artifact_dir)
 
     def translate(self, segments: List[Segment], target_language: str) -> List[Segment]:
         if not segments:
@@ -54,6 +60,10 @@ class GeminiTranslationProvider(TranslationProvider):
                     source_kind="translation",
                 )
             )
+            if self.artifact_dir is not None:
+                response_path = self.artifact_dir / "responses" / "translation.json"
+                response_path.parent.mkdir(parents=True, exist_ok=True)
+                response_path.write_text(response.text, encoding="utf-8")
             return self._parse_numbered_lines(response.text.strip(), texts)
         except GeminiAuthError as exc:
             raise ProviderError("GEMINI_API_KEY environment variable is not set.") from exc

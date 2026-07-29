@@ -19,6 +19,7 @@ Exit code:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -58,7 +59,14 @@ def main() -> None:
     video_path = Path(sys.argv[2]) if len(sys.argv) >= 3 and sys.argv[1] == "--video" else VIDEO
     ass_path = Path(sys.argv[4]) if len(sys.argv) >= 5 and sys.argv[3] == "--ass" else None
     gt_path = GT_PATH
-    artifact_dir = ARTIFACT_DIR
+    # Resolve round from video path to avoid overwriting another round's artifact
+    m = re.search(r"r(\d+)|round(\d+)", str(video_path))
+    if m:
+        rnum = m.group(1) or m.group(2)
+        artifact_dir = ROOT / "artifacts" / f"round{rnum}"
+    else:
+        artifact_dir = ARTIFACT_DIR
+    artifact_dir.mkdir(parents=True, exist_ok=True)
 
     print("COMMAND: python scripts/verify_e2e_r31.py")
     print(f"VIDEO:   {video_path}")

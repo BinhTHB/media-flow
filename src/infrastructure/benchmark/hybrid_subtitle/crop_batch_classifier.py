@@ -32,6 +32,7 @@ class CropBatchClassifierV21:
         model: str = "gemini-3.5-flash-lite",
         budget_limit: int = MAX_CLASSIFICATION_REQUESTS,
         artifact_dir: str | Path | None = None,
+        response_dir: str = "responses",
         job_id: str = "",
         run_id: str = "",
     ) -> None:
@@ -39,6 +40,7 @@ class CropBatchClassifierV21:
         self.model = model
         self.budget_limit = min(int(budget_limit), MAX_CLASSIFICATION_REQUESTS)
         self.artifact_dir = Path(artifact_dir) if artifact_dir else None
+        self.response_dir = response_dir.strip("/")
         self.job_id = job_id
         self.run_id = run_id
         self.requests_sent = 0
@@ -182,7 +184,7 @@ class CropBatchClassifierV21:
 
     def _write_response(self, table_number: int, text: str, retry: bool = False) -> str:
         suffix = "_retry" if retry else ""
-        relative = f"responses/request_{table_number:02d}{suffix}.json"
+        relative = f"{self.response_dir}/track_table_{table_number:02d}{suffix}.json"
         if self.artifact_dir is None:
             return relative
         destination = self.artifact_dir / relative

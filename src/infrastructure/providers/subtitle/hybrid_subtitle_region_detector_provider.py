@@ -252,6 +252,9 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
                     continue
                 frame_index = int(group["frame_index"])
                 start, end = timestamps.get(frame_index, (0.0, 0.0))
+                # Pad start and end times slightly to ensure seamless visual rendering
+                start = max(0.0, start - 0.02)
+                end = end + 0.02
                 x1, y1, x2, y2 = bbox
                 regions.append(SubtitleRegion(
                     start_time=start, end_time=end,

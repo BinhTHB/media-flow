@@ -270,15 +270,51 @@ def verify(zip_path: Path, round_num: int) -> int:
                     
                     # 3. Check correct ZIP SHA256 inside report if reported and non-empty
                     reported_zip_hash = report_data.get("sha256", "")
-                    if reported_zip_hash:
-                        hash_matches = reported_zip_hash.lower() == actual_zip_hash
-                        r3 = _check(f"package_report ZIP hash matches actual computed hash", hash_matches)
-                        if not hash_matches:
-                            print(f"        reported inside ZIP: {reported_zip_hash}")
-                            print(f"        actual ZIP hash    : {actual_zip_hash}")
+                    if not reported_zip_hash or len(reported_zip_hash) != 64:
+                        r3 = _check("package_report ZIP hash present (empty or invalid length)", False)
                     else:
-                        print("        [INFO] self-referential ZIP hash in package_report.json is empty (delegated to sidecar .sha256 validation)")
-                        r3 = True
+                        import struct
+                        import zlib
+                        
+                        zip_bytes = bytearray(zip_path.read_bytes())
+                        reported_bytes = reported_zip_hash.encode("ascii")
+                        unique_placeholder_bytes = "PLACEHOLDER_SHA256_HASH_R35_ZIP_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX".encode("ascii")
+                        
+                        # Locate where the reported_zip_hash is in the zip_bytes
+                        idx = zip_bytes.find(reported_bytes)
+                        if idx == -1:
+                            r3 = _check("package_report ZIP hash matches actual computed hash (normalized)", False)
+                            print("        [ERROR] Reported hash bytes not found in ZIP payload.")
+                        else:
+                            # Replace to restore the templated placeholder ZIP bytes
+                            zip_bytes[idx : idx + 64] = unique_placeholder_bytes
+                            
+                            # Recalculate Central Directory & Local File Header CRC value on the templated report bytes
+                            templated_report_data = dict(report_data)
+                            templated_report_data["sha256"] = "PLACEHOLDER_SHA256_HASH_R35_ZIP_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+                            placeholder_crc = zlib.crc32(json.dumps(templated_report_data, indent=2).encode("utf-8"))
+                            
+                            # Patch zip_bytes Local Header CRC
+                            header_offset = zf.getinfo(package_report_path).header_offset
+                            struct.pack_into("<I", zip_bytes, header_offset + 14, placeholder_crc)
+                            
+                            # Patch zip_bytes Central Directory Entry CRC
+                            offset = zf.start_dir
+                            target = package_report_path.encode("utf-8")
+                            while zip_bytes[offset : offset + 4] == b"PK\x01\x02":
+                                name_len, extra_len, comment_len = struct.unpack_from("<HHH", zip_bytes, offset + 28)
+                                name_start = offset + 46
+                                if bytes(zip_bytes[name_start : name_start + name_len]) == target:
+                                    struct.pack_into("<I", zip_bytes, offset + 16, placeholder_crc)
+                                    break
+                                offset = name_start + name_len + extra_len + comment_len
+                            
+                            computed_hash = hashlib.sha256(zip_bytes).hexdigest()
+                            hash_matches = (reported_zip_hash.lower() == computed_hash)
+                            r3 = _check("package_report ZIP hash matches actual computed hash (normalized)", hash_matches)
+                            if not hash_matches:
+                                print(f"        reported inside ZIP: {reported_zip_hash}")
+                                print(f"        computed normalized: {computed_hash}")
                         
                     all_pass = all_pass and r1 and r_gate and r2 and r3
                 except Exception as exc:

@@ -550,6 +550,12 @@ class JobOrchestrator:
                 self.state_machine.transition(job, JobStatus.TRANSLATING)
                 logger = FeatureLogger("Translate")
                 logger.start()
+                translation_provider = self.translate_segments_uc.translation_provider
+                set_run_context = getattr(translation_provider, "set_run_context", None)
+                if callable(set_run_context):
+                    set_run_context(
+                        job.job_id, self.artifact_provider.debug_dir(job.job_id)
+                    )
                 segments = self.translate_segments_uc.execute(segments, job.target_language)
                 self.artifact_provider.write_json(
                     self.artifact_provider.translated_path(job.job_id),

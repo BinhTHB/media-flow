@@ -226,7 +226,7 @@ def run_gemini_classifier(
     Gemini omits entries whose track_id contains a colon (e.g., negative:T006),
     so we temporarily rename ``:`` to ``_`` and restore it in the result dict.
     """
-    del canary_tracks, artifact_dir, round_number, run_id
+    del canary_tracks, round_number, run_id
     from src.infrastructure.benchmark.hybrid_subtitle.crop_batch_classifier import (
         MAX_TRACKS_PER_TABLE,
     )
@@ -472,7 +472,10 @@ def main() -> None:
     client = GeminiClient(api_key=load_key(), model=GEMINI_MODEL)
     classifier = CropBatchClassifierV21(
         client, model=GEMINI_MODEL, budget_limit=60,
-        artifact_dir=artifact_dir, job_id=f"round{round_number}-offline", run_id=run_id,
+        artifact_dir=artifact_dir / f"gate_responses_r{round_number}",
+        response_dir=run_id,
+        job_id=f"round{round_number}-offline",
+        run_id=run_id,
     )
     classifier.budget_limit = 60
 

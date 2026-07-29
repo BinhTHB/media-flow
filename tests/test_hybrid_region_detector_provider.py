@@ -121,7 +121,7 @@ def test_v4_timestamps_pad_half_frame_gap(tmp_path):
     regions = provider.detect_regions(frames)
 
     assert regions[0].start_time == 0.0
-    assert regions[-1].end_time == 1.5
+    assert regions[-1].end_time == 1.52
 
 
 def test_v4_moving_track_keeps_per_frame_geometry(tmp_path):

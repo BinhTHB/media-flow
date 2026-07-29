@@ -95,7 +95,7 @@ def test_batch_returns_decisions_for_all_tracks():
     assert "T001" in decisions
     assert decisions["T001"]["is_subtitle"] is True
     assert decisions["T001"]["model"] == classifier.model
-    assert decisions["T001"]["response_ref"] == "responses/request_01.json"
+    assert decisions["T001"]["response_ref"] == "responses/track_table_01.json"
 
 
 def test_batch_sends_clean_full_frame_context_with_crops():

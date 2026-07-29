@@ -45,6 +45,7 @@ class HybridGeminiOCRProvider(OCRProvider):
         self._crop_batch_classifier = crop_batch_classifier
         self.proposal_bundle: ProposalBundle | None = None
         self.confirmed_track_ocr_requests = 0
+        self.artifact_dir: Path | None = None
 
     def set_speech_segments(
         self, speech_segments: list[Any], video_duration_seconds: float
@@ -52,8 +53,9 @@ class HybridGeminiOCRProvider(OCRProvider):
         del speech_segments, video_duration_seconds
 
     def set_run_context(self, job_id: str, artifact_dir: str) -> None:
+        self.artifact_dir = Path(artifact_dir)
         if self._crop_batch_classifier is not None:
-            self._crop_batch_classifier.artifact_dir = Path(artifact_dir)
+            self._crop_batch_classifier.artifact_dir = self.artifact_dir
             self._crop_batch_classifier.set_run_context(job_id, job_id)
 
     def read_confirmed_tracks(
@@ -121,6 +123,10 @@ class HybridGeminiOCRProvider(OCRProvider):
                 ),
                 use_cache=False,
             )
+            if self.artifact_dir is not None:
+                response_path = self.artifact_dir / "responses" / "confirmed_track_ocr_batch.json"
+                response_path.parent.mkdir(parents=True, exist_ok=True)
+                response_path.write_text(response.text, encoding="utf-8")
             payload = parse_json(response.text)
             self.confirmed_track_ocr_requests += 1
         except Exception:
