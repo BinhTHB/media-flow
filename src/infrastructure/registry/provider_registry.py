@@ -83,7 +83,7 @@ def _create_hybrid_yolo(options):
         )
         model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
         crop_batch_classifier = CropBatchClassifier(
-            runtime.get_client(model=model),
+            runtime,
             model=model,
             budget_limit=3,
             artifact_dir=options.get("crop_classifier_artifact_dir"),
@@ -110,7 +110,6 @@ def _create_hybrid_yolo(options):
         device=options.get("device", "cpu"),
         crop_batch_classifier=crop_batch_classifier,
         proposal_provider=proposal_provider,
-        use_v21_pipeline=bool(options.get("use_v21_pipeline", False)),
     )
 
 

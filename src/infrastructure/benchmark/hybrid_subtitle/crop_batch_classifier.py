@@ -12,15 +12,18 @@ import cv2
 from .crop_extractor import TrackCropExtractor
 
 logger = logging.getLogger(__name__)
-MAX_CLASSIFICATION_REQUESTS = 3
-MAX_TRACKS_PER_TABLE = 9
+MAX_CLASSIFICATION_REQUESTS = 2
+MAX_TRACKS_PER_TABLE = 13
 
 
 class CropBatchClassifierV21:
-    """Classify V4 text tracks in at most three image tables.
+    """Classify V4 text tracks in at most two image tables.
 
     Gemini receives context and crop images plus track IDs. It returns only a
     verdict, category, and confidence for each track ID. Geometry remains local.
+
+    Budget: max 2 requests, max 13 tracks per table = max 26 candidates.
+    Caller must ensure candidates ≤ 26. Overflow is not silently handled here.
     """
 
     def __init__(
@@ -46,6 +49,13 @@ class CropBatchClassifierV21:
         self.job_id = job_id
         self.run_id = run_id
 
+    def _resolve_client(self) -> Any:
+        from src.infrastructure.gemini.runtime import GeminiRuntime
+
+        if isinstance(self.client, GeminiRuntime):
+            return self.client.get_client(model=self.model)
+        return self.client
+
     def classify_batch(
         self,
         tracks: List[Dict[str, Any]],
@@ -64,8 +74,14 @@ class CropBatchClassifierV21:
         if self.client is None:
             logger.error("LOUD-WARN: Gemini classifier unavailable, all tracks rejected.")
             return {}
-        if len(tracks) > MAX_CLASSIFICATION_REQUESTS * MAX_TRACKS_PER_TABLE:
-            raise RuntimeError("Classification candidate count exceeds the three-table budget.")
+        capacity = MAX_CLASSIFICATION_REQUESTS * MAX_TRACKS_PER_TABLE
+        if len(tracks) > capacity:
+            raise RuntimeError(
+                f"Classification candidate count ({len(tracks)}) exceeds "
+                f"V4 budget ({capacity} = {MAX_CLASSIFICATION_REQUESTS} tables × "
+                f"{MAX_TRACKS_PER_TABLE} tracks/table). "
+                "Caller must tighten cheap filter before invoking classifier."
+            )
 
         self.requests_sent = 0
         self.retry_count = 0
@@ -92,10 +108,10 @@ class CropBatchClassifierV21:
             payload = parse_json(response.text)
         except Exception as exc:
             logger.warning("LOUD-WARN: malformed Gemini response for %s: %s", request_id, exc)
-            return self._retry_once(tracks, proposal_bundle, table_number, request_id)
+            return {}
         if not isinstance(payload, list):
             logger.warning("LOUD-WARN: Gemini response for %s is not a JSON list", request_id)
-            return self._retry_once(tracks, proposal_bundle, table_number, request_id)
+            return {}
         decisions = {
             item.get("track_id"): item
             for item in payload
@@ -119,43 +135,9 @@ class CropBatchClassifierV21:
             }
         return result
 
-    def _retry_once(
-        self, tracks: List[Dict[str, Any]], proposal_bundle: Any, table_number: int, request_id: str
-    ) -> Dict[str, Dict[str, Any]]:
-        if self.retry_count >= 1 or self.requests_sent >= self.budget_limit:
-            logger.error("LOUD-WARN: malformed Gemini response remains unresolved for %s", request_id)
-            return {}
-        self.retry_count += 1
-        parts = self._build_v4_prompt_parts(tracks, proposal_bundle)
-        response = self._request(parts, f"{request_id}_retry")
-        self.requests_sent += 1
-        response_ref = self._write_response(table_number, response.text, retry=True)
-        try:
-            from src.infrastructure.gemini.structured_output import parse_json
-            payload = parse_json(response.text)
-        except Exception as exc:
-            logger.error("LOUD-WARN: retry response is malformed: %s", exc)
-            return {}
-        if not isinstance(payload, list):
-            return {}
-        values = {item.get("track_id"): item for item in payload if isinstance(item, dict)}
-        return {
-            track["track_id"]: {
-                "is_subtitle": values[track["track_id"]]["is_subtitle"],
-                "category": str(values[track["track_id"]].get("category", "other")),
-                "confidence": values[track["track_id"]].get("confidence"),
-                "model": self.model,
-                "response_ref": response_ref,
-                "cache_hit": bool(getattr(response, "cache_hit", False)),
-            }
-            for track in tracks
-            if isinstance(values.get(track["track_id"]), dict)
-            and isinstance(values[track["track_id"]].get("is_subtitle"), bool)
-        }
-
     def _request(self, parts: List[Dict[str, Any]], request_id: str) -> Any:
         from src.infrastructure.gemini.contracts import GeminiRequest
-        return self.client.generate_content(
+        return self._resolve_client().generate_content(
             GeminiRequest(
                 contents=[{"parts": parts}],
                 model=self.model,

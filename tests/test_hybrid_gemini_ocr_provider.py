@@ -6,6 +6,7 @@ import os
 
 from src.domain.entities.frame import Frame
 from src.domain.entities.segment import Segment
+from src.domain.entities.subtitle_region import SubtitleRegion
 from src.infrastructure.providers.ocr.hybrid_gemini_ocr_provider import HybridGeminiOCRProvider
 
 class FakeProposal:
@@ -211,3 +212,59 @@ def test_short_bottom_track_routes_to_semantic_verifier(tmp_path):
 
     assert verifier.calls == 1
     assert len(segments) == 1
+
+
+def test_v4_confirmed_tracks_transcribed_in_one_request(tmp_path):
+    img_path = tmp_path / "frame.png"
+    cv2.imwrite(str(img_path), np.zeros((720, 1280, 3), dtype=np.uint8))
+    frames = [Frame(timestamp=1.0, image_path=str(img_path))]
+    regions = [
+        SubtitleRegion(
+            start_time=1.0, end_time=2.0, x=0.1, y=0.8, width=0.5, height=0.1,
+            confidence=0.9, track_id="T003"
+        ),
+        SubtitleRegion(
+            start_time=1.0, end_time=2.0, x=0.2, y=0.8, width=0.4, height=0.1,
+            confidence=0.9, track_id="T006"
+        )
+    ]
+
+    class MockClientResponse:
+        def __init__(self, text):
+            self.text = text
+
+    class MockClient:
+        def __init__(self):
+            self.requests = []
+
+        def generate_content(self, req, use_cache=False):
+            self.requests.append(req)
+            return MockClientResponse('[{"track_id":"T003","text":"transcription 3"},{"track_id":"T006","text":"transcription 6"}]')
+
+    class FakeVerifierWithClient(FakeVerifier):
+        def __init__(self):
+            super().__init__({})
+            self.client = MockClient()
+            self._model = "gemini-3.5-flash-lite"
+
+        def _resolve_client(self):
+            return self.client
+
+    verifier = FakeVerifierWithClient()
+    provider = HybridGeminiOCRProvider(
+        proposal_provider=None,
+        semantic_verifier=verifier
+    )
+
+    segments = provider.read_confirmed_tracks(regions, frames, 1280, 720)
+
+    assert len(verifier.client.requests) == 1
+    req = verifier.client.requests[0]
+    assert req.request_id == "confirmed_track_ocr_batch"
+    assert req.source_kind == "confirmed_track_ocr_v4"
+
+    assert len(segments) == 2
+    assert segments[0].id == "ocr_T003"
+    assert segments[0].text == "transcription 3"
+    assert segments[1].id == "ocr_T006"
+    assert segments[1].text == "transcription 6"

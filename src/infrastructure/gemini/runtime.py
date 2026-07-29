@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RuntimeConfig:
+    max_live_requests: int = 0
     api_key: Optional[str] = None
     default_model: str = DEFAULT_MODEL
     cache_dir: Optional[str] = None
@@ -175,6 +176,7 @@ class GeminiRuntime:
         client = self._clients.get(cache_key)
         if client is None:
             client = GeminiClient(
+                max_live_requests=self._config.max_live_requests,
                 model=model,
                 api_key=api_key or self._config.api_key,
                 scheduler=self._scheduler,

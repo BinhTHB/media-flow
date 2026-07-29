@@ -96,6 +96,7 @@ class ProviderFactory:
                     rpd_cap=getattr(config, "rpd_cap", options.get("rpd_cap")),
                     max_concurrency=getattr(config, "direct_video_max_in_flight_requests", getattr(config, "max_concurrency", 1)),
                     max_retries=0,
+                    max_live_requests=getattr(config, "max_live_requests", 4),
                     ledger_path=getattr(config, "ledger_path", options.get("ledger_path", "debug/gemini_request_ledger.json")),
                     min_request_spacing_seconds=max(
                         60.0 / getattr(config, "direct_video_active_rpm", 15),

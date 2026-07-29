@@ -103,8 +103,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outline", type=float, help="Outline width override")
     parser.add_argument("--shadow", type=float, help="Shadow offset override")
     parser.add_argument("--margin-v", type=int, help="Vertical margin override")
-
-    parser.add_argument("--use-v21-pipeline", action="store_true", help="Enable V2.1 pipeline")
     return parser
 
 

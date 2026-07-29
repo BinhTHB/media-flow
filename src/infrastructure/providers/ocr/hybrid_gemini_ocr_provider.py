@@ -44,6 +44,7 @@ class HybridGeminiOCRProvider(OCRProvider):
         self._track_max_gap_frames = track_max_gap_frames
         self._crop_batch_classifier = crop_batch_classifier
         self.proposal_bundle: ProposalBundle | None = None
+        self.confirmed_track_ocr_requests = 0
 
     def set_speech_segments(
         self, speech_segments: list[Any], video_duration_seconds: float
@@ -62,14 +63,22 @@ class HybridGeminiOCRProvider(OCRProvider):
         video_width: int,
         video_height: int,
     ) -> List[Segment]:
-        """Transcribe only geometry belonging to already confirmed track IDs."""
+        """Transcribe all confirmed tracks with exactly one Gemini request."""
         if not regions or not frames or self._semantic_verifier is None:
             return []
         by_track: Dict[str, List[SubtitleRegion]] = {}
         for region in regions:
             if region.track_id:
                 by_track.setdefault(region.track_id, []).append(region)
-        segments: List[Segment] = []
+        parts: list[dict[str, Any]] = [{
+            "text": (
+                "Transcribe each confirmed subtitle crop exactly. Return only a JSON "
+                "array with one object per readable crop: "
+                '[{"track_id":"T001","text":"string"}]. '
+                "Do not classify, translate, or return coordinates."
+            )
+        }]
+        crops: Dict[str, tuple[List[SubtitleRegion], int, int, int, int]] = {}
         for track_id, track_regions in by_track.items():
             region = track_regions[len(track_regions) // 2]
             frame = min(frames, key=lambda item: abs(item.timestamp - region.start_time))
@@ -85,28 +94,47 @@ class HybridGeminiOCRProvider(OCRProvider):
             ok, encoded = cv2.imencode(".png", image[y1:y2, x1:x2])
             if not ok:
                 continue
-            try:
-                from src.infrastructure.gemini.contracts import GeminiRequest
-                from src.infrastructure.gemini.structured_output import parse_json
+            parts.extend([
+                {"text": f"track_id={track_id}"},
+                {
+                    "inline_data": {
+                        "mime_type": "image/png",
+                        "data": base64.b64encode(encoded.tobytes()).decode("ascii"),
+                    }
+                },
+            ])
+            crops[track_id] = (track_regions, x1, y1, x2, y2)
+        if not crops:
+            return []
+        try:
+            from src.infrastructure.gemini.contracts import GeminiRequest
+            from src.infrastructure.gemini.structured_output import parse_json
 
-                response = self._semantic_verifier._resolve_client().generate_content(
-                    GeminiRequest(
-                        contents=[{"parts": [
-                            {"text": "Transcribe this confirmed subtitle crop exactly. Return only JSON: {\"text\":\"string\"}. Do not classify it or return coordinates."},
-                            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(encoded.tobytes()).decode("ascii")}},
-                        ]}],
-                        model=self._semantic_verifier._model,
-                        generation_config={"temperature": 0.0},
-                        request_id=f"ocr_{track_id}",
-                        source_kind="confirmed_track_ocr_v4",
-                        api_surface="generate_content",
-                    ),
-                    use_cache=False,
-                )
-                payload = parse_json(response.text)
-            except Exception:
-                continue
-            text = payload.get("text") if isinstance(payload, dict) else None
+            response = self._semantic_verifier._resolve_client().generate_content(
+                GeminiRequest(
+                    contents=[{"parts": parts}],
+                    model=self._semantic_verifier._model,
+                    generation_config={"temperature": 0.0},
+                    request_id="confirmed_track_ocr_batch",
+                    source_kind="confirmed_track_ocr_v4",
+                    api_surface="generate_content",
+                ),
+                use_cache=False,
+            )
+            payload = parse_json(response.text)
+            self.confirmed_track_ocr_requests += 1
+        except Exception:
+            return []
+        texts = {
+            item.get("track_id"): item.get("text")
+            for item in payload
+            if isinstance(item, dict)
+            and isinstance(item.get("track_id"), str)
+            and isinstance(item.get("text"), str)
+        } if isinstance(payload, list) else {}
+        segments: List[Segment] = []
+        for track_id, (track_regions, x1, y1, x2, y2) in crops.items():
+            text = texts.get(track_id)
             if not isinstance(text, str) or not text.strip():
                 continue
             segments.append(Segment(

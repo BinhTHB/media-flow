@@ -17,6 +17,8 @@ from src.infrastructure.benchmark.hybrid_subtitle.core import build_tracks, grou
 from src.infrastructure.benchmark.hybrid_subtitle.pixel_variance_discriminator import PixelVarianceDiscriminator
 
 logger = logging.getLogger(__name__)
+MAX_CLASSIFICATION_CANDIDATES = 26
+OVERFLOW_BAND_GATE_THRESHOLD = 0.80
 
 
 def _clamp01(value: float) -> float:
@@ -48,10 +50,9 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         semantic_verifier: Optional[Any] = None,
         classifier: Optional[Any] = None,
         crop_batch_classifier: Optional[Any] = None,
-        use_v21_pipeline: bool = False,
         decision_store: DecisionStore | None = None,
     ) -> None:
-        del bottom_ratio_threshold, semantic_verifier, classifier, use_v21_pipeline
+        del bottom_ratio_threshold, semantic_verifier, classifier
         self._weights = weights
         self._conf = conf
         self._iou = iou
@@ -92,6 +93,27 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         if not tracks:
             return []
         candidates = self._cheap_filter(tracks, bundle, height)
+        if len(candidates) > MAX_CLASSIFICATION_CANDIDATES:
+            logger.warning(
+                "V4 candidate overflow: %d candidates exceed capacity %d. "
+                "Reapplying cheap filter with deterministic bottom-band threshold %.2f.",
+                len(candidates),
+                MAX_CLASSIFICATION_CANDIDATES,
+                OVERFLOW_BAND_GATE_THRESHOLD,
+            )
+            candidates = self._cheap_filter(
+                tracks,
+                bundle,
+                height,
+                band_gate_threshold=OVERFLOW_BAND_GATE_THRESHOLD,
+            )
+        if len(candidates) > MAX_CLASSIFICATION_CANDIDATES:
+            raise RuntimeError(
+                f"V4 candidate overflow: {len(candidates)} candidates remain after "
+                f"deterministic bottom-band tightening to "
+                f"y1_norm >= {OVERFLOW_BAND_GATE_THRESHOLD:.2f}; capacity is "
+                f"{MAX_CLASSIFICATION_CANDIDATES}. Refusing to drop candidates."
+            )
         if not candidates:
             return []
         if self._crop_batch_classifier is None:
@@ -153,19 +175,28 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
         return build_tracks(groups, iou_threshold=self._track_iou_threshold, max_gap_frames=self._track_max_gap_frames) if groups else []
 
     def _cheap_filter(
-        self, tracks: List[Dict[str, Any]], bundle: ProposalBundle, height: int
+        self,
+        tracks: List[Dict[str, Any]],
+        bundle: ProposalBundle,
+        height: int,
+        band_gate_threshold: float | None = None,
     ) -> List[Dict[str, Any]]:
+        threshold = (
+            self._band_gate_threshold
+            if band_gate_threshold is None
+            else band_gate_threshold
+        )
         variance = PixelVarianceDiscriminator(self._static_variance_threshold)
         candidates: List[Dict[str, Any]] = []
         self.band_gate_ledger = []
         self.static_variance_ledger = []
         for track in tracks:
-            band_pass = passes_bottom_band(track, height, self._band_gate_threshold)
+            band_pass = passes_bottom_band(track, height, threshold)
             evidence = variance.evaluate(track, bundle)
             passed = band_pass and not evidence.rejected
             self.band_gate_ledger.append({
                 "track_id": track["track_id"], "y1_norm": track_y1_norm(track, height),
-                "threshold": self._band_gate_threshold, "passed": band_pass,
+                "threshold": threshold, "passed": band_pass,
             })
             self.static_variance_ledger.append({
                 "track_id": track["track_id"], "temporal_pixel_variance": evidence.temporal_pixel_variance,

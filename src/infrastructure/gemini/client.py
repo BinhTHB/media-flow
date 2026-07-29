@@ -50,6 +50,7 @@ class GeminiClient:
                  usage_recorder: Optional[UsageRecorder] = None,
                  file_manager: Optional[FileManager] = None,
                  role: str = MODE_ROLE_PRIMARY, timeout: float = 180.0,
+                 max_live_requests: int = 0,
                  validate_models: bool = False, job_id: Optional[str] = None) -> None:
         self._model = model
         self._job_id = job_id
@@ -60,6 +61,7 @@ class GeminiClient:
         self._cache = cache
         self._usage = usage_recorder
         self._files = file_manager
+        self._max_live_requests = max_live_requests
         self._role = role
         self._timeout = timeout
         self._validate_models = validate_models
@@ -123,6 +125,19 @@ class GeminiClient:
                 resp.cache_hit = True
                 self._record_usage(request, resp, cache_hit=True, retry_count=0)
                 return resp
+
+        # Budget guard runs after cache lookup so cache hits remain free.
+        if (
+            self._max_live_requests > 0
+            and self._usage is not None
+            and self._usage.live_request_count() >= self._max_live_requests
+        ):
+            raise RuntimeError(
+                f"Gemini live request budget ({self._max_live_requests}) exhausted. "
+                f"Request rejected: source_kind={request.source_kind}, "
+                f"request_id={request.request_id}. "
+                "Increase budget or restructure pipeline to reduce Gemini calls."
+            )
 
         body = {"contents": request.contents}
         if request.generation_config is not None:

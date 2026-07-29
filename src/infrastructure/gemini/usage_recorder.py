@@ -115,6 +115,10 @@ class UsageRecorder:
                     out[key] += agg[key]
             return out
 
+    def live_request_count(self) -> int:
+        with self._lock:
+            return sum(1 for record in self._records if not record.cache_hit)
+
     def by_model(self, model: str) -> Dict[str, int]:
         with self._lock:
             return dict(self._by_model.get(model, {}))

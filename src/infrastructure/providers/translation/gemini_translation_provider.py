@@ -24,7 +24,7 @@ class GeminiTranslationProvider(TranslationProvider):
         if not segments:
             return []
 
-        chunk_size = 15
+        chunk_size = 100
         translated_texts: List[str] = []
         for i in range(0, len(segments), chunk_size):
             chunk = segments[i : i + chunk_size]

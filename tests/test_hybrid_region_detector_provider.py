@@ -1,5 +1,6 @@
 ﻿import cv2
 import numpy as np
+import pytest
 
 from src.application.services.mask_authority import DecisionStore
 from src.domain.entities.frame import Frame
@@ -142,3 +143,41 @@ def test_v4_classifier_failure_fails_closed(tmp_path):
     provider = _provider(tmp_path, FakeProposalProvider([300, 620, 900, 700]), BrokenClassifier())
 
     assert provider.detect_regions(frames) == []
+
+
+def test_v4_overflow_tightening_recovers_or_fails(tmp_path):
+    frames = _frames(tmp_path)
+    classifier = FakeClassifier()
+    provider = _provider(
+        tmp_path, FakeProposalProvider([100, 620, 300, 700]), classifier
+    )
+    tracks = [
+        {
+            "track_id": f"T{index:03d}",
+            "mean_detector_confidence": 0.9,
+            "groups": [{
+                "frame_index": 0,
+                "union_bbox_xyxy": [100, 620, 300, 700],
+            }],
+        }
+        for index in range(27)
+    ]
+    provider._build_tracks = lambda _detections: tracks
+    filter_thresholds = []
+
+    def cheap_filter(_tracks, _bundle, _height, band_gate_threshold=None):
+        filter_thresholds.append(band_gate_threshold)
+        return tracks if band_gate_threshold is None else tracks[:20]
+
+    provider._cheap_filter = cheap_filter
+    regions = provider.detect_regions(frames)
+    assert len(regions) == 20
+    assert filter_thresholds == [None, 0.80]
+
+    bad_provider = _provider(
+        tmp_path, FakeProposalProvider([100, 620, 300, 700]), classifier
+    )
+    bad_provider._build_tracks = lambda _detections: tracks
+    bad_provider._cheap_filter = lambda *_args, **_kwargs: tracks
+    with pytest.raises(RuntimeError, match="V4 candidate overflow"):
+        bad_provider.detect_regions(frames)
