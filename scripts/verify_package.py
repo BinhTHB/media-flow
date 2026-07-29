@@ -289,25 +289,25 @@ def verify(zip_path: Path, round_num: int) -> int:
                             # Replace to restore the templated placeholder ZIP bytes
                             zip_bytes[idx : idx + 64] = unique_placeholder_bytes
                             
-                            # Recalculate Central Directory & Local File Header CRC value on the templated report bytes
-                            templated_report_data = dict(report_data)
-                            templated_report_data["sha256"] = "PLACEHOLDER_SHA256_HASH_R35_ZIP_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-                            placeholder_crc = zlib.crc32(json.dumps(templated_report_data, indent=2).encode("utf-8"))
+                            # Extract original report decompressed bytes
+                            original_report_bytes = zf.read(package_report_path)
+                            templated_report_bytes = original_report_bytes.replace(reported_bytes, unique_placeholder_bytes)
+                            placeholder_crc = zlib.crc32(templated_report_bytes)
                             
                             # Patch zip_bytes Local Header CRC
                             header_offset = zf.getinfo(package_report_path).header_offset
                             struct.pack_into("<I", zip_bytes, header_offset + 14, placeholder_crc)
                             
                             # Patch zip_bytes Central Directory Entry CRC
-                            offset = zf.start_dir
                             target = package_report_path.encode("utf-8")
-                            while zip_bytes[offset : offset + 4] == b"PK\x01\x02":
+                            offset = zip_bytes.find(b"PK\x01\x02")
+                            while offset != -1:
                                 name_len, extra_len, comment_len = struct.unpack_from("<HHH", zip_bytes, offset + 28)
                                 name_start = offset + 46
-                                if bytes(zip_bytes[name_start : name_start + name_len]) == target:
+                                if zip_bytes[name_start : name_start + name_len] == target:
                                     struct.pack_into("<I", zip_bytes, offset + 16, placeholder_crc)
                                     break
-                                offset = name_start + name_len + extra_len + comment_len
+                                offset = zip_bytes.find(b"PK\x01\x02", offset + 1)
                             
                             computed_hash = hashlib.sha256(zip_bytes).hexdigest()
                             hash_matches = (reported_zip_hash.lower() == computed_hash)

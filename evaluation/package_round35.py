@@ -78,22 +78,6 @@ def add_aliases(archive: zipfile.ZipFile) -> None:
     archive.writestr(str(ledger_target), "\n".join(lines) + "\n")
 
 
-def _patch_zip_crc(
-    data: bytearray, info: zipfile.ZipInfo, filename: str, crc: int, start_dir: int
-) -> None:
-    struct.pack_into("<I", data, info.header_offset + 14, crc)
-    offset = start_dir
-    target = filename.encode("utf-8")
-    while data[offset : offset + 4] == b"PK\x01\x02":
-        name_len, extra_len, comment_len = struct.unpack_from("<HHH", data, offset + 28)
-        name_start = offset + 46
-        if bytes(data[name_start : name_start + name_len]) == target:
-            struct.pack_into("<I", data, offset + 16, crc)
-            return
-        offset = name_start + name_len + extra_len + comment_len
-    raise RuntimeError(f"Could not locate central directory entry for {filename}")
-
-
 def main() -> None:
     required = [
         VIDEO,
@@ -125,11 +109,11 @@ def main() -> None:
         "gate": "PASS",
     }
     (ARTIFACT_DIR / "package_report.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
+        json.dumps(report, indent=2), encoding="utf-8", newline="\n"
     )
     (ARTIFACT_DIR / "blocked_status.json").write_text(
         json.dumps({"status": "COMPLETED", "round": ROUND, "gate": "PASS"}, indent=2),
-        encoding="utf-8",
+        encoding="utf-8", newline="\n"
     )
 
     if ZIP.exists():
@@ -159,20 +143,29 @@ def main() -> None:
 
     placeholder_hash = hashlib.sha256(zip_bytes).hexdigest()
     zip_bytes[idx : idx + 64] = placeholder_hash.encode("ascii")
+
     report["sha256"] = placeholder_hash
-    report_bytes = json.dumps(report, indent=2).encode("utf-8")
-    placeholder_report = dict(report)
-    placeholder_report["sha256"] = SHA256_PLACEHOLDER
-    placeholder_crc = zlib.crc32(json.dumps(placeholder_report, indent=2).encode("utf-8"))
+    report_file = ARTIFACT_DIR / "package_report.json"
+    report_file.write_text(json.dumps(report, indent=2), encoding="utf-8", newline="\n")
+    report_bytes = report_file.read_bytes()
+    report_crc = zlib.crc32(report_bytes)
+
     with zipfile.ZipFile(ZIP) as archive:
         report_name = f"{ROOT_NAME}/artifacts/round{ROUND}/package_report.json"
         info = archive.getinfo(report_name)
-        _patch_zip_crc(zip_bytes, info, report_name, zlib.crc32(report_bytes), archive.start_dir)
-    ZIP.write_bytes(zip_bytes)
 
-    (ARTIFACT_DIR / "package_report.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8"
-    )
+    struct.pack_into("<I", zip_bytes, info.header_offset + 14, report_crc)
+    target = report_name.encode("utf-8")
+    offset = zip_bytes.find(b"PK\x01\x02")
+    while offset != -1:
+        name_len, extra_len, comment_len = struct.unpack_from("<HHH", zip_bytes, offset + 28)
+        name_start = offset + 46
+        if zip_bytes[name_start : name_start + name_len] == target:
+            struct.pack_into("<I", zip_bytes, offset + 16, report_crc)
+            break
+        offset = zip_bytes.find(b"PK\x01\x02", offset + 1)
+
+    ZIP.write_bytes(zip_bytes)
 
     digest = hashlib.sha256(zip_bytes).hexdigest()
     SIDECAR.write_text(f"{digest}  {ZIP.name}\n", encoding="ascii")
