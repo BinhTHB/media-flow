@@ -15,6 +15,9 @@ class DecisionStore:
         self.run_id = run_id
         self.path = Path(path) if path else None
         self._records: dict[str, dict[str, Any]] = {}
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text("", encoding="utf-8")
 
     def record(
         self,

@@ -273,13 +273,28 @@ def verify(zip_path: Path, round_num: int) -> int:
                         print(f"        current SHA: {current_sha}")
 
                     gate_path = f"{artifacts_prefix}offline_gate_r{round_num}.json"
-                    gate_match = False
+                    gate_provenance_match = False
                     if gate_path in names:
                         gate_data = json.loads(zf.read(gate_path).decode("utf-8"))
-                        gate_match = gate_data.get("git_sha", "") == report_sha
+                        gate_executed_at = gate_data.get("gate_executed_at_git_sha", "")
+                        gate_packaged_at = gate_data.get("packaged_at_git_sha", "")
+                        report_gate_executed_at = report_data.get(
+                            "gate_executed_at_git_sha", ""
+                        )
+                        report_gate_packaged_at = report_data.get(
+                            "gate_packaged_at_git_sha", ""
+                        )
+                        gate_provenance_match = (
+                            bool(gate_executed_at)
+                            and bool(gate_packaged_at)
+                            and gate_data.get("git_sha", "") == gate_executed_at
+                            and gate_executed_at == report_gate_executed_at
+                            and gate_packaged_at == report_gate_packaged_at
+                            and gate_packaged_at == report_sha
+                        )
                     r_gate = _check(
-                        "offline gate git_sha matches package_report git_sha",
-                        gate_match,
+                        "offline gate retains executed-at SHA and matches package SHA provenance",
+                        gate_provenance_match,
                     )
                     
                     # 2. Output verification matches round output flag

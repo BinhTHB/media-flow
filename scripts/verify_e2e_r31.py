@@ -10,7 +10,7 @@ Changes from r30:
   5. `reason` text in blocked_status.json is generated from the constant, not hand-written.
 
 Usage:
-    .venv/Scripts/python scripts/verify_e2e_r31.py [--video path/to/final.mp4]
+    .venv/Scripts/python scripts/verify_e2e_r31.py [--round N] [--video path/to/final.mp4]
 
 Exit code:
     0  → PASS (all checks pass)
@@ -57,14 +57,21 @@ def load_t003_bbox(gt_path: Path) -> list[int] | None:
 def main() -> None:
     # ── CLI override ──────────────────────────────────────────────
     video_path = Path(sys.argv[2]) if len(sys.argv) >= 3 and sys.argv[1] == "--video" else VIDEO
-    ass_path = Path(sys.argv[4]) if len(sys.argv) >= 5 and sys.argv[3] == "--ass" else None
+    ass_index = sys.argv.index("--ass") if "--ass" in sys.argv else None
+    ass_path = Path(sys.argv[ass_index + 1]) if ass_index is not None else None
+    round_index = sys.argv.index("--round") if "--round" in sys.argv else None
+    explicit_round = sys.argv[round_index + 1] if round_index is not None else None
     gt_path = GT_PATH
     # Resolve round from video path to avoid overwriting another round's artifact
     m = re.search(r"r(\d+)|round(\d+)", str(video_path))
-    if m:
-        rnum = m.group(1) or m.group(2)
-        artifact_dir = ROOT / "artifacts" / f"round{rnum}"
+    if explicit_round:
+        round_num = explicit_round
+        artifact_dir = ROOT / "artifacts" / f"round{round_num}"
+    elif m:
+        round_num = m.group(1) or m.group(2)
+        artifact_dir = ROOT / "artifacts" / f"round{round_num}"
     else:
+        round_num = "31"
         artifact_dir = ARTIFACT_DIR
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
@@ -195,7 +202,7 @@ def main() -> None:
         "status": status,
     }
 
-    (artifact_dir / "e2e_self_check_r31.json").write_text(
+    (artifact_dir / f"e2e_self_check_r{round_num}.json").write_text(
         json.dumps(payload, indent=2), encoding="utf-8"
     )
 

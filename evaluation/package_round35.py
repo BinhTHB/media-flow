@@ -30,9 +30,7 @@ def include(path: Path) -> bool:
     rel = path.relative_to(ROOT)
     if any(part in EXCLUDED_PARTS for part in rel.parts):
         return False
-    if rel.parts[:2] == ("artifacts", f"round{ROUND}") and any(
-        part.startswith("gate_responses") for part in rel.parts[2:]
-    ):
+    if rel == Path("artifacts") / f"round{ROUND}" / "crop_classifier_v21_ledger.jsonl":
         return False
     if path.suffix.lower() in EXCLUDED_SUFFIXES or path.name in EXCLUDED_NAMES:
         return False
@@ -99,6 +97,18 @@ def main() -> None:
     git_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
     ).strip()
+    gate_path = ARTIFACT_DIR / f"offline_gate_r{ROUND}.json"
+    gate_data = json.loads(gate_path.read_text(encoding="utf-8"))
+    gate_executed_at_git_sha = gate_data.get("git_sha")
+    if not gate_executed_at_git_sha:
+        raise RuntimeError("Offline gate is missing its executed-at git_sha.")
+    gate_data.setdefault("gate_executed_at_git_sha", gate_executed_at_git_sha)
+    gate_data["packaged_at_git_sha"] = git_sha
+    gate_path.write_text(
+        json.dumps(gate_data, indent=2),
+        encoding="utf-8",
+        newline="\n",
+    )
 
     report = {
         "round": ROUND,
@@ -107,6 +117,8 @@ def main() -> None:
         "sha256": SHA256_PLACEHOLDER,
         "sha256_scheme": "zip-template-v1",
         "git_sha": git_sha,
+        "gate_executed_at_git_sha": gate_executed_at_git_sha,
+        "gate_packaged_at_git_sha": git_sha,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "gt_v2_3": "artifacts/round28/gt_v2_3.json",
         "included": {f"round{ROUND}_output": True},

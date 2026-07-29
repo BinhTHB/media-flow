@@ -541,3 +541,35 @@ def test_orchestrator_persists_g3_artifacts_only_for_multistage_provider(
     assert orchestrator.artifact_provider.read_json(
         os.path.join(debug_dir, "g3_accepted_intervals.json")
     )[0]["text_verbatim"] == "accepted"
+
+
+def test_orchestrator_resets_debug_state_for_each_run(orchestrator):
+    job_id = "reset-test-debug-run"
+    debug_dir = orchestrator.artifact_provider.debug_dir(job_id)
+    os.makedirs(os.path.join(debug_dir, "responses"), exist_ok=True)
+    with open(os.path.join(debug_dir, "stale_report.json"), "w", encoding="utf-8") as handle:
+        handle.write("{}")
+    with open(
+        os.path.join(debug_dir, "responses", "stale_response.json"),
+        "w",
+        encoding="utf-8",
+    ) as handle:
+        handle.write("{}")
+
+    job = VideoJob(
+        job_id=job_id,
+        input_video="test.mp4",
+        source_language="zh",
+        target_language="vi",
+        features=FeatureConfig(
+            speech_to_text=True,
+            ocr=True,
+            translate=True,
+            subtitle=False,
+            render_video=False,
+        ),
+    )
+    orchestrator.execute(job)
+
+    assert not os.path.exists(os.path.join(debug_dir, "stale_report.json"))
+    assert not os.path.exists(os.path.join(debug_dir, "responses"))

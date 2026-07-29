@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from typing import Any
@@ -82,12 +83,15 @@ class JobOrchestrator:
 
     def execute(self, job: VideoJob) -> VideoJob:
         self.state_machine.transition(job, JobStatus.RUNNING)
+        debug_dir = self.artifact_provider.debug_dir(job.job_id)
+        for entry in os.scandir(debug_dir):
+            if entry.is_dir():
+                shutil.rmtree(entry.path)
+            else:
+                os.remove(entry.path)
         self.mask_decision_store = DecisionStore(
             run_id=job.job_id,
-            path=os.path.join(
-                self.artifact_provider.debug_dir(job.job_id),
-                "mask_decisions.jsonl",
-            ),
+            path=os.path.join(debug_dir, "mask_decisions.jsonl"),
         )
         speech_segments = []
         ocr_segments = []
@@ -141,7 +145,6 @@ class JobOrchestrator:
                 extracted_path = self.extract_audio_uc.execute(job.input_video)
                 final_audio = self.artifact_provider.audio_path(job.job_id)
                 if os.path.exists(extracted_path) and extracted_path != final_audio:
-                    import shutil
                     shutil.copy2(extracted_path, final_audio)
                     if not self.keep_audio:
                         try:

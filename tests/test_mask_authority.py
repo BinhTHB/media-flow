@@ -61,3 +61,22 @@ def test_positive_track_decision_renders_all_its_masks(tmp_path) -> None:
     assert all(_has_mask_provenance(region, store) for region in regions)
     ass = ASSGenerator.generate([_segment()], SubtitleStyle(), mask_regions=regions, decision_store=store)
     assert ass.count("m 0 0") == 2
+
+
+def test_decision_store_resets_state_for_each_run(tmp_path) -> None:
+    path = tmp_path / "mask_decisions.jsonl"
+    path.write_text('{"run_id":"old-run","track_id":"T001"}\n', encoding="utf-8")
+
+    store = DecisionStore("new-run", path=path)
+
+    assert path.read_text(encoding="utf-8") == ""
+    store.record(
+        track_id="T002",
+        is_subtitle=True,
+        model="gemini-3.5-flash-lite",
+        response_ref="responses/request_02.json",
+        cache_hit=False,
+    )
+    entries = [line for line in path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(entries) == 1
+    assert '"run_id": "new-run"' in entries[0]
