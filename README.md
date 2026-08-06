@@ -730,12 +730,33 @@ We unified and consolidated configurations and introduced a decoupled, factory-c
 - `ProviderRegistry.create(category, name, options)` instantiates providers dynamically.
 - `ProviderFactory` delegates entirely to `registry.create(...)`, removing all provider-specific class coupling and conditional creation blocks.
 
-## YOLO weights (`best.pt`)
+## YOLO burn-in detection
 
-- Model: YOLO11n fine-tune cho text detection dùng trong hybrid subtitle
-  benchmark (`src/infrastructure/benchmark/hybrid_subtitle/`).
-- Nguồn/quy trình train: TODO — bổ sung nguồn weights chính xác.
-- Vị trí đặt file: `./best.pt` tại root repo. File này bị gitignore
-  (`*.pt`), tuyệt đối không commit.
-- Nếu thiếu `best.pt`, các test YOLO trong
-  `tests/test_hybrid_subtitle_benchmark.py` sẽ tự skip.
+Model **YOLO26n fine-tune** (4 lớp) được dùng để phát hiện burn-in text trên
+video. Chi tiết đầy đủ xem [`docs/YOLO_INTEGRATION.md`](docs/YOLO_INTEGRATION.md).
+
+- **4 class**: `subtitle` (0), `watermark` (1), `logo` (2), `other_burn_in_text` (3).
+- **Vị trí model**: `models/yolo/best.pt`.
+- **Resolve path** (env > config > default):
+  - `MEDIA_FLOW_YOLO_WEIGHTS` (biến môi trường),
+  - `weights:` trong `config/detection.yaml`,
+  - mặc định `models/yolo/best.pt`.
+- **Config**: `config/detection.yaml` (device, imgsz, iou, threshold theo class,
+  temporal stabilization).
+- Model file bị gitignore (`*.pt`), tuyệt đối không commit.
+
+Ví dụ nhanh:
+
+```bash
+# Verify model
+python scripts/verify_yolo_model.py --device cpu
+
+# Test trên video thật (giữ audio, xuất JSONL)
+python scripts/test_video_detection.py \
+  --input input/sample5.mp4 \
+  --output outputs/detected.mp4 \
+  --show-labels --save-json --device cuda
+```
+
+Nếu thiếu `best.pt` tại `models/yolo/`, chương trình dừng với hướng dẫn rõ ràng.
+Các test YOLO sẽ tự skip khi model không tồn tại.

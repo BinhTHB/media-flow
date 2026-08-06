@@ -23,7 +23,7 @@ from src.infrastructure.gemini.runtime import GeminiRuntime, RuntimeConfig
 
 SET_NAME = "moving"
 GT_DIR = REPO_ROOT / "test_videos" / "subtitle_replacement_benchmark" / SET_NAME
-BEST_PT = REPO_ROOT / "best.pt"
+BEST_PT = REPO_ROOT / "models" / "yolo" / "best.pt"
 
 
 def _gt_key(ts: float) -> str:
@@ -139,3 +139,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

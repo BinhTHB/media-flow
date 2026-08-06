@@ -14,7 +14,7 @@ ROUND25 = ROOT / "artifacts" / "round25"
 JOB = ROOT / "output" / "round25-sample5"
 ZIP = PARENT / "media-flow-dev-v25.zip"
 EXCLUDED_PARTS = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", "frames"}
-EXCLUDED_NAMES = {".env", "config.yml", "best.pt"}
+EXCLUDED_NAMES = {".env", "config.yml", "best.pt", "models"}
 EXCLUDED_SUFFIXES = {".wav", ".pt"}
 INCLUDED_ROOTS = {"src", "tests", "scripts", "artifacts", "output"}
 

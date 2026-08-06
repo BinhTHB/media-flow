@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 @dataclass
 class BenchmarkConfig:
     enabled: bool = True
-    yolo_weights: str = "best.pt"
+    yolo_weights: str = "models/yolo/best.pt"
     input_videos: List[str] = field(default_factory=lambda: [
         'test_videos/real_mini_benchmark/sample1.mp4',
         'test_videos/real_mini_benchmark/sample2.mp4',

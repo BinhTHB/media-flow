@@ -8,6 +8,8 @@ import cv2
 from ultralytics import YOLO
 
 from src.application.dto.proposal_bundle import DecodedFrame, ProposalBundle
+from src.infrastructure.detection.paths import resolve_yolo_weights
+from src.infrastructure.detection.schemas import class_name
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +35,14 @@ def _resize_720p(image):
 # ---------------------------------------------------------------------------
 
 class YoloTextProposalProvider:
-    def __init__(self, weights_path: str,
+    def __init__(self, weights_path: str = "models/yolo/best.pt",
                  conf: float = 0.05, iou: float = 0.70,
                  imgsz: int = 1024, device: str = "cuda"):
-        self._model = YOLO(weights_path)
+        # Resolve the model path (env > config value > default under models/yolo),
+        # then load the model exactly once.
+        self._weights_path = resolve_yolo_weights(config_value=weights_path)
+        self._model = YOLO(str(self._weights_path))
+        self._class_names = {int(k): str(v) for k, v in dict(self._model.names).items()}
         self._conf = conf
         self._iou = iou
         self._imgsz = imgsz
@@ -168,6 +174,9 @@ class YoloTextProposalProvider:
                 ci = frame_counts[fi]
                 xyxy = [float(x) for x in box.xyxy[0].tolist()]
                 norm = [xyxy[0] / W, xyxy[1] / H, xyxy[2] / W, xyxy[3] / H]
+                class_id = int(box.cls[0]) if hasattr(box, "cls") and len(box.cls) else 0
+                class_names = getattr(self, "_class_names", None) or {}
+                name = class_names.get(class_id, class_name(class_id))
                 frame_detections.append({
                     "frame_index": fi,
                     "timestamp_ms": round(ts * 1000.0, 1),
@@ -176,6 +185,9 @@ class YoloTextProposalProvider:
                     "bbox_normalized": [round(v, 6) for v in norm],
                     "confidence": round(float(box.conf[0]), 4),
                     "class": "text",
+                    # New per-class info (safe for legacy consumers to ignore):
+                    "class_id": class_id,
+                    "class_name": name,
                 })
                 # Pre-extract full-res crop for this detection (STEP 0)
                 import cv2 as _cv2
@@ -236,6 +248,9 @@ class YoloTextProposalProvider:
                 ci = frame_counts[fi]
                 xyxy = [float(x) for x in box.xyxy[0].tolist()]
                 norm = [xyxy[0]/W, xyxy[1]/H, xyxy[2]/W, xyxy[3]/H]
+                class_id = int(box.cls[0]) if hasattr(box, "cls") and len(box.cls) else 0
+                class_names = getattr(self, "_class_names", None) or {}
+                name = class_names.get(class_id, class_name(class_id))
                 detections.append({
                     "frame_index": fi,
                     "timestamp_ms": round(ts, 1),
@@ -244,6 +259,8 @@ class YoloTextProposalProvider:
                     "bbox_normalized": [round(v, 6) for v in norm],
                     "confidence": round(float(box.conf[0]), 4),
                     "class": "text",
+                    "class_id": class_id,
+                    "class_name": name,
                 })
         return detections
 
@@ -268,6 +285,9 @@ class YoloTextProposalProvider:
                 ci = frame_counts[fi]
                 xyxy = [float(x) for x in box.xyxy[0].tolist()]
                 norm = [xyxy[0]/W, xyxy[1]/H, xyxy[2]/W, xyxy[3]/H]
+                class_id = int(box.cls[0]) if hasattr(box, "cls") and len(box.cls) else 0
+                class_names = getattr(self, "_class_names", None) or {}
+                name = class_names.get(class_id, class_name(class_id))
                 detections.append({
                     "frame_index": fi,
                     "timestamp_ms": round(fi * 1000.0, 1),
@@ -276,5 +296,7 @@ class YoloTextProposalProvider:
                     "bbox_normalized": [round(v, 6) for v in norm],
                     "confidence": round(float(box.conf[0]), 4),
                     "class": "text",
+                    "class_id": class_id,
+                    "class_name": name,
                 })
         return detections

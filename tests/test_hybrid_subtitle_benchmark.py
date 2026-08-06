@@ -11,8 +11,8 @@ from src.infrastructure.benchmark.hybrid_subtitle.gt_metrics import evaluate_tra
 from src.infrastructure.benchmark.hybrid_subtitle.runner import HybridSubtitleBenchmarkRunner, BenchmarkConfig
 
 requires_yolo_weights = pytest.mark.skipif(
-    not os.path.exists("best.pt"),
-    reason="requires local YOLO weights best.pt",
+    not os.path.exists("models/yolo/best.pt"),
+    reason="requires local YOLO weights models/yolo/best.pt",
 )
 
 
@@ -38,7 +38,7 @@ def test_yolo_multiple_text_and_cpu_fallback():
 
         # CPU is the explicit opt-in path for non-GPU environments.
         # GPU without CUDA raises RuntimeError (fail-loud) — not auto-fallback.
-        provider = YoloTextProposalProvider(weights_path="best.pt", conf=0.01, imgsz=320, device="cpu")
+        provider = YoloTextProposalProvider(weights_path="models/yolo/best.pt", conf=0.01, imgsz=320, device="cpu")
         assert provider._device == "cpu"
 
         dets = provider.detect(vid_path)
@@ -57,7 +57,7 @@ def test_yolo_empty_frame_no_crash():
         vid_path = os.path.join(tmpdir, "empty.mp4")
         create_synthetic_video(vid_path, [frame, frame])
 
-        provider = YoloTextProposalProvider(weights_path="best.pt", conf=0.5, imgsz=320, device="cpu")
+        provider = YoloTextProposalProvider(weights_path="models/yolo/best.pt", conf=0.5, imgsz=320, device="cpu")
         dets = provider.detect(vid_path)
         # Should not crash, and detections might be empty on solid black frame
         assert isinstance(dets, list)

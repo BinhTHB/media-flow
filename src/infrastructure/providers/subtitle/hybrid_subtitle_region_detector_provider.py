@@ -34,7 +34,7 @@ class HybridSubtitleRegionDetectorProvider(SubtitleRegionDetectorProvider):
 
     def __init__(
         self,
-        weights: str = "best.pt",
+        weights: str = "models/yolo/best.pt",
         conf: float = 0.05,
         iou: float = 0.70,
         imgsz: int = 1024,

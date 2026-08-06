@@ -59,7 +59,7 @@ def _create_hybrid_gemini_ocr(options):
     model = options.get("gemini_model", DEFAULT_GEMINI_MODEL)
     verifier = GeminiTrackVerifier(runtime, model=model) if runtime else None
     proposal = YoloTextProposalProvider(
-        weights_path=options.get("weights", "best.pt"),
+        weights_path=options.get("weights", "models/yolo/best.pt"),
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
@@ -100,14 +100,14 @@ def _create_hybrid_yolo(options):
             run_id=str(options.get("run_id", "")),
         )
     proposal_provider = YoloTextProposalProvider(
-        weights_path=options.get("weights", "best.pt"),
+        weights_path=options.get("weights", "models/yolo/best.pt"),
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
         device=device,
     )
     return HybridSubtitleRegionDetectorProvider(
-        weights=options.get("weights", "best.pt"),
+        weights=options.get("weights", "models/yolo/best.pt"),
         conf=options.get("conf", 0.05),
         iou=options.get("iou", 0.70),
         imgsz=options.get("imgsz", 1024),
@@ -302,3 +302,4 @@ def register_default_providers(registry: ProviderRegistry) -> None:
     # frame_extraction
     registry.register("frame_extraction", "mock", MockFrameExtractionProvider)
     registry.register("frame_extraction", "ffmpeg", FFmpegFrameExtractionProvider)
+

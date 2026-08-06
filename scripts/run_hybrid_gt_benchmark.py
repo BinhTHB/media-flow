@@ -108,8 +108,9 @@ def run_set(set_name: str):
 
 
 def main():
-    if not (REPO_ROOT / "best.pt").exists():
-        print("ERROR: best.pt khong ton tai tai root repo. Thoat.")
+    weights_path = REPO_ROOT / "models" / "yolo" / "best.pt"
+    if not weights_path.exists():
+        print(f"ERROR: YOLO weights khong ton tai tai {weights_path}. Thoat.")
         sys.exit(1)
 
     results = []

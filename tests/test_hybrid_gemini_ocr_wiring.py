@@ -23,7 +23,7 @@ def test_factory_wires_hybrid_gemini_ocr():
     factory = ProviderFactory(registry=registry, gemini_api_key="dummy")
     provider = factory.create_ocr_provider(
         "hybrid_gemini",
-        overrides={"gemini_verify": True, "weights": "best.pt", "device": "cpu"},
+        overrides={"gemini_verify": True, "weights": "models/yolo/best.pt", "device": "cpu"},
     )
     assert isinstance(provider, HybridGeminiOCRProvider)
     assert provider._semantic_verifier is not None

@@ -1,0 +1,29 @@
+# YOLO burn-in text detection configuration.
+# Resolved model priority: MEDIA_FLOW_YOLO_WEIGHTS env > `weights` here > default.
+yolo:
+  enabled: true
+  weights: models/yolo/best.pt
+  device: auto          # auto | cpu | cuda
+  imgsz: 1280
+  iou: 0.45
+  max_det: 100
+  half: auto            # auto = enabled only on CUDA
+  agnostic_nms: false
+  verbose: false
+
+  # Per-class confidence thresholds.
+  # Low subtitle threshold helps capture subtitles that appear character-by-
+  # character or scroll quickly. Low thresholds must be paired with temporal
+  # smoothing / post-processing to limit false positives.
+  confidence:
+    subtitle: 0.15
+    watermark: 0.20
+    logo: 0.20
+    other_burn_in_text: 0.20
+
+  temporal:
+    enabled: true
+    max_gap_frames: 2
+    min_track_frames: 2
+    iou_match_threshold: 0.40
+    box_smoothing_alpha: 0.65

@@ -86,7 +86,7 @@ providers:
       language: ch
       use_gpu: true
     hybrid_gemini:
-      weights: best.pt
+      weights: models/yolo/best.pt
       conf: 0.05
       iou: 0.70
       imgsz: 1024
@@ -110,7 +110,7 @@ providers:
       use_gpu: true
       min_confidence: 0.70
     hybrid_yolo:
-      weights: best.pt
+      weights: models/yolo/best.pt
       conf: 0.05
       iou: 0.70
       imgsz: 1024
@@ -158,3 +158,4 @@ subtitle_placement:
   safe_zone_bottom: 0.95
   safe_zone_left: 0.05
   safe_zone_right: 0.95
+

@@ -18,7 +18,7 @@ VIDEO = "input/sample5.mp4"
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     provider = YoloTextProposalProvider(
-        weights_path="best.pt", conf=0.05, iou=0.70, imgsz=1024, device="cuda"
+        weights_path="models/yolo/best.pt", conf=0.05, iou=0.70, imgsz=1024, device="cuda"
     )
     bundle = provider.detect_video(VIDEO, stride=1)
     raw_detections = bundle.detections
