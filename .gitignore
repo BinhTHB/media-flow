@@ -67,6 +67,7 @@ generated/
 # Media outputs
 output/
 outputs/
+qa_inputs/
 /artifacts/
 rendered/
 exports/
