@@ -50,31 +50,56 @@ src/
 | SubtitleProvider | MockSubtitleProvider | - |
 | StorageProvider | MockStorageProvider | - |
 
-## Run end-to-end (Production Video Translation)
+## Run Policy-Driven End-to-End Media Processing
 
-Pipeline chạy thực tế từ video đầu vào qua model YOLO detect burn-in (`models/yolo/best.pt`), trích xuất text/audio, dịch tiếng Việt qua Gemini, che/thay thế chữ burn-in bằng hai kênh ASS (masks + text tiếng Việt), render video mới và mux lại âm thanh gốc.
+Pipeline xử lý video theo kiến trúc **Class-Aware Policy-Driven Architecture**:
+`Video Input` → `YOLO 4-class Detection` → `Class-Aware Spatial-Temporal Tracking` → `Action Policy Engine` → `Rendering Plan` → `Lazy Enrichment` → `Action Video Renderer` → `Final MP4`.
 
-### Lệnh chạy E2E chính thức
+### Lệnh chạy E2E chính thức (Default: Blur-all 100% Offline)
 
 ```powershell
 .venv\Scripts\python.exe scripts/run_e2e.py `
-  --input test_videos\real_mini_benchmark\sample5.mp4 `
-  --output outputs\e2e_sample5.mp4 `
+  --input test_videos
+eal_mini_benchmark\sample5.mp4 `
+  --output outputs\e2e_blur_sample5.mp4 `
+  --preset blur-all `
+  --device auto
+```
+
+### Lệnh dịch phụ đề sang tiếng Việt (Translate-subtitle preset)
+
+```powershell
+.venv\Scripts\python.exe scripts/run_e2e.py `
+  --input test_videos
+eal_mini_benchmark\sample5.mp4 `
+  --output outputs\e2e_translate_sample5.mp4 `
+  --preset translate-subtitle `
+  --device auto
+```
+
+### Chạy với cấu hình policy tùy chỉnh (Custom Policy YAML)
+
+```powershell
+.venv\Scripts\python.exe scripts/run_e2e.py `
+  --input test_videos
+eal_mini_benchmark\sample5.mp4 `
+  --output outputs\e2e_custom_sample5.mp4 `
+  --policy config\custom_policy.yaml `
   --device auto
 ```
 
 ### Tham số E2E
 - `--input`, `-i`: Đường dẫn video đầu vào thực tế (bắt buộc).
 - `--output`, `-o`: Đường dẫn video đầu ra hoàn chỉnh (bắt buộc).
+- `--preset`: Preset chính sách có sẵn (`blur-all` mặc định, `translate-subtitle`, `preserve-all`).
+- `--policy`: Đường dẫn file cấu hình YAML policy tùy chỉnh.
 - `--device`: Thiết bị tính toán `auto`, `cuda` hoặc `cpu` (mặc định: `auto`).
-- `--speech-provider`: Provider STT: `faster-whisper` (mặc định) hoặc `gemini_audio`.
-- `--translation-provider`: Provider dịch: `gemini` (mặc định) hoặc `openai`.
-- `--placement-mode`: Chế độ đặt phụ đề/che chữ: `replace_source_subtitle` (mặc định), `avoid_source_subtitle`.
 
 ### Yêu cầu & Model
-- **YOLO Weights**: `models/yolo/best.pt` (tự động load 4 class: subtitle, watermark, logo, other_burn_in_text).
+- **YOLO Weights**: `models/yolo/best.pt` (nạp 4 class: subtitle, watermark, logo, other_burn_in_text).
 - **FFmpeg & FFprobe**: Đã cài đặt trong PATH hệ thống.
-- **Biến môi trường**: `GEMINI_API_KEY` đặt trong file `.env` ở thư mục gốc repo.
+- **Biến môi trường**: `GEMINI_API_KEY` chỉ bắt buộc khi action của policy là `replace_text`. Chế độ `blur-all` mặc định chạy 100% offline mà không cần API Key.
+- **Artifacts**: Mỗi job xuất kế hoạch hành động máy đọc được tại `outputs/action_plan.json`.
 
 ---
 
