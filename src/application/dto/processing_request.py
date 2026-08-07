@@ -8,6 +8,7 @@ by configuring typed data structures without knowing internal provider details.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +39,15 @@ class ProcessingRequest:
             return get_preset_policy(self.preset)
         return PRESET_BLUR_ALL
 
+    def to_dict(self) -> Dict[str, Any]:
+        result = asdict(self)
+        if self.policy_config is not None:
+            result["policy_config"] = self.policy_config.to_dict()
+        return result
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)
+
 
 @dataclass
 class ProcessingResult:
@@ -49,10 +59,16 @@ class ProcessingResult:
     fps: float = 0.0
     resolution: str = ""
     detections_summary: Dict[str, int] = field(default_factory=dict)
+    tracks_summary: Dict[str, int] = field(default_factory=dict)
     actions_summary: Dict[str, int] = field(default_factory=dict)
     action_plan_path: Optional[str] = None
+    workspace_dir: Optional[str] = None
     timings: Dict[str, float] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
+    error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    def to_json(self, indent: int = 2) -> str:
+        return json.dumps(self.to_dict(), indent=indent, ensure_ascii=False)

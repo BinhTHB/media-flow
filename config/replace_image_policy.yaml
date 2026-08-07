@@ -1,0 +1,16 @@
+classes:
+  subtitle:
+    enabled: true
+    action: blur
+  watermark:
+    enabled: true
+    action: blur
+  logo:
+    enabled: true
+    action: replace_image
+    image_asset_path: assets/test_logo.png
+    fit: contain
+    opacity: 0.9
+  other_burn_in_text:
+    enabled: true
+    action: blur

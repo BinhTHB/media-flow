@@ -1,121 +1,128 @@
-# Backend Processing Architecture Specification
+# Backend Processing Architecture & API Contract Specification
 
 ## Overview
 
-This document specifies the **Policy-Driven Media Processing Architecture** of `media-flow`.
-The system is built as a clean, extensible, class-aware pipeline that decouples object detection from business actions and rendering mechanisms.
+This specification defines the **Policy-Driven Media Processing Architecture** and **Frontend-Ready Backend API Contract** for `media-flow`.
+
+The backend is completely decoupled from UI logic. A frontend or REST API wrapper invokes the backend via strongly-typed contract objects (`ProcessingRequest` $\rightarrow$ `ProcessingResult`) without needing any knowledge of YOLO, Gemini, OpenCV, or FFmpeg internals.
 
 ```text
 Input Video
     ↓
 YOLO 4-class Detector (models/yolo/best.pt)
     ↓
-Class-Aware Spatial-Temporal Tracker
+Class-Aware Spatial-Temporal Tracker (Preserves class_id & class_name: 0=subtitle, 1=watermark, 2=logo, 3=other_burn_in_text)
     ↓
 Action Policy Engine (ProcessingPolicyConfig)
     ↓
-Action Plan / RenderingPlan (outputs/<job>/action_plan.json)
+Job Workspace Isolation (output/jobs/<job_id>/ containing job.json, detections.json, tracks.json, action_plan.json)
     ↓
-Lazy Enrichment Service (OCR / STT / Translation / Asset Resolution)
+Lazy Enrichment Service (OCR / STT / Gemini Translate / Asset Resolution - ONLY when requested)
     ↓
-Action Video Renderer (Pixel Blur / Solid Cover / Image Replace / Text Replace)
+Action Video Renderer (Real Gaussian Pixel Blur / Solid Cover / Image Replace / Text Replace)
     ↓
 Audio Stream Muxing & Invariant Validation
     ↓
-Final MP4 Video
+Final Output MP4 Video
 ```
 
 ---
 
-## 1. Class-Aware Canonical Detections & Tracking
+## 1. Backend API Contract (`ProcessingRequest` & `ProcessingResult`)
 
-The detector (`models/yolo/best.pt`) emits 4 canonical classes:
-- `0`: `subtitle`
-- `1`: `watermark`
-- `2`: `logo`
-- `3`: `other_burn_in_text`
-
-Unlike legacy pipelines that collapsed detections into generic `"text"`, the policy engine preserves `class_id` and `class_name` through every stage of processing. The `ClassAwareTracker` tracks spatial-temporal continuity across frame boundaries for each class independently without applying restrictive coordinate gates.
-
----
-
-## 2. Processing Actions & Behavior Matrix
-
-The `ActionPolicyEngine` evaluates every tracked object against configured class policies.
-
-### Supported Processing Actions
-
-| Action | Execution Behavior | Expensive Dependencies Required |
-|---|---|---|
-| `blur` | Real Gaussian pixel blur over bounding box regions per frame | None (100% Offline) |
-| `solid_cover` | Solid color rectangle fill (`solid_color_hex`) over regions | None (100% Offline) |
-| `replace_image` | Alpha-composited PNG/JPEG asset overlay fitted over bbox | Image Asset File |
-| `replace_text` | OCR text extraction, translation, and Unicode text rendering | Gemini OCR & Gemini Translation |
-| `preserve` | Keeps original video pixels completely untouched | None (100% Offline) |
-
-### Class Action Matrix
-
-| YOLO Class | Default Action (`blur-all`) | `translate-subtitle` Preset | Custom Action Options |
-|---|---|---|---|
-| `subtitle` | `blur` | `replace_text` (target=`vi`) | `blur`, `solid_cover`, `replace_text`, `replace_image`, `preserve` |
-| `watermark` | `blur` | `preserve` | `blur`, `solid_cover`, `replace_image`, `replace_text`, `preserve` |
-| `logo` | `blur` | `preserve` | `blur`, `solid_cover`, `replace_image`, `preserve` |
-| `other_burn_in_text` | `blur` | `preserve` | `blur`, `solid_cover`, `replace_text`, `replace_image`, `preserve` |
-
----
-
-## 3. Presets and Configuration
-
-### Pre-built Presets
-- `blur-all` (Default): All 4 classes mapped to `blur`. Runs fully offline without API keys.
-- `translate-subtitle`: `subtitle` mapped to `replace_text`, all other classes set to `preserve`.
-- `preserve-all`: All classes set to `preserve`.
-
-### Custom Policy YAML Example (`config/custom_policy.yaml`)
-
-```yaml
-classes:
-  subtitle:
-    enabled: true
-    action: replace_text
-    confidence_threshold: 0.15
-    text_source: ocr
-    target_language: vi
-  watermark:
-    enabled: true
-    action: blur
-    blur_strength: 30.0
-    padding_px: 6
-  logo:
-    enabled: true
-    action: replace_image
-    image_asset_path: assets/brand_logo.png
-    opacity: 0.9
-  other_burn_in_text:
-    enabled: true
-    action: solid_cover
-    solid_color_hex: "#000000"
-```
-
----
-
-## 4. Application Boundary & Frontend Readiness
-
-The application exposes a single unified entry service:
+### `ProcessingRequest`
+Exposes all frontend-tunable business parameters with sensible defaults:
 
 ```python
-from src.application.dto.processing_request import ProcessingRequest
-from src.infrastructure.services.media_processing_service import MediaProcessingService
-
-request = ProcessingRequest(
-    input_video="input.mp4",
-    output_video="output.mp4",
-    preset="blur-all",  # or custom policy_config / policy_file
-    device="auto",
-)
-
-service = MediaProcessingService()
-result = service.process_video(request)
+@dataclass
+class ProcessingRequest:
+    input_video: str
+    output_video: str
+    job_id: Optional[str] = None
+    device: str = "auto"                     # auto | cuda | cpu
+    preset: Optional[str] = None             # blur-all | translate-subtitle | preserve-all
+    policy_config: Optional[ProcessingPolicyConfig] = None
+    policy_file: Optional[str] = None
+    speech_provider: str = "faster-whisper"
+    translation_provider: str = "gemini"
+    ocr_provider: str = "hybrid_gemini"
+    target_language: str = "vi"
+    overwrite: bool = True
 ```
 
-Every execution produces a structured `action_plan.json` under the output directory containing track-by-track window actions for inspection and Web UI rendering.
+### `ProcessingResult`
+Clean, JSON-serializable output summary:
+
+```python
+@dataclass
+class ProcessingResult:
+    job_id: str
+    status: str                              # SUCCESS | FAILED | BLOCKED
+    input_video_path: str
+    output_video_path: str
+    duration_sec: float
+    fps: float
+    resolution: str
+    detections_summary: Dict[str, int]
+    tracks_summary: Dict[str, int]
+    actions_summary: Dict[str, int]
+    action_plan_path: str
+    workspace_dir: str
+    timings: Dict[str, float]
+    warnings: List[str]
+    error: Optional[str] = None
+```
+
+---
+
+## 2. Job Workspace Isolation
+
+Every execution runs in an isolated workspace under `output/jobs/<job_id>/`. Multiple jobs running concurrently or sequentially will never overwrite each other's metadata artifacts:
+
+```text
+output/jobs/<job_id>/
+├── job.json            # ProcessingRequest payload & job metadata
+├── detections.json     # Canonical detections list with class_id/class_name
+├── tracks.json         # Spatial-temporal tracks list
+├── action_plan.json    # Full machine-readable rendering plan
+└── logs/               # Intermediate processing logs
+```
+
+The final processed video file is written directly to the exact path specified by `output_video`.
+
+---
+
+## 3. Disambiguation of Action Statuses (`blur`, `preserve`, `ignored`)
+
+- **`active` (`blur` / `solid_cover` / `replace_text` / `replace_image`)**: The track met all policy criteria and an explicit action will be rendered on pixels.
+- **`active` (`preserve`)**: The track met confidence thresholds, but the user policy explicitly specifies `action = "preserve"` (intentionally leave pixels untouched).
+- **`ignored`**: The track did NOT meet the class confidence threshold (`mean_confidence < confidence_threshold`) or the class was disabled (`enabled = False`). Reported as `status = "ignored"` with `reason = "below_confidence_threshold"` or `"class_disabled"`.
+
+---
+
+## 4. Text Replacement Sources (`ocr`, `stt`, `hybrid`)
+
+When `action = replace_text`:
+- **`text_source = "ocr"`**: Runs Gemini OCR on YOLO subtitle crops + Gemini Translation. STT (Whisper) is NOT loaded or executed.
+- **`text_source = "stt"`**: Extracts audio and runs Faster-Whisper STT. OCR is NOT executed. Matches speech segments to interval timestamps.
+- **`text_source = "hybrid"`**: Runs Whisper STT for audio speech AND Gemini OCR for on-screen burn-in text. Matches intervals: if OCR text is present, on-screen subtitle replacement uses OCR text while speech narration uses STT text.
+
+---
+
+## 5. Supported Processing Actions & Tunable Parameters
+
+| Action | Render Mechanism | Customizable Parameters |
+|---|---|---|
+| `blur` | Real Gaussian Pixel Blur (`cv2.GaussianBlur`) | `blur_strength` (default 25.0), `padding_px` (default 4) |
+| `solid_cover` | Solid Rectangle Fill | `solid_color_hex` (default "#000000"), `padding_px` |
+| `replace_image` | Alpha PNG/JPEG Overlay | `image_asset_path`, `fit` ("contain"/"cover"/"stretch"), `scale` (1.0), `opacity` (1.0), `z_order` |
+| `replace_text` | Unicode Text Overlay | `text_source` ("ocr"/"stt"/"hybrid"), `target_language`, `font`, `font_size`, `stroke_width`, `placement`, `background_action` |
+| `preserve` | Untouched Original Pixels | None |
+
+---
+
+## 6. Pre-built Presets
+
+- **`blur-all`** (Default): All 4 YOLO classes (`subtitle`, `watermark`, `logo`, `other_burn_in_text`) mapped to `blur`. Runs 100% offline without requiring `GEMINI_API_KEY`.
+- **`translate-subtitle`**: `subtitle` mapped to `replace_text` (target=`vi`), all other classes set to `preserve`.
+- **`preserve-all`**: All classes mapped to `preserve`.

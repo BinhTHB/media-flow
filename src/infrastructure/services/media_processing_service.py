@@ -1,7 +1,7 @@
 """
 Media Processing Service (Unified Production Application Boundary)
 
-Orchestrates the entire policy-driven video processing pipeline:
+Orchestrates the policy-driven video processing pipeline with job workspace isolation:
 YOLO 4-class Detection -> Class-Aware Tracker -> Action Policy Engine -> RenderingPlan -> Lazy Enrichment -> Action Video Renderer -> Output Validation.
 """
 
@@ -20,6 +20,7 @@ import torch
 from src.application.dto.processing_request import ProcessingRequest, ProcessingResult
 from src.application.services.action_policy_engine import ActionPolicyEngine
 from src.domain.entities.canonical_detection import CanonicalDetection, ClassAwareTrack
+from src.domain.entities.processing_policy import ProcessingPolicyConfig
 from src.domain.services.class_aware_tracker import ClassAwareTracker
 from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
 from src.infrastructure.rendering.action_video_renderer import ActionVideoRenderer
@@ -33,14 +34,24 @@ class MediaProcessingService:
         self,
         weights_path: str = "models/yolo/best.pt",
         font_path: Optional[str] = None,
+        base_workspace_dir: str = "output/jobs",
     ):
         self.weights_path = weights_path
+        self.font_path = font_path
+        self.base_workspace_dir = Path(base_workspace_dir)
         self.renderer = ActionVideoRenderer(font_path=font_path)
 
     def process_video(self, request: ProcessingRequest) -> ProcessingResult:
         start_time = time.monotonic()
-        job_id = request.job_id or f"job_policy_{int(time.time())}"
+        job_id = request.job_id or f"job_{int(time.time())}_{os.urandom(4).hex()}"
         timings: Dict[str, float] = {}
+        warnings: List[str] = []
+
+        # 1. Job Workspace Isolation
+        job_dir = (self.base_workspace_dir / job_id).resolve()
+        job_dir.mkdir(parents=True, exist_ok=True)
+        logs_dir = job_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
 
         input_path = Path(request.input_video).resolve()
         if not input_path.exists():
@@ -52,17 +63,26 @@ class MediaProcessingService:
         if output_path.exists() and not request.overwrite:
             raise FileExistsError(f"Output video already exists (set overwrite=True to replace): {output_path}")
 
-        # 1. Resolve Policy
+        # Save job.json
+        job_json_path = job_dir / "job.json"
+        with open(job_json_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "job_id": job_id,
+                "request": request.to_dict(),
+                "created_at": time.time(),
+            }, f, indent=2, ensure_ascii=False)
+
+        # 2. Resolve Policy
         policy = request.resolve_policy()
 
-        # 2. CUDA / Device Check
+        # 3. CUDA / Device Check
         t0 = time.monotonic()
         if request.device in ("cuda", "auto") and torch.cuda.is_available():
             effective_device = "cuda"
         else:
             effective_device = "cpu"
 
-        # 3. YOLO 4-class Detection (Single-pass video decode)
+        # 4. YOLO 4-class Detection (Single-pass video decode)
         logger.info("[1/5] Running YOLO 4-class Detection on %s (device=%s)...", input_path.name, effective_device)
         proposal_provider = YoloTextProposalProvider(
             weights_path=self.weights_path,
@@ -98,20 +118,34 @@ class MediaProcessingService:
                     )
                 )
 
-        # 4. Class-Aware Spatial-Temporal Tracking
+        # Save detections.json
+        detections_json_path = job_dir / "detections.json"
+        with open(detections_json_path, "w", encoding="utf-8") as f:
+            json.dump([d.to_dict() for d in canonical_dets], f, indent=2, ensure_ascii=False)
+
+        # 5. Class-Aware Spatial-Temporal Tracking
         t0 = time.monotonic()
         logger.info("[2/5] Running Class-Aware Tracking across %d detections...", len(canonical_dets))
         tracker = ClassAwareTracker(
-            horizontal_gap_ratio=2.0,
-            track_iou_threshold=0.20,
-            max_gap_frames=5,
+            horizontal_gap_ratio=policy.horizontal_gap_ratio,
+            track_iou_threshold=policy.tracking_iou,
+            max_gap_frames=policy.max_gap_frames,
             video_width=bundle.video_width,
             video_height=bundle.video_height,
         )
         tracks = tracker.track(canonical_dets)
         timings["tracking"] = round(time.monotonic() - t0, 3)
 
-        # 5. Action Policy Engine -> RenderingPlan
+        track_summary: Dict[str, int] = {}
+        for tr in tracks:
+            track_summary[tr.class_name] = track_summary.get(tr.class_name, 0) + 1
+
+        # Save tracks.json
+        tracks_json_path = job_dir / "tracks.json"
+        with open(tracks_json_path, "w", encoding="utf-8") as f:
+            json.dump([tr.to_dict() for tr in tracks], f, indent=2, ensure_ascii=False)
+
+        # 6. Action Policy Engine -> RenderingPlan
         t0 = time.monotonic()
         logger.info("[3/5] Evaluating Action Policy Engine across %d tracks...", len(tracks))
         policy_engine = ActionPolicyEngine(policy)
@@ -125,11 +159,11 @@ class MediaProcessingService:
         )
         timings["policy_engine"] = round(time.monotonic() - t0, 3)
 
-        # Export outputs/<job_id>/action_plan.json
-        action_plan_path = output_path.parent / "action_plan.json"
+        # Export output/jobs/<job_id>/action_plan.json
+        action_plan_path = job_dir / "action_plan.json"
         rendering_plan.save_json(action_plan_path)
 
-        # 6. Lazy Enrichment Service
+        # 7. Lazy Enrichment Service
         t0 = time.monotonic()
         logger.info("[4/5] Executing Lazy Enrichment Service...")
         lazy_service = LazyEnrichmentService(
@@ -146,7 +180,7 @@ class MediaProcessingService:
         )
         timings["lazy_enrichment"] = round(time.monotonic() - t0, 3)
 
-        # 7. Action Video Renderer & Audio Mux
+        # 8. Action Video Renderer & Audio Mux
         t0 = time.monotonic()
         logger.info("[5/5] Rendering Video & Muxing Audio to %s...", output_path.name)
         final_video_path = self.renderer.render(
@@ -160,7 +194,7 @@ class MediaProcessingService:
         total_duration = time.monotonic() - start_time
         timings["total"] = round(total_duration, 3)
 
-        # 8. Output Validation
+        # 9. Output Validation
         val_info = self._validate_video_output(str(input_path), final_video_path)
 
         return ProcessingResult(
@@ -172,9 +206,12 @@ class MediaProcessingService:
             fps=val_info["fps"],
             resolution=f"{val_info['width']}x{val_info['height']}",
             detections_summary=class_counts,
+            tracks_summary=track_summary,
             actions_summary=rendering_plan.summary(),
             action_plan_path=str(action_plan_path),
+            workspace_dir=str(job_dir),
             timings=timings,
+            warnings=warnings,
         )
 
     def _validate_video_output(self, input_path: str, output_path: str) -> Dict[str, Any]:

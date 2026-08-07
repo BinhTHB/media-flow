@@ -1,8 +1,8 @@
 """
 Processing Policy Configuration Domain Entities
 
-Defines action types, per-class policy rules, and pre-built policy presets
-for the class-aware policy-driven media-flow engine.
+Defines action types, per-class policy rules, frontend-tunable parameters,
+and pre-built policy presets for the policy-driven media processing engine.
 """
 
 from __future__ import annotations
@@ -39,11 +39,20 @@ class ClassPolicyConfig:
     blur_strength: float = 25.0
     padding_px: int = 4
     solid_color_hex: str = "#000000"
+    # Text Replacement Parameters
     text_source: str = "ocr"  # ocr | stt | hybrid
     target_language: str = "vi"
+    font: Optional[str] = None
+    font_size: Optional[int] = None
+    stroke_width: int = 2
+    placement: str = "source_bbox"  # source_bbox | auto
+    background_action: str = "blur"  # blur | solid_cover | preserve
+    # Image Replacement Parameters
     image_asset_path: Optional[str] = None
+    scale: float = 1.0
     opacity: float = 1.0
     fit: str = "contain"  # contain | cover | stretch
+    z_order: int = 0
 
     def get_action_enum(self) -> ActionType:
         return ActionType.from_str(self.action)
@@ -60,6 +69,12 @@ class ClassPolicyConfig:
 
 @dataclass
 class ProcessingPolicyConfig:
+    # Tracker parameters (frontend overridable)
+    tracking_iou: float = 0.20
+    max_gap_frames: int = 5
+    horizontal_gap_ratio: float = 2.0
+
+    # Per-class policies
     subtitle: ClassPolicyConfig = field(
         default_factory=lambda: ClassPolicyConfig(
             action="blur", confidence_threshold=0.15
@@ -85,11 +100,13 @@ class ProcessingPolicyConfig:
         normalized = class_name.strip().lower()
         if hasattr(self, normalized):
             return getattr(self, normalized)
-        # Fallback to other_burn_in_text for unrecognized classes
         return self.other_burn_in_text
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "tracking_iou": self.tracking_iou,
+            "max_gap_frames": self.max_gap_frames,
+            "horizontal_gap_ratio": self.horizontal_gap_ratio,
             "subtitle": self.subtitle.to_dict(),
             "watermark": self.watermark.to_dict(),
             "logo": self.logo.to_dict(),
@@ -98,14 +115,20 @@ class ProcessingPolicyConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProcessingPolicyConfig":
-        return cls(
-            subtitle=ClassPolicyConfig.from_dict(data.get("subtitle", {})),
-            watermark=ClassPolicyConfig.from_dict(data.get("watermark", {})),
-            logo=ClassPolicyConfig.from_dict(data.get("logo", {})),
-            other_burn_in_text=ClassPolicyConfig.from_dict(
-                data.get("other_burn_in_text", {})
-            ),
+        kwargs: Dict[str, Any] = {}
+        if "tracking_iou" in data:
+            kwargs["tracking_iou"] = float(data["tracking_iou"])
+        if "max_gap_frames" in data:
+            kwargs["max_gap_frames"] = int(data["max_gap_frames"])
+        if "horizontal_gap_ratio" in data:
+            kwargs["horizontal_gap_ratio"] = float(data["horizontal_gap_ratio"])
+        kwargs["subtitle"] = ClassPolicyConfig.from_dict(data.get("subtitle", {}))
+        kwargs["watermark"] = ClassPolicyConfig.from_dict(data.get("watermark", {}))
+        kwargs["logo"] = ClassPolicyConfig.from_dict(data.get("logo", {}))
+        kwargs["other_burn_in_text"] = ClassPolicyConfig.from_dict(
+            data.get("other_burn_in_text", {})
         )
+        return cls(**kwargs)
 
     @classmethod
     def from_yaml_file(cls, yaml_path: Union[str, Path]) -> "ProcessingPolicyConfig":

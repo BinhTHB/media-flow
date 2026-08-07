@@ -2,7 +2,7 @@
 Action Plan & Rendering Plan Domain Entities
 
 Defines machine-readable action plans for rendering video artifacts and exporting
-outputs/<job_id>/action_plan.json for inspection/frontend consumption.
+output/jobs/<job_id>/action_plan.json for inspection/frontend consumption.
 """
 
 from __future__ import annotations
@@ -27,11 +27,13 @@ class TrackActionPlan:
     class_id: int
     class_name: str
     action_type: str  # blur | preserve | solid_cover | replace_text | replace_image
-    start_time: float
-    end_time: float
-    start_frame: int
-    end_frame: int
-    confidence: float
+    status: str = "active"  # active | ignored
+    reason: str = ""  # below_confidence_threshold | class_disabled | policy_preserve
+    start_time: float = 0.0
+    end_time: float = 0.0
+    start_frame: int = 0
+    end_frame: int = 0
+    confidence: float = 0.0
     params: Dict[str, Any] = field(default_factory=dict)
     frame_windows: List[FrameWindowAction] = field(default_factory=list)
     replacement_text: str = ""
@@ -43,6 +45,8 @@ class TrackActionPlan:
             "class_id": self.class_id,
             "class_name": self.class_name,
             "action_type": self.action_type,
+            "status": self.status,
+            "reason": self.reason,
             "start_time": round(self.start_time, 4),
             "end_time": round(self.end_time, 4),
             "start_frame": self.start_frame,
@@ -68,7 +72,11 @@ class RenderingPlan:
     def summary(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
         for act in self.actions:
-            counts[act.action_type] = counts.get(act.action_type, 0) + 1
+            if act.status == "active":
+                key = act.action_type
+            else:
+                key = "ignored"
+            counts[key] = counts.get(key, 0) + 1
         return counts
 
     def to_dict(self) -> Dict[str, Any]:

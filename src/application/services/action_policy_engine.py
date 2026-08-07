@@ -4,8 +4,9 @@ Action Policy Engine
 Evaluates class-aware spatial-temporal tracks against user/preset ProcessingPolicyConfig
 and generates a deterministic RenderingPlan containing TrackActionPlans.
 
+Differentiates active actions from ignored/below-threshold tracks.
 Identifies required lazy enrichments (OCR, STT, Translation, Asset Loading)
-so expensive operations only run when explicitly required by an action plan.
+so expensive operations only run when explicitly required by an active action plan.
 """
 
 from __future__ import annotations
@@ -36,10 +37,16 @@ class ActionPolicyEngine:
             class_policy = self.policy_config.get_class_policy(track.class_name)
 
             if not class_policy.enabled:
+                status = "ignored"
+                reason = "class_disabled"
                 action_type = ActionType.PRESERVE.value
             elif track.mean_confidence < class_policy.confidence_threshold:
+                status = "ignored"
+                reason = "below_confidence_threshold"
                 action_type = ActionType.PRESERVE.value
             else:
+                status = "active"
+                reason = "policy_preserve" if class_policy.action == ActionType.PRESERVE.value else ""
                 action_type = class_policy.action
 
             # Construct frame window actions for exact temporal-spatial rendering
@@ -62,8 +69,15 @@ class ActionPolicyEngine:
                 "solid_color_hex": class_policy.solid_color_hex,
                 "text_source": class_policy.text_source,
                 "target_language": class_policy.target_language,
+                "font": class_policy.font,
+                "font_size": class_policy.font_size,
+                "stroke_width": class_policy.stroke_width,
+                "placement": class_policy.placement,
+                "background_action": class_policy.background_action,
                 "opacity": class_policy.opacity,
                 "fit": class_policy.fit,
+                "scale": class_policy.scale,
+                "z_order": class_policy.z_order,
             }
 
             action_plan = TrackActionPlan(
@@ -71,6 +85,8 @@ class ActionPolicyEngine:
                 class_id=track.class_id,
                 class_name=track.class_name,
                 action_type=action_type,
+                status=status,
+                reason=reason,
                 start_time=track.start_time,
                 end_time=track.end_time,
                 start_frame=track.start_frame,
@@ -99,20 +115,23 @@ class ActionPolicyEngine:
     def get_tracks_requiring_ocr(self, plan: RenderingPlan) -> List[TrackActionPlan]:
         return [
             act for act in plan.actions
-            if act.action_type == ActionType.REPLACE_TEXT.value
+            if act.status == "active"
+            and act.action_type == ActionType.REPLACE_TEXT.value
             and act.params.get("text_source", "ocr") in ("ocr", "hybrid")
         ]
 
     def get_tracks_requiring_stt(self, plan: RenderingPlan) -> List[TrackActionPlan]:
         return [
             act for act in plan.actions
-            if act.action_type == ActionType.REPLACE_TEXT.value
+            if act.status == "active"
+            and act.action_type == ActionType.REPLACE_TEXT.value
             and act.params.get("text_source") in ("stt", "hybrid")
         ]
 
     def get_tracks_requiring_assets(self, plan: RenderingPlan) -> List[TrackActionPlan]:
         return [
             act for act in plan.actions
-            if act.action_type == ActionType.REPLACE_IMAGE.value
+            if act.status == "active"
+            and act.action_type == ActionType.REPLACE_IMAGE.value
             and act.replacement_image_path
         ]
