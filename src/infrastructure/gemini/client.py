@@ -74,6 +74,8 @@ class GeminiClient:
         key = self._api_key or os.environ.get("GEMINI_API_KEY")
         if not key:
             raise GeminiAuthError("GEMINI_API_KEY is not set; provide api_key or set the environment variable.")
+        if "," in key:
+            key = key.split(",")[0].strip()
         return key
 
     def _model_url(self, action: str) -> str:
