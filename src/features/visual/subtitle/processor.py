@@ -1,8 +1,8 @@
 """
 Subtitle Processor
 
-Manages subtitle-specific processing:
-YOLO subtitle track -> SubtitleEventSegmenter -> SubtitleEvent[] -> OCR -> shared TranslationService -> BlurAction -> SubtitleRenderer.
+Manages subtitle-specific processing with destructive replacement safety:
+YOLO subtitle track -> SubtitleEventSegmenter -> SubtitleEvent[] -> OCR -> shared TranslationService -> Fail-Safe Check -> BlurAction & SubtitleRenderer.
 """
 
 from __future__ import annotations
@@ -52,44 +52,87 @@ class SubtitleProcessor:
         if not all_events:
             return []
 
-        # 2. Run OCR if OCR provider is present
-        if self.ocr_provider is not None:
-            # Crop representative evidence frames and OCR
+        # 2. OCR Stage (Representative Crop selection from stable middle of event)
+        if self.ocr_provider is not None and video_path:
+            import cv2
+
+            cap = cv2.VideoCapture(video_path)
             for event in all_events:
-                if video_path and event.anchor_bbox:
-                    import cv2
-                    cap = cv2.VideoCapture(video_path)
-                    cap.set(cv2.CAP_PROP_POS_MSEC, event.start_time * 1000.0)
-                    ret, frame_img = cap.read()
-                    cap.release()
+                # Pick stable middle frame timestamp
+                mid_ts = (event.start_time + event.end_time) / 2.0
+                cap.set(cv2.CAP_PROP_POS_MSEC, mid_ts * 1000.0)
+                ret, frame_img = cap.read()
 
-                    if ret and frame_img is not None:
-                        x1, y1, x2, y2 = event.anchor_bbox.xyxy_int()
-                        crop = frame_img[y1:y2, x1:x2]
-                        if crop.size > 0:
+                if ret and frame_img is not None:
+                    x1, y1, x2, y2 = event.anchor_bbox.xyxy_int()
+                    crop = frame_img[y1:y2, x1:x2]
+                    if crop.size > 0:
+                        try:
                             texts = self.ocr_provider.read_crops([crop])
-                            if texts:
-                                event.source_text = texts[0]
+                            if texts and texts[0].strip():
+                                event.source_text = texts[0].strip()
+                            else:
+                                event.replacement_status = "OCR_EMPTY"
+                        except Exception as exc:
+                            logger.warning("OCR failed for event %s: %s", event.event_id, exc)
+                            event.replacement_status = "OCR_FAILED"
+                    else:
+                        event.replacement_status = "OCR_EMPTY"
+                else:
+                    event.replacement_status = "OCR_FAILED"
 
-        # 3. Run Shared Translation
-        if self.translation_service is not None:
-            texts_to_translate = [e.source_text for e in all_events if e.source_text]
-            if texts_to_translate:
+            cap.release()
+
+        # 3. Translation Stage
+        events_needing_translation = [e for e in all_events if e.source_text]
+
+        if self.translation_service is not None and events_needing_translation:
+            texts_to_translate = [e.source_text for e in events_needing_translation]
+            try:
                 translated = self.translation_service.translate_texts(
                     texts_to_translate, target_language=target_language
                 )
-                trans_idx = 0
-                for e in all_events:
-                    if e.source_text:
-                        e.translated_text = translated[trans_idx]
-                        trans_idx += 1
+                for e, trans in zip(events_needing_translation, translated):
+                    if trans and trans.strip():
+                        e.translated_text = trans.strip()
+                    else:
+                        e.replacement_status = "TRANSLATION_EMPTY"
+            except Exception as exc:
+                logger.warning("Translation failed for subtitle events: %s", exc)
+                for e in events_needing_translation:
+                    e.replacement_status = "TRANSLATION_FAILED"
+
+        # 4. Fail-Safe Replacement Status Assignment
+        for event in all_events:
+            if event.source_text and event.translated_text:
+                event.replacement_status = "READY"
+                event.blur_applied = True
+                event.overlay_applied = True
+            else:
+                if event.replacement_status == "SKIPPED":
+                    if not event.source_text:
+                        event.replacement_status = "OCR_EMPTY"
+                    elif not event.translated_text:
+                        event.replacement_status = "TRANSLATION_EMPTY"
+                event.blur_applied = False
+                event.overlay_applied = False
+                logger.info(
+                    "SubtitleEvent %s replacement status: %s (Pixels preserved)",
+                    event.event_id,
+                    event.replacement_status,
+                )
 
         return all_events
 
     def render_frame_events(self, frame: Any, frame_index: int, events: List[SubtitleEvent]) -> Any:
         for event in events:
-            # Apply blur to original subtitle region
-            frame = self.blur_action.execute(frame, event.anchor_bbox)
-            # Render translated text overlay at source position
-            frame = self.renderer.render_event(frame, event, event.anchor_bbox)
+            # FAIL-SAFE: ONLY blur and render overlay when replacement status is READY!
+            if event.replacement_status == "READY" and event.blur_applied and event.overlay_applied:
+                # Apply blur to original subtitle region
+                frame = self.blur_action.execute(frame, event.anchor_bbox)
+                # Render translated text overlay at source position
+                frame = self.renderer.render_event(frame, event, event.anchor_bbox)
+            else:
+                # PRESERVE original source pixels!
+                pass
         return frame

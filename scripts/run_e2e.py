@@ -194,12 +194,15 @@ def main():
     video_util = FFmpegVideoAdapter()
     detector = YoloDetectorAdapter(device=effective_device)
     
+    ocr_provider = None
     translation_service = None
     if args.preset == "translate-subtitle":
+        from src.infrastructure.ocr.gemini_ocr import GeminiOCRAdapter
+        ocr_provider = GeminiOCRAdapter()
         translation_adapter = GeminiTranslationAdapter()
         translation_service = TranslationService(translation_adapter)
 
-    subtitle_processor = SubtitleProcessor(translation_service=translation_service)
+    subtitle_processor = SubtitleProcessor(ocr_provider=ocr_provider, translation_service=translation_service)
     visual_pipeline = VisualPipeline(detector=detector, subtitle_processor=subtitle_processor)
 
     use_case = ProcessVideoUseCase(visual_pipeline=visual_pipeline, video_util=video_util)
