@@ -1,0 +1,27 @@
+{
+  "frame_id": "qa_06_top_burn_in_text_f000010",
+  "video_id": "qa_06_top_burn_in_text",
+  "frame_index": 10,
+  "timestamp_seconds": 5.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "needs_review": false,
+  "needs_second_review": false,
+  "evaluation_role": "unknown",
+  "leakage_risk": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        83.0625,
+        150.375,
+        451.5,
+        191.625
+      ],
+      "confidence": 0.691895
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "frame_id": "qa_01_portrait_audio_subtitle_f000210",
+  "video_id": "qa_01_portrait_audio_subtitle",
+  "frame_index": 210,
+  "timestamp_seconds": 7.0,
+  "width": 720,
+  "height": 1280,
+  "verified": false,
+  "needs_review": false,
+  "needs_second_review": false,
+  "evaluation_role": "unknown",
+  "leakage_risk": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 0,
+      "class_name": "subtitle",
+      "bbox_xyxy": [
+        293.0,
+        958.0,
+        419.5,
+        1039.0
+      ],
+      "confidence": 0.774414
+    }
+  ]
+}

@@ -6,6 +6,11 @@
   "width": 720,
   "height": 1280,
   "verified": false,
-  "label_source": "empty_unverified",
-  "objects": []
+  "label_source": "human_reviewed",
+  "objects": [],
+  "needs_review": false,
+  "needs_second_review": false,
+  "evaluation_role": "unknown",
+  "leakage_risk": false,
+  "reviewed_at": "2026-08-07T09:00:24.992Z"
 }

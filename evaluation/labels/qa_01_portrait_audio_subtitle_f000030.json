@@ -6,7 +6,7 @@
   "width": 720,
   "height": 1280,
   "verified": false,
-  "label_source": "prelabel_unverified",
+  "label_source": "human_reviewed",
   "objects": [
     {
       "class_id": 0,
@@ -30,5 +30,10 @@
       ],
       "confidence": 0.143188
     }
-  ]
+  ],
+  "needs_review": false,
+  "needs_second_review": false,
+  "evaluation_role": "unknown",
+  "leakage_risk": false,
+  "reviewed_at": null
 }

@@ -1,0 +1,38 @@
+{
+  "frame_id": "qa_05_moving_subtitle_f000010",
+  "video_id": "qa_05_moving_subtitle",
+  "frame_index": 10,
+  "timestamp_seconds": 5.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "needs_review": false,
+  "needs_second_review": false,
+  "evaluation_role": "unknown",
+  "leakage_risk": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        85.59375,
+        601.875,
+        451.5,
+        643.125
+      ],
+      "confidence": 0.495117
+    },
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        84.75,
+        601.5,
+        450.75,
+        643.125
+      ],
+      "confidence": 0.317383
+    }
+  ]
+}

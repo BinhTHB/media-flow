@@ -1,0 +1,15 @@
+{
+  "frame_id": "qa_01_portrait_audio_subtitle_f000120",
+  "video_id": "qa_01_portrait_audio_subtitle",
+  "frame_index": 120,
+  "timestamp_seconds": 4.0,
+  "width": 720,
+  "height": 1280,
+  "verified": false,
+  "needs_review": false,
+  "needs_second_review": false,
+  "evaluation_role": "unknown",
+  "leakage_risk": false,
+  "label_source": "empty_unverified",
+  "objects": []
+}
