@@ -50,6 +50,34 @@ src/
 | SubtitleProvider | MockSubtitleProvider | - |
 | StorageProvider | MockStorageProvider | - |
 
+## Run end-to-end (Production Video Translation)
+
+Pipeline chạy thực tế từ video đầu vào qua model YOLO detect burn-in (`models/yolo/best.pt`), trích xuất text/audio, dịch tiếng Việt qua Gemini, che/thay thế chữ burn-in bằng hai kênh ASS (masks + text tiếng Việt), render video mới và mux lại âm thanh gốc.
+
+### Lệnh chạy E2E chính thức
+
+```powershell
+.venv\Scripts\python.exe scripts/run_e2e.py `
+  --input test_videos\real_mini_benchmark\sample5.mp4 `
+  --output outputs\e2e_sample5.mp4 `
+  --device auto
+```
+
+### Tham số E2E
+- `--input`, `-i`: Đường dẫn video đầu vào thực tế (bắt buộc).
+- `--output`, `-o`: Đường dẫn video đầu ra hoàn chỉnh (bắt buộc).
+- `--device`: Thiết bị tính toán `auto`, `cuda` hoặc `cpu` (mặc định: `auto`).
+- `--speech-provider`: Provider STT: `faster-whisper` (mặc định) hoặc `gemini_audio`.
+- `--translation-provider`: Provider dịch: `gemini` (mặc định) hoặc `openai`.
+- `--placement-mode`: Chế độ đặt phụ đề/che chữ: `replace_source_subtitle` (mặc định), `avoid_source_subtitle`.
+
+### Yêu cầu & Model
+- **YOLO Weights**: `models/yolo/best.pt` (tự động load 4 class: subtitle, watermark, logo, other_burn_in_text).
+- **FFmpeg & FFprobe**: Đã cài đặt trong PATH hệ thống.
+- **Biến môi trường**: `GEMINI_API_KEY` đặt trong file `.env` ở thư mục gốc repo.
+
+---
+
 ## Cách chạy demo
 
 ### Yêu cầu
