@@ -68,6 +68,7 @@ generated/
 output/
 outputs/
 qa_inputs/
+evaluation/backups/
 /artifacts/
 rendered/
 exports/

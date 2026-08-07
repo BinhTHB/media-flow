@@ -78,6 +78,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--conf", type=float, nargs=4, default=None,
                    help="Per-class conf override: subtitle watermark logo other_burn_in_text")
+    p.add_argument(
+        "--roles", default="",
+        help="Comma-separated evaluation_role values to include for FINAL metrics "
+             "(e.g. held_out or dev). Empty = any role. Frames with role 'excluded' "
+             "or 'unknown' are never used for final metrics.",
+    )
+    p.add_argument(
+        "--include-leakage", action="store_true",
+        help="Allow leakage_risk=true frames into metrics (default: excluded).",
+    )
+    p.add_argument(
+        "--include-needs-review", action="store_true",
+        help="Allow needs_review=true frames into metrics (default: excluded).",
+    )
     return p
 
 
@@ -96,6 +110,60 @@ def load_manifest(path: Path) -> List[Dict[str, Any]]:
 
 def is_verified(row: Dict[str, Any]) -> bool:
     return str(row.get("verified", "")).strip().lower() in {"true", "yes", "1", "y"}
+
+
+def _row_flag(value: Any) -> bool:
+    """Interpret a CSV flag column value as a boolean."""
+    return str(value).strip().lower() in {"true", "yes", "1", "y"}
+
+
+def select_eval_rows(
+    manifest_rows: Sequence[Dict[str, Any]],
+    *,
+    roles: str = "",
+    include_leakage: bool = False,
+    include_needs_review: bool = False,
+    total_manifest: int = 0,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Gate which rows are eligible for FINAL metrics.
+
+    Only ``verified`` rows are eligible. Rules:
+    * ``evaluation_role=excluded`` is always dropped;
+    * if ``roles`` is non-empty, rows must match one of the allowed roles;
+    * ``needs_review=true`` and ``leakage_risk=true`` rows are dropped unless the
+      operator opts in. Returns ``(rows, gating_dict)`` where gating reports the
+      partial-evaluation bookkeeping.
+    """
+    verified_rows = [r for r in manifest_rows if is_verified(r)]
+    allowed_roles = {r.strip() for r in str(roles).split(",") if r.strip()}
+    picked: List[Dict[str, Any]] = []
+    for r in verified_rows:
+        role = str(r.get("evaluation_role", "unknown"))
+        if role == "excluded":
+            continue
+        if allowed_roles and role not in allowed_roles:
+            continue
+        if _row_flag(r.get("needs_review")) and not include_needs_review:
+            continue
+        if _row_flag(r.get("leakage_risk")) and not include_leakage:
+            continue
+        picked.append(r)
+    needs_review_exc = sum(1 for r in verified_rows if _row_flag(r.get("needs_review")))
+    leakage_exc = sum(1 for r in verified_rows if _row_flag(r.get("leakage_risk")))
+    flag_exc = sum(1 for r in verified_rows
+                   if _row_flag(r.get("needs_review")) or _row_flag(r.get("leakage_risk")))
+    role_exc = max(0, len(verified_rows) - len(picked) - flag_exc)
+    gating = {
+        "verified_total": len(verified_rows),
+        "verified_used": len(picked),
+        "unverified_excluded": max(0, total_manifest - len(verified_rows)),
+        "needs_review_excluded": needs_review_exc,
+        "leakage_excluded": leakage_exc,
+        "role_excluded": role_exc,
+        "allowed_roles": sorted(allowed_roles),
+        "partial": len(picked) < len(verified_rows) or len(verified_rows) < total_manifest,
+    }
+    return picked, gating
 
 
 def load_gt_for_row(
@@ -508,7 +576,15 @@ def main() -> int:
         write_pending_report(out_dir, args, manifest, frames)
         print("PENDING_HUMAN_REVIEW: no verified ground truth; metrics not computed.")
         return 0  # Clean exit so callers can detect the pending status
-    verified_ids = {str(r["frame_id"]) for r in verified_rows}
+
+    role_filtered, gating = select_eval_rows(
+        manifest,
+        roles=args.roles,
+        include_leakage=args.include_leakage,
+        include_needs_review=args.include_needs_review,
+        total_manifest=len(manifest),
+    )
+    verified_ids = {str(r["frame_id"]) for r in role_filtered}
 
     # Predictions cache
     pred_path = Path(args.predictions) if args.predictions else out_dir / "predictions.jsonl"
@@ -521,11 +597,11 @@ def main() -> int:
 
     frames = attach_predictions(frames, pred_by_frame, cfg.confidence)
 
-    # Only verified frames count toward metrics.
+    # Only gated verified frames count toward metrics.
     eval_frames = [f for f in frames if f.frame_id in verified_ids]
     if not eval_frames:
         write_pending_report(out_dir, args, manifest, frames)
-        print("PENDING_HUMAN_REVIEW: verified frame set is empty.")
+        print("PENDING_HUMAN_REVIEW: verified frame set is empty after gating.")
         return 2
 
     # Metrics at each IoU threshold
@@ -556,18 +632,31 @@ def main() -> int:
             write_threshold_sweep(out_dir, sweep_rows)
             rec = recommend_thresholds(sweep_rows, cfg.confidence)
             write_recommendation(out_dir, rec)
-            write_summary(out_dir, report, rec, args, manifest)
+            write_summary(out_dir, report, rec, args, manifest, gating)
 
     print(f"  outputs -> {out_dir}")
     return 0
 
 
-def write_summary(out_dir: Path, report, rec, args, manifest) -> None:
+def write_summary(out_dir: Path, report, rec, args, manifest, gating=None) -> None:
+    gating = gating or {}
+    title = "# PARTIAL EVALUATION (not final model score)" if gating.get("partial") else "# Ground-truth evaluation summary"
     lines = [
-        "# Ground-truth evaluation summary",
+        title,
         "",
         f"- IoU threshold: {report.iou_threshold}",
-        f"- Verified frames: {sum(1 for r in manifest if is_verified(r))} / {len(manifest)}",
+    ]
+    if gating:
+        lines += [
+            f"- Verified frames used: {gating.get('verified_used', 0)}",
+            f"- Verified frames total: {gating.get('verified_total', 0)}",
+            f"- Unverified excluded: {gating.get('unverified_excluded', 0)}",
+            f"- Needs-review excluded: {gating.get('needs_review_excluded', 0)}",
+            f"- Leakage-risk excluded: {gating.get('leakage_excluded', 0)}",
+            f"- Role excluded: {gating.get('role_excluded', 0)}",
+            f"- Allowed roles: {gating.get('allowed_roles') or 'any'}",
+        ]
+    lines += [
         f"- Total GT boxes: {report.total_gt}",
         f"- Total predictions (after conf filter): {report.total_pred}",
         f"- Matched: {report.total_matched}",

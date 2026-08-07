@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YOLO Ground-Truth Review</title>
+<style>
+  :root {
+    --c-subtitle: #55b259;
+    --c-watermark: #d8374d;
+    --c-logo: #1bacd8;
+    --c-other: #ff9f1c;
+    --bg: #101418;
+    --panel: #1a2128;
+    --panel2: #232c36;
+    --text: #e8eef4;
+    --muted: #8ea0b0;
+    --accent: #4c9aff;
+    --danger: #ff6b6b;
+    --ok: #4cd964;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid #2c3742;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 10px; background: var(--panel2); }
+  .badge.verified { background: #1e3a24; color: var(--ok); }
+  .badge.unverified { background: #3a2a1e; color: var(--muted); }
+  .badge.needs_review { background: #3a3320; color: #ffd166; }
+  .progress { width: 220px; height: 8px; background: #2c3742; border-radius: 4px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--ok); }
+  select, button, input[type=text] {
+    background: var(--panel2); color: var(--text); border: 1px solid #3a4754;
+    border-radius: 6px; padding: 5px 8px; font-size: 13px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 600; }
+  button.danger { background: #4a1d1d; color: var(--danger); border-color: #6e2f2f; }
+  .layout { display: flex; height: calc(100vh - 120px); }
+  .sidebar { width: 300px; background: var(--panel); border-right: 1px solid #2c3742; overflow-y: auto; padding: 12px; flex-shrink: 0; }
+  .sidebar h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 14px 0 6px; }
+  .frame-info { font-size: 13px; line-height: 1.6; }
+  .frame-info b { color: var(--text); }
+  .kv { display: flex; justify-content: space-between; gap: 8px; }
+  .kv span { color: var(--muted); }
+  .status-row { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+  .class-help { font-size: 12px; color: var(--muted); border-left: 3px solid #3a4754; padding-left: 8px; margin: 6px 0; }
+  .box-item {
+    display: flex; align-items: center; gap: 6px; padding: 4px 6px; margin: 2px 0;
+    border: 1px solid #2c3742; border-radius: 6px; font-size: 12px; cursor: pointer;
+  }
+  .box-item.selected { outline: 2px solid var(--accent); }
+  .box-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .box-item .meta { flex: 1; }
+  .canvas-wrap { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; background: #0b0e12; padding: 16px; }
+  canvas { max-width: 100%; box-shadow: 0 0 24px rgba(0,0,0,.6); cursor: crosshair; }
+  .nav-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--panel); border-top: 1px solid #2c3742; }
+  .nav-bar .spacer { flex: 1; }
+  .hint { font-size: 11px; color: var(--muted); }
+  .context-strip { display: flex; gap: 8px; margin-top: 10px; overflow-x: auto; }
+  .context-strip img { height: 90px; border: 1px solid #3a4754; border-radius: 4px; }
+  .toast {
+    position: fixed; right: 16px; bottom: 16px; background: #1c2833; color: var(--text);
+    padding: 8px 14px; border-radius: 8px; border: 1px solid #3a4754; font-size: 13px;
+    opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 99;
+  }
+  .toast.show { opacity: 1; }
+  .error { color: var(--danger); font-size: 12px; }
+  .role-pill { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--panel2); }
+  .empty { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>YOLO Burn-in Ground-Truth Review</h1>
+  <span class="badge" id="bVerified">Verified 0</span>
+  <span class="badge" id="bRemaining">Remaining 0</span>
+  <div class="progress"><div id="progressBar" style="width:0%"></div></div>
+  <span class="hint" id="progressPct">0%</span>
+  <div style="flex:1"></div>
+  <label class="hint">State
+    <select id="fState">
+      <option value="">All</option>
+      <option value="unverified">Unverified</option>
+      <option value="verified">Verified</option>
+      <option value="needs_review">Needs review</option>
+      <option value="needs_second_review">Needs 2nd review</option>
+    </select>
+  </label>
+  <label class="hint">Role
+    <select id="fRole">
+      <option value="">All</option>
+      <option value="unknown">unknown</option>
+      <option value="dev">dev</option>
+      <option value="held_out">held_out</option>
+      <option value="excluded">excluded</option>
+    </select>
+  </label>
+  <label class="hint">Has class
+    <select id="fHas">
+      <option value="">All</option>
+      <option value="empty">empty</option>
+      <option value="subtitle">subtitle</option>
+      <option value="watermark">watermark</option>
+      <option value="logo">logo</option>
+      <option value="other_burn_in_text">other</option>
+    </select>
+  </label>
+  <label class="hint">Sort
+    <select id="fSort">
+      <option value="original">Original order</option>
+      <option value="lowest_conf">Lowest confidence first</option>
+      <option value="most_boxes">Most boxes first</option>
+      <option value="ambiguous">Ambiguous first</option>
+    </select>
+  </label>
+  <button id="btnRefresh">Refresh</button>
+</header>
+
+<div class="layout">
+  <div class="sidebar">
+    <h3>Frame</h3>
+    <div class="frame-info" id="frameInfo">…</div>
+
+    <h3>Verification</h3>
+    <div class="status-row">
+      <button class="primary" id="btnVerify">Verify (V)</button>
+      <button id="btnUnverify">Unverify (U)</button>
+      <button id="btnNeedsReview">Needs review (N)</button>
+    </div>
+    <div class="status-row">
+      <label class="hint">Role
+        <select id="roleSelect">
+          <option value="unknown">unknown</option>
+          <option value="dev">dev</option>
+          <option value="held_out">held_out</option>
+          <option value="excluded">excluded</option>
+        </select>
+      </label>
+      <label class="hint"><input type="checkbox" id="leakageCheck"> leakage</label>
+      <label class="hint"><input type="checkbox" id="secondReviewCheck"> 2nd review</label>
+    </div>
+
+    <h3>New box class</h3>
+    <div class="status-row">
+      <button class="class-btn" data-c="0">1 subtitle</button>
+      <button class="class-btn" data-c="1">2 watermark</button>
+      <button class="class-btn" data-c="2">3 logo</button>
+      <button class="class-btn" data-c="3">4 other</button>
+    </div>
+
+    <h3>Boxes <span class="hint" id="boxCount"></span></h3>
+    <div id="boxList"></div>
+
+    <h3>Context (± frames)</h3>
+    <div class="status-row">
+      <button id="btnContext">Load context</button>
+    </div>
+    <div class="context-strip" id="contextStrip"></div>
+
+    <h3>Class definitions</h3>
+    <div class="class-help"><b>subtitle</b>: Nội dung lời thoại/phụ đề được burn trực tiếp vào video.</div>
+    <div class="class-help"><b>watermark</b>: Dấu nhận diện bán trong suốt hoặc text/logo watermark xác định nguồn/chủ sở hữu.</div>
+    <div class="class-help"><b>logo</b>: Logo/biểu tượng thương hiệu/kênh rõ ràng.</div>
+    <div class="class-help"><b>other_burn_in_text</b>: Text cố định khác (header, sticker, score, UI text, caption cố định...).</div>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="cv"></canvas>
+  </div>
+</div>
+
+<div class="nav-bar">
+  <button id="btnPrev">◀ Prev (A)</button>
+  <button id="btnSave">Save</button>
+  <button id="btnSaveNext">Save &amp; Next (S)</button>
+  <span class="hint" id="posInfo"></span>
+  <span class="hint" id="saveState" style="margin-left:8px"></span>
+  <div class="spacer"></div>
+  <span class="hint">Drag on image = new box · drag box = move · corner = resize · Del = delete</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+const CLASSES = ["subtitle", "watermark", "logo", "other_burn_in_text"];
+const COLORS = {
+  subtitle: "#55b259", watermark: "#d8374d", logo: "#1bacd8", other_burn_in_text: "#ff9f1c"
+};
+
+const state = {
+  frames: [],          // list of frame summaries
+  idx: 0,              // index into frames
+  detail: null,        // current frame detail
+  boxes: [],           // working boxes [{class_id,class_name,bbox_xyxy:[x1,y1,x2,y2],confidence?}]
+  selected: -1,        // index into boxes
+  newClass: 0,
+  dirty: false,
+  saving: false,
+  image: null,         // HTMLImageElement
+  scale: 1,            // canvas px per image px
+  offX: 0, offY: 0,
+  dragging: null,      // {mode:'move'|'resize'|'draw', startX,startY, boxStart}
+};
+
+const $ = (id) => document.getElementById(id);
+const cv = $("cv");
+const ctx2d = cv.getContext("2d");
+
+// ---------------------------------------------------------------- helpers
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 1600);
+}
+
+function api(path, opts) {
+  return fetch(path, opts).then(r => {
+    if (!r.ok) return r.json().then(j => { throw new Error(j.error || r.statusText); });
+    return r.json();
+  });
+}
+
+async function loadSummary() {
+  try {
+    const s = await api("/api/summary");
+    $("bVerified").textContent = `Verified ${s.verified}/${s.total}`;
+    $("bRemaining").textContent = `Remaining ${s.remaining}`;
+    $("progressBar").style.width = s.progress_pct + "%";
+    $("progressPct").textContent = s.progress_pct + "%";
+  } catch (e) { /* keep old */ }
+}
+
+async function loadFrames() {
+  const q = new URLSearchParams();
+  const s = $("fState").value; if (s) q.set("state", s);
+  const r = $("fRole").value;  if (r) q.set("role", r);
+  const h = $("fHas").value;   if (h) q.set("has", h);
+  const so = $("fSort").value; if (so) q.set("sort", so);
+  const list = await api("/api/frames?" + q.toString());
+  state.frames = list;
+  state.idx = 0;
+  if (list.length) await loadFrame(list[0].frame_id);
+  else { state.detail = null; state.boxes = []; render(); }
+  updatePosInfo();
+}
+
+async function loadFrame(frameId) {
+  state.detail = await api("/api/frame/" + encodeURIComponent(frameId));
+  state.boxes = JSON.parse(JSON.stringify(state.detail.objects || []));
+  state.selected = -1;
+  state.dirty = false;
+  $("saveState").textContent = "";
+  $("contextStrip").innerHTML = "";
+  updateFrameInfo();
+  renderBoxList();
+  await loadImage();
+  render();
+}
+
+function updateFrameInfo() {
+  const d = state.detail;
+  if (!d) { $("frameInfo").textContent = "No frame"; return; }
+  const role = d.evaluation_role;
+  $("frameInfo").innerHTML =
+    `<div class="kv"><span>frame</span><b>${d.frame_id}</b></div>` +
+    `<div class="kv"><span>video</span><b>${d.video_id}</b></div>` +
+    `<div class="kv"><span>index</span><b>${d.frame_index}</b></div>` +
+    `<div class="kv"><span>timestamp</span><b>${d.timestamp_seconds.toFixed(2)}s</b></div>` +
+    `<div class="kv"><span>resolution</span><b>${d.width}×${d.height}</b></div>` +
+    `<div class="kv"><span>state</span><b class="${d.verified?'verified':(d.needs_review?'needs_review':'unverified')}">${d.verified?'verified':(d.needs_review?'needs_review':'unverified')}</b></div>` +
+    `<div class="kv"><span>role</span><b>${role}</b></div>` +
+    `<div class="kv"><span>leakage</span><b>${d.leakage_risk?'yes':'no'}</b></div>` +
+    `<div class="kv"><span>source</span><b>${d.label_source}</b></div>`;
+  $("roleSelect").value = role;
+  $("leakageCheck").checked = !!d.leakage_risk;
+  $("secondReviewCheck").checked = !!d.needs_second_review;
+  $("btnVerify").textContent = d.verified ? "✓ Verified (V)" : "Verify (V)";
+}
+
+function updatePosInfo() {
+  $("posInfo").textContent = `Frame ${state.idx + 1} / ${state.frames.length}`;
+}
+
+// ---------------------------------------------------------------- image
+async function loadImage() {
+  const d = state.detail;
+  if (!d) return;
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  await new Promise((res, rej) => {
+    img.onload = res; img.onerror = () => rej(new Error("image load failed"));
+    img.src = "/api/frame/" + encodeURIComponent(d.frame_id) + "/image";
+  });
+  state.image = img;
+}
+
+function computeLayout() {
+  const d = state.detail;
+  const img = state.image;
+  if (!d || !img) return;
+  const wrap = document.querySelector(".canvas-wrap");
+  const maxW = Math.max(300, wrap.clientWidth - 40);
+  const maxH = Math.max(300, wrap.clientHeight - 40);
+  const scale = Math.min(maxW / d.width, maxH / d.height, 1);
+  state.scale = scale;
+  state.offX = (maxW - d.width * scale) / 2;
+  state.offY = (maxH - d.height * scale) / 2;
+  cv.width = d.width * scale;
+  cv.height = d.height * scale;
+}
+
+function toImageCoords(e) {
+  const rect = cv.getBoundingClientRect();
+  const sx = cv.width / rect.width, sy = cv.height / rect.height;
+  const px = (e.clientX - rect.left) * sx;
+  const py = (e.clientY - rect.top) * sy;
+  return { x: (px - state.offX) / state.scale, y: (py - state.offY) / state.scale };
+}
+
+// ---------------------------------------------------------------- render
+function render() {
+  const d = state.detail;
+  if (!d) { ctx2d.clearRect(0, 0, cv.width, cv.height); return; }
+  computeLayout();
+  ctx2d.clearRect(0, 0, cv.width, cv.height);
+  if (state.image) {
+    ctx2d.drawImage(state.image, state.offX, state.offY, d.width * state.scale, d.height * state.scale);
+  }
+  state.boxes.forEach((b, i) => {
+    const [x1, y1, x2, y2] = b.bbox_xyxy;
+    const color = COLORS[b.class_name] || "#fff";
+    const x = state.offX + x1 * state.scale, y = state.offY + y1 * state.scale;
+    const w = (x2 - x1) * state.scale, h = (y2 - y1) * state.scale;
+    ctx2d.strokeStyle = color;
+    ctx2d.lineWidth = i === state.selected ? 3 : 1.5;
+    ctx2d.strokeRect(x, y, w, h);
+    // label
+    const label = `${b.class_name}${b.confidence != null ? " " + Number(b.confidence).toFixed(2) : ""}`;
+    ctx2d.font = "11px system-ui";
+    const tw = ctx2d.measureText(label).width;
+    ctx2d.fillStyle = color;
+    ctx2d.fillRect(x, y - 14, tw + 6, 14);
+    ctx2d.fillStyle = "#0b0e12";
+    ctx2d.fillText(label, x + 3, y - 3);
+    // handles
+    if (i === state.selected) {
+      ctx2d.fillStyle = "#fff";
+      [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].forEach(([hx, hy]) => {
+        ctx2d.fillRect(hx - 3, hy - 3, 6, 6);
+      });
+    }
+  });
+}
+
+function renderBoxList() {
+  const list = $("boxList");
+  $("boxCount").textContent = `(${state.boxes.length})`;
+  list.innerHTML = "";
+  if (!state.boxes.length) { list.innerHTML = '<span class="empty">No boxes (valid as empty frame)</span>'; return; }
+  state.boxes.forEach((b, i) => {
+    const div = document.createElement("div");
+    div.className = "box-item" + (i === state.selected ? " selected" : "");
+    const [x1, y1, x2, y2] = b.bbox_xyxy.map(v => Math.round(v));
+    div.innerHTML =
+      `<span class="dot" style="background:${COLORS[b.class_name]||'#fff'}"></span>` +
+      `<span class="meta">${i}: ${b.class_name} ${x1},${y1} ${x2-x1}×${y2-y1}</span>` +
+      `<button class="del" title="delete">✕</button>`;
+    div.onclick = () => { state.selected = i; render(); renderBoxList(); };
+    div.querySelector(".del").onclick = (ev) => { ev.stopPropagation(); removeBox(i); };
+    list.appendChild(div);
+  });
+}
+
+// ---------------------------------------------------------------- editing
+function normalizeBox(b) {
+  let [x1, y1, x2, y2] = b.bbox_xyxy;
+  if (x1 > x2) [x1, x2] = [x2, x1];
+  if (y1 > y2) [y1, y2] = [y2, y1];
+  const d = state.detail;
+  x1 = Math.max(0, Math.min(d.width, x1));
+  y1 = Math.max(0, Math.min(d.height, y1));
+  x2 = Math.max(0, Math.min(d.width, x2));
+  y2 = Math.max(0, Math.min(d.height, y2));
+  if (x2 - x1 < 1) x2 = Math.min(d.width, x1 + 1);
+  if (y2 - y1 < 1) y2 = Math.min(d.height, y1 + 1);
+  b.bbox_xyxy = [x1, y1, x2, y2];
+  return b;
+}
+
+function addBoxAt(x1, y1, x2, y2) {
+  const b = { class_id: state.newClass, class_name: CLASSES[state.newClass], bbox_xyxy: [x1, y1, x2, y2] };
+  normalizeBox(b);
+  state.boxes.push(b);
+  state.selected = state.boxes.length - 1;
+  state.dirty = true;
+  scheduleSave();
+  render(); renderBoxList();
+}
+
+function removeBox(i) {
+  state.boxes.splice(i, 1);
+  state.selected = Math.min(state.selected, state.boxes.length - 1);
+  state.dirty = true;
+  scheduleSave();
+  render(); renderBoxList();
+}
+
+function setClassForBox(i, cls) {
+  if (i < 0 || i >= state.boxes.length) return;
+  state.boxes[i].class_id = cls;
+  state.boxes[i].class_name = CLASSES[cls];
+  state.dirty = true;
+  scheduleSave();
+  render(); renderBoxList();
+}
+
+function setVerified(v) {
+  if (!state.detail) return;
+  state.detail.verified = v;
+  if (v) state.detail.needs_review = false;
+  updateFrameInfo();
+  save();
+}
+
+function toggleNeedsReview() {
+  if (!state.detail) return;
+  state.detail.needs_review = !state.detail.needs_review;
+  updateFrameInfo();
+  save();
+}
+
+function roleChanged() {
+  if (!state.detail) return;
+  state.detail.evaluation_role = $("roleSelect").value;
+  updateFrameInfo();
+  save();
+}
+
+function flagsChanged() {
+  if (!state.detail) return;
+  state.detail.leakage_risk = $("leakageCheck").checked;
+  state.detail.needs_second_review = $("secondReviewCheck").checked;
+  save();
+}
+
+// ---------------------------------------------------------------- save
+let saveTimer = null;
+function scheduleSave() {
+  $("saveState").textContent = "…unsaved";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 400);
+}
+
+async function save() {
+  if (!state.detail || state.saving) return;
+  const d = state.detail;
+  state.saving = true;
+  try {
+    const payload = {
+      verified: !!d.verified,
+      needs_review: !!d.needs_review,
+      needs_second_review: !!d.needs_second_review,
+      evaluation_role: d.evaluation_role || "unknown",
+      leakage_risk: !!d.leakage_risk,
+      reviewed_at: new Date().toISOString(),
+      objects: state.boxes.map(b => ({
+        class_id: b.class_id,
+        class_name: b.class_name,
+        bbox_xyxy: b.bbox_xyxy.map(v => Math.round(v * 100) / 100),
+        ...(b.confidence != null ? { confidence: b.confidence } : {}),
+      })),
+    };
+    const saved = await api("/api/frame/" + encodeURIComponent(d.frame_id), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    state.detail = saved;
+    state.boxes = JSON.parse(JSON.stringify(saved.objects || []));
+    state.dirty = false;
+    $("saveState").textContent = "saved ✓";
+    toast("Saved " + d.frame_id);
+    loadSummary();
+  } catch (e) {
+    $("saveState").textContent = "SAVE ERROR: " + e.message;
+    toast("Save failed: " + e.message);
+  } finally {
+    state.saving = false;
+  }
+}
+
+// ---------------------------------------------------------------- nav
+async function goTo(rel) {
+  if (!state.frames.length) return;
+  if (state.dirty) await save();
+  const ni = Math.max(0, Math.min(state.frames.length - 1, state.idx + rel));
+  state.idx = ni;
+  await loadFrame(state.frames[ni].frame_id);
+  updatePosInfo();
+}
+
+async function saveAndNext() {
+  await save();
+  await goTo(1);
+}
+
+// ---------------------------------------------------------------- context
+async function loadContext() {
+  const d = state.detail;
+  if (!d) return;
+  try {
+    const info = await api("/api/frame/" + encodeURIComponent(d.frame_id) + "/context");
+    const strip = $("contextStrip");
+    strip.innerHTML = "";
+    if (!info.available) { strip.innerHTML = '<span class="empty">no source video</span>'; return; }
+    const offsets = info.offsets;
+    offsets.forEach(off => {
+      const wrap = document.createElement("div");
+      wrap.style.textAlign = "center";
+      const img = document.createElement("img");
+      const abs = d.frame_index + off;
+      img.alt = (off < 0 ? "prev " : "next ") + Math.abs(off) + "f";
+      img.title = img.alt + " (frame " + abs + ")";
+      img.onerror = () => { img.style.opacity = .2; };
+      img.src = "/api/frame/" + encodeURIComponent(d.frame_id) + "/context/" + off;
+      wrap.appendChild(img);
+      wrap.insertAdjacentHTML("beforeend", `<div class="hint">${off<0?"-":"+"}${Math.abs(off)}f</div>`);
+      strip.appendChild(wrap);
+    });
+  } catch (e) {
+    $("contextStrip").innerHTML = '<span class="error">' + e.message + "</span>";
+  }
+}
+
+// ---------------------------------------------------------------- mouse
+function hitBox(e) {
+  const p = toImageCoords(e);
+  for (let i = state.boxes.length - 1; i >= 0; i--) {
+    const [x1, y1, x2, y2] = state.boxes[i].bbox_xyxy;
+    const pad = 8 / state.scale;
+    const onEdge =
+      (p.x >= x1 - pad && p.x <= x1 + pad && p.y >= y1 - pad && p.y <= y2 + pad) ||
+      (p.x >= x2 - pad && p.x <= x2 + pad && p.y >= y1 - pad && p.y <= y2 + pad) ||
+      (p.y >= y1 - pad && p.y <= y1 + pad && p.x >= x1 - pad && p.x <= x2 + pad) ||
+      (p.y >= y2 - pad && p.y <= y2 + pad && p.x >= x1 - pad && p.x <= x2 + pad);
+    if (onEdge) return { i, mode: "resize", corner: null };
+    const inside = p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2;
+    if (inside) return { i, mode: "move" };
+  }
+  return null;
+}
+
+cv.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  const d = state.detail;
+  if (!d || !state.image) return;
+  const hit = hitBox(e);
+  if (hit) {
+    state.selected = hit.i;
+    render(); renderBoxList();
+    state.dragging = { mode: hit.mode, startX: e.clientX, startY: e.clientY, box: [...state.boxes[hit.i].bbox_xyxy] };
+  } else {
+    state.selected = -1;
+    render(); renderBoxList();
+    const p = toImageCoords(e);
+    state.dragging = { mode: "draw", startX: p.x, startY: p.y, box: [p.x, p.y, p.x, p.y] };
+    // start drawing immediately
+    const box = { class_id: state.newClass, class_name: CLASSES[state.newClass], bbox_xyxy: [...state.dragging.box] };
+    state.boxes.push(box);
+    state.selected = state.boxes.length - 1;
+  }
+});
+
+window.addEventListener("mousemove", (e) => {
+  const dr = state.dragging;
+  if (!dr) return;
+  const d = state.detail;
+  if (!d) return;
+  if (dr.mode === "draw") {
+    const p = toImageCoords(e);
+    const b = state.boxes[state.selected];
+    b.bbox_xyxy = [dr.box[0], dr.box[1], p.x, p.y];
+    normalizeBox(b);
+    render();
+  } else if (dr.mode === "move") {
+    const p = toImageCoords(e);
+    const dx = p.x - dr.box[0] - (dr.box[2] - dr.box[0]) / 2 + (dr.box[0] + (dr.box[2] - dr.box[0]) / 2);
+    const dy = p.y - dr.box[1] - (dr.box[3] - dr.box[1]) / 2 + (dr.box[1] + (dr.box[3] - dr.box[1]) / 2);
+    // simpler: track delta from start
+    const s = toImageCoords({ clientX: dr.startX, clientY: dr.startY });
+    const c = toImageCoords(e);
+    const b = state.boxes[state.selected];
+    b.bbox_xyxy = [
+      dr.box[0] + (c.x - s.x), dr.box[1] + (c.y - s.y),
+      dr.box[2] + (c.x - s.x), dr.box[3] + (c.y - s.y),
+    ];
+    normalizeBox(b);
+    render();
+  } else if (dr.mode === "resize") {
+    const p = toImageCoords(e);
+    const b = state.boxes[state.selected];
+    const cx = (dr.box[0] + dr.box[2]) / 2, cy = (dr.box[1] + dr.box[3]) / 2;
+    if (p.x > cx) b.bbox_xyxy[2] = p.x; else b.bbox_xyxy[0] = p.x;
+    if (p.y > cy) b.bbox_xyxy[3] = p.y; else b.bbox_xyxy[1] = p.y;
+    normalizeBox(b);
+    render();
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  if (!state.dragging) return;
+  const wasDraw = state.dragging.mode === "draw";
+  state.dragging = null;
+  if (wasDraw) {
+    const b = state.boxes[state.selected];
+    if (b && (b.bbox_xyxy[2] - b.bbox_xyxy[0] < 3 && b.bbox_xyxy[3] - b.bbox_xyxy[1] < 3)) {
+      state.boxes.splice(state.selected, 1);
+      state.selected = -1;
+      render(); renderBoxList();
+      return;
+    }
+    state.dirty = true;
+    scheduleSave();
+    render(); renderBoxList();
+  }
+});
+
+// ---------------------------------------------------------------- keyboard
+document.addEventListener("keydown", (e) => {
+  const tag = e.target.tagName;
+  if (tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") return;
+  switch (e.key) {
+    case "ArrowLeft": case "a": case "A": e.preventDefault(); goTo(-1); break;
+    case "ArrowRight": case "d": case "D": e.preventDefault(); goTo(1); break;
+    case "Delete": case "Backspace": e.preventDefault();
+      if (state.selected >= 0) removeBox(state.selected); break;
+    case "1": state.newClass = 0; setClassForBox(state.selected, 0); break;
+    case "2": state.newClass = 1; setClassForBox(state.selected, 1); break;
+    case "3": state.newClass = 2; setClassForBox(state.selected, 2); break;
+    case "4": state.newClass = 3; setClassForBox(state.selected, 3); break;
+    case "v": case "V": e.preventDefault(); setVerified(true); break;
+    case "u": case "U": e.preventDefault(); setVerified(false); break;
+    case "n": case "N": e.preventDefault(); toggleNeedsReview(); break;
+    case "s": case "S": e.preventDefault(); if (e.ctrlKey) break; saveAndNext(); break;
+  }
+});
+
+// ---------------------------------------------------------------- wire-up
+$("btnPrev").onclick = () => goTo(-1);
+$("btnSave").onclick = () => save();
+$("btnSaveNext").onclick = () => saveAndNext();
+$("btnVerify").onclick = () => setVerified(true);
+$("btnUnverify").onclick = () => setVerified(false);
+$("btnNeedsReview").onclick = () => toggleNeedsReview();
+$("roleSelect").onchange = roleChanged;
+$("leakageCheck").onchange = flagsChanged;
+$("secondReviewCheck").onchange = flagsChanged;
+$("btnContext").onclick = loadContext;
+$("btnRefresh").onclick = () => { loadSummary(); loadFrames(); };
+document.querySelectorAll(".class-btn").forEach(btn => {
+  btn.onclick = () => { state.newClass = parseInt(btn.dataset.c, 10); toast("New box class: " + CLASSES[state.newClass]); };
+});
+["fState", "fRole", "fHas", "fSort"].forEach(id => $(id).onchange = () => loadFrames());
+window.addEventListener("resize", render);
+
+// initial load
+(async () => { await loadSummary(); await loadFrames(); })();
+</script>
+</body>
+</html>

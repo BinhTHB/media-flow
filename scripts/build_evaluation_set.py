@@ -214,6 +214,10 @@ def main() -> int:
                     "width": int(frame.shape[1]),
                     "height": int(frame.shape[0]),
                     "verified": False,
+                    "needs_review": False,
+                    "needs_second_review": False,
+                    "evaluation_role": "unknown",
+                    "leakage_risk": False,
                     "label_source": "prelabel_unverified" if prelabel else "empty_unverified",
                     "objects": prelabel,
                 }, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -226,6 +230,10 @@ def main() -> int:
                     "width": int(frame.shape[1]),
                     "height": int(frame.shape[0]),
                     "verified": "false",
+                    "needs_review": "false",
+                    "needs_second_review": "false",
+                    "evaluation_role": "unknown",
+                    "leakage_risk": "false",
                     "label_source": "prelabel_unverified" if prelabel else "missing",
                 })
                 n_frames += 1
