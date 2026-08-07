@@ -2,20 +2,19 @@
 Action Policy Engine
 
 Evaluates class-aware spatial-temporal tracks against user/preset ProcessingPolicyConfig
-and generates a deterministic RenderingPlan containing TrackActionPlans.
+and generates a deterministic RenderingPlan containing composable background and overlay TrackActionPlans.
 
-Differentiates active actions from ignored/below-threshold tracks.
 Identifies required lazy enrichments (OCR, STT, Translation, Asset Loading)
-so expensive operations only run when explicitly required by an active action plan.
+so expensive operations only run when explicitly required by an active overlay action.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 from src.domain.entities.action_plan import FrameWindowAction, RenderingPlan, TrackActionPlan
 from src.domain.entities.canonical_detection import ClassAwareTrack
-from src.domain.entities.processing_policy import ActionType, ProcessingPolicyConfig
+from src.domain.entities.processing_policy import ProcessingPolicyConfig, BackgroundActionType, OverlayActionType
 
 
 class ActionPolicyEngine:
@@ -39,15 +38,20 @@ class ActionPolicyEngine:
             if not class_policy.enabled:
                 status = "ignored"
                 reason = "class_disabled"
-                action_type = ActionType.PRESERVE.value
+                bg_dict = {"action": BackgroundActionType.PRESERVE.value}
+                overlay_dicts = []
             elif track.mean_confidence < class_policy.confidence_threshold:
                 status = "ignored"
                 reason = "below_confidence_threshold"
-                action_type = ActionType.PRESERVE.value
+                bg_dict = {"action": BackgroundActionType.PRESERVE.value}
+                overlay_dicts = []
             else:
                 status = "active"
-                reason = "policy_preserve" if class_policy.action == ActionType.PRESERVE.value else ""
-                action_type = class_policy.action
+                reason = "policy_preserve" if class_policy.background.action == BackgroundActionType.PRESERVE.value else ""
+                bg_dict = class_policy.background.to_dict()
+                # Sort overlays deterministically by z_order
+                sorted_overlays = sorted(class_policy.overlays, key=lambda o: o.z_order)
+                overlay_dicts = [o.to_dict() for o in sorted_overlays]
 
             # Construct frame window actions for exact temporal-spatial rendering
             frame_windows: List[FrameWindowAction] = []
@@ -63,39 +67,20 @@ class ActionPolicyEngine:
                     )
                 )
 
-            params: Dict[str, Any] = {
-                "blur_strength": class_policy.blur_strength,
-                "padding_px": class_policy.padding_px,
-                "solid_color_hex": class_policy.solid_color_hex,
-                "text_source": class_policy.text_source,
-                "target_language": class_policy.target_language,
-                "font": class_policy.font,
-                "font_size": class_policy.font_size,
-                "stroke_width": class_policy.stroke_width,
-                "placement": class_policy.placement,
-                "background_action": class_policy.background_action,
-                "opacity": class_policy.opacity,
-                "fit": class_policy.fit,
-                "scale": class_policy.scale,
-                "z_order": class_policy.z_order,
-            }
-
             action_plan = TrackActionPlan(
                 track_id=track.track_id,
                 class_id=track.class_id,
                 class_name=track.class_name,
-                action_type=action_type,
                 status=status,
                 reason=reason,
+                background=bg_dict,
+                overlays=overlay_dicts,
                 start_time=track.start_time,
                 end_time=track.end_time,
                 start_frame=track.start_frame,
                 end_frame=track.end_frame,
                 confidence=track.mean_confidence,
-                params=params,
                 frame_windows=frame_windows,
-                replacement_text="",
-                replacement_image_path=class_policy.image_asset_path,
             )
             plan_actions.append(action_plan)
 
@@ -112,26 +97,32 @@ class ActionPolicyEngine:
             },
         )
 
-    def get_tracks_requiring_ocr(self, plan: RenderingPlan) -> List[TrackActionPlan]:
-        return [
-            act for act in plan.actions
-            if act.status == "active"
-            and act.action_type == ActionType.REPLACE_TEXT.value
-            and act.params.get("text_source", "ocr") in ("ocr", "hybrid")
-        ]
+    def get_tracks_requiring_ocr(self, plan: RenderingPlan) -> List[tuple[TrackActionPlan, Dict[str, Any]]]:
+        results = []
+        for act in plan.actions:
+            if act.status != "active":
+                continue
+            for o in act.overlays:
+                if o.get("action") == OverlayActionType.REPLACE_TEXT.value and o.get("text_source", "ocr") in ("ocr", "hybrid"):
+                    results.append((act, o))
+        return results
 
-    def get_tracks_requiring_stt(self, plan: RenderingPlan) -> List[TrackActionPlan]:
-        return [
-            act for act in plan.actions
-            if act.status == "active"
-            and act.action_type == ActionType.REPLACE_TEXT.value
-            and act.params.get("text_source") in ("stt", "hybrid")
-        ]
+    def get_tracks_requiring_stt(self, plan: RenderingPlan) -> List[tuple[TrackActionPlan, Dict[str, Any]]]:
+        results = []
+        for act in plan.actions:
+            if act.status != "active":
+                continue
+            for o in act.overlays:
+                if o.get("action") == OverlayActionType.REPLACE_TEXT.value and o.get("text_source") in ("stt", "hybrid"):
+                    results.append((act, o))
+        return results
 
-    def get_tracks_requiring_assets(self, plan: RenderingPlan) -> List[TrackActionPlan]:
-        return [
-            act for act in plan.actions
-            if act.status == "active"
-            and act.action_type == ActionType.REPLACE_IMAGE.value
-            and act.replacement_image_path
-        ]
+    def get_tracks_requiring_assets(self, plan: RenderingPlan) -> List[tuple[TrackActionPlan, Dict[str, Any]]]:
+        results = []
+        for act in plan.actions:
+            if act.status != "active":
+                continue
+            for o in act.overlays:
+                if o.get("action") == OverlayActionType.REPLACE_IMAGE.value and o.get("image_asset_path"):
+                    results.append((act, o))
+        return results

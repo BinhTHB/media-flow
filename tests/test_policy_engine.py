@@ -1,5 +1,5 @@
 """
-Unit and Integration Tests for Policy-Driven Engine & Frontend-Ready Backend Boundary
+Unit and Integration Tests for Composable Policy Engine & Frontend-Ready Backend Boundary
 """
 
 import json
@@ -12,9 +12,13 @@ from pathlib import Path
 
 from src.domain.entities.canonical_detection import CanonicalDetection, ClassAwareTrack
 from src.domain.entities.processing_policy import (
-    ActionType,
+    BackgroundActionType,
+    OverlayActionType,
+    BackgroundActionConfig,
+    OverlayActionConfig,
     ClassPolicyConfig,
     ProcessingPolicyConfig,
+    PRESET_DEFAULT,
     PRESET_BLUR_ALL,
     PRESET_TRANSLATE_SUBTITLE,
     PRESET_PRESERVE_ALL,
@@ -28,18 +32,21 @@ from src.application.dto.processing_request import ProcessingRequest, Processing
 
 
 def test_processing_policy_defaults_and_presets():
-    policy = PRESET_BLUR_ALL
-    assert policy.subtitle.action == "blur"
-    assert policy.watermark.action == "blur"
-    assert policy.logo.action == "blur"
-    assert policy.other_burn_in_text.action == "blur"
+    policy = PRESET_DEFAULT
+    assert policy.subtitle.background.action == "blur"
+    assert policy.watermark.background.action == "blur"
+    assert policy.logo.background.action == "blur"
+    assert policy.other_burn_in_text.background.action == "preserve"
 
     preset_trans = get_preset_policy("translate-subtitle")
-    assert preset_trans.subtitle.action == "replace_text"
-    assert preset_trans.watermark.action == "preserve"
+    assert preset_trans.subtitle.overlays[0].action == "replace_text"
+    assert preset_trans.watermark.background.action == "preserve"
 
-    with pytest.raises(ValueError, match="Invalid ActionType"):
-        ActionType.from_str("invalid_action")
+    with pytest.raises(ValueError, match="Invalid BackgroundActionType"):
+        BackgroundActionType.from_str("invalid_bg_action")
+
+    with pytest.raises(ValueError, match="Invalid OverlayActionType"):
+        OverlayActionType.from_str("invalid_overlay_action")
 
     with pytest.raises(ValueError, match="Unknown preset"):
         get_preset_policy("invalid-preset-name")
@@ -96,7 +103,7 @@ def test_blur_all_all_eligible_tracks_blur():
 
     for act in plan.actions:
         assert act.status == "active"
-        assert act.action_type == "blur"
+        assert act.background["action"] == "blur"
         assert act.reason == ""
 
 
@@ -123,7 +130,11 @@ def test_below_threshold_status_ignored_not_preserve():
 
 def test_preserve_action_intentional():
     policy = ProcessingPolicyConfig(
-        watermark=ClassPolicyConfig(action="preserve", confidence_threshold=0.20)
+        watermark=ClassPolicyConfig(
+            enabled=True,
+            confidence_threshold=0.20,
+            background=BackgroundActionConfig(action="preserve"),
+        )
     )
     tracker = ClassAwareTracker(video_width=1000, video_height=500)
     dets = [
@@ -141,12 +152,11 @@ def test_preserve_action_intentional():
     assert len(plan.actions) == 1
     act = plan.actions[0]
     assert act.status == "active"
-    assert act.action_type == "preserve"
+    assert act.background["action"] == "preserve"
     assert act.reason == "policy_preserve"
 
 
-def test_replace_image_with_alpha_png(tmp_path):
-    # Create test PNG with alpha channel
+def test_replace_image_overlay_with_alpha_png(tmp_path):
     png_path = tmp_path / "test_logo.png"
     img = np.zeros((50, 50, 4), dtype=np.uint8)
     img[:, :, 2] = 255  # Red box
@@ -154,7 +164,11 @@ def test_replace_image_with_alpha_png(tmp_path):
     cv2.imwrite(str(png_path), img)
 
     policy = ProcessingPolicyConfig(
-        logo=ClassPolicyConfig(action="replace_image", image_asset_path=str(png_path))
+        logo=ClassPolicyConfig(
+            enabled=True,
+            background=BackgroundActionConfig(action="blur"),
+            overlays=[OverlayActionConfig(action="replace_image", image_asset_path=str(png_path))],
+        )
     )
     tracker = ClassAwareTracker(video_width=1000, video_height=500)
     dets = [
@@ -172,20 +186,19 @@ def test_replace_image_with_alpha_png(tmp_path):
     lazy_service = LazyEnrichmentService()
     enriched = lazy_service.enrich_plan(plan, tracks, "dummy.mp4")
 
-    assert enriched.actions[0].action_type == "replace_image"
-    assert enriched.actions[0].replacement_image_path == str(png_path)
+    assert enriched.actions[0].background["action"] == "blur"
+    assert enriched.actions[0].overlays[0]["action"] == "replace_image"
+    assert enriched.actions[0].overlays[0]["image_asset_path"] == str(png_path)
 
 
 def test_job_workspace_isolation(tmp_path):
     ws_base = tmp_path / "jobs"
     service = MediaProcessingService(base_workspace_dir=str(ws_base))
 
-    # Job 1 workspace path
     job1_dir = ws_base / "job_101"
     job1_dir.mkdir(parents=True, exist_ok=True)
     (job1_dir / "action_plan.json").write_text('{"job_id": "job_101"}', encoding="utf-8")
 
-    # Job 2 workspace path
     job2_dir = ws_base / "job_102"
     job2_dir.mkdir(parents=True, exist_ok=True)
     (job2_dir / "action_plan.json").write_text('{"job_id": "job_102"}', encoding="utf-8")
@@ -224,13 +237,12 @@ def test_config_override_precedence():
         preset="translate-subtitle",
     )
     resolved = req.resolve_policy()
-    assert resolved.subtitle.action == "replace_text"
+    assert resolved.subtitle.overlays[0].action == "replace_text"
 
-    # Direct policy_config override takes precedence over preset
     custom_policy = PRESET_BLUR_ALL
     req.policy_config = custom_policy
     resolved2 = req.resolve_policy()
-    assert resolved2.subtitle.action == "blur"
+    assert resolved2.subtitle.background.action == "blur"
 
 
 def test_lazy_enrichment_skips_expensive_providers_for_blur():

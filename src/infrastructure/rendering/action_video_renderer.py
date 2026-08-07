@@ -1,15 +1,13 @@
 """
 Action Video Renderer
 
-Executes a RenderingPlan on an input video file using OpenCV pixel manipulation
-and FFmpeg encoding/audio-muxing.
+Executes a composable RenderingPlan (Background Action + Overlay Actions) on an input video
+using OpenCV pixel manipulation and FFmpeg audio-muxing/encoding.
 
-Actions supported:
-- blur: Real pixel Gaussian blur over frame bounding boxes.
-- solid_cover: Solid rectangle fill over bounding boxes.
-- replace_image: Alpha-composited PNG/JPEG image overlay fitted to bounding boxes.
-- replace_text: Vietnamese Unicode text rendering via PIL.
-- preserve: No pixel modification.
+Execution Order per frame window:
+1. Background action (blur | solid_cover | preserve)
+2. Image overlays (sorted by z_order)
+3. Text overlays (sorted by z_order)
 """
 
 from __future__ import annotations
@@ -21,14 +19,14 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from src.domain.entities.action_plan import RenderingPlan, TrackActionPlan
-from src.domain.entities.processing_policy import ActionType
+from src.domain.entities.processing_policy import BackgroundActionType, OverlayActionType
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +60,15 @@ class ActionVideoRenderer:
         temp_dir.mkdir(parents=True, exist_ok=True)
         temp_video = temp_dir / "rendered_no_audio.mp4"
 
-        # Index frame actions by frame_index for fast frame-by-frame lookup
+        # Index frame actions by frame_index for fast lookup
         actions_by_frame: Dict[int, List[Tuple[TrackActionPlan, Tuple[int, int, int, int]]]] = {}
         for action in rendering_plan.actions:
-            if action.action_type == ActionType.PRESERVE.value:
+            if action.status != "active":
                 continue
             for fw in action.frame_windows:
                 fi = fw.frame_index
                 x1, y1, x2, y2 = [int(round(v)) for v in fw.bbox_xyxy]
-                # Apply padding
-                padding = int(action.params.get("padding_px", 4))
+                padding = int(action.background.get("padding_px", 4))
                 x1 = max(0, x1 - padding)
                 y1 = max(0, y1 - padding)
                 x2 = min(rendering_plan.video_width, x2 + padding)
@@ -100,11 +97,13 @@ class ActionVideoRenderer:
 
             if frame_idx in actions_by_frame:
                 frame_actions = actions_by_frame[frame_idx]
-                for action_plan, (x1, y1, x2, y2) in frame_actions:
-                    act_type = action_plan.action_type
 
-                    if act_type == ActionType.BLUR.value:
-                        strength = float(action_plan.params.get("blur_strength", 25.0))
+                # Step 1: Render Background Actions
+                for action_plan, (x1, y1, x2, y2) in frame_actions:
+                    bg_act = action_plan.background.get("action", "preserve")
+
+                    if bg_act == BackgroundActionType.BLUR.value:
+                        strength = float(action_plan.background.get("blur_strength", 25.0))
                         ksize = int(round(strength))
                         if ksize % 2 == 0:
                             ksize += 1
@@ -114,67 +113,62 @@ class ActionVideoRenderer:
                             blurred_roi = cv2.GaussianBlur(roi, (ksize, ksize), 0)
                             frame[y1:y2, x1:x2] = blurred_roi
 
-                    elif act_type == ActionType.SOLID_COVER.value:
-                        color_hex = action_plan.params.get("solid_color_hex", "#000000")
+                    elif bg_act == BackgroundActionType.SOLID_COVER.value:
+                        color_hex = action_plan.background.get("solid_color_hex", "#000000")
                         bgr = _hex_to_bgr(color_hex)
                         frame[y1:y2, x1:x2] = bgr
 
-                    elif act_type == ActionType.REPLACE_IMAGE.value:
-                        img_path = action_plan.replacement_image_path
-                        if img_path and os.path.exists(img_path):
-                            if img_path not in loaded_image_assets:
-                                asset = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
-                                loaded_image_assets[img_path] = asset
-                            asset = loaded_image_assets[img_path]
+                # Step 2 & 3: Render Image & Text Overlays
+                for action_plan, (x1, y1, x2, y2) in frame_actions:
+                    for overlay in action_plan.overlays:
+                        o_type = overlay.get("action")
 
-                            if asset is not None:
-                                target_w = x2 - x1
-                                target_h = y2 - y1
-                                resized = cv2.resize(asset, (target_w, target_h), interpolation=cv2.INTER_AREA)
+                        if o_type == OverlayActionType.REPLACE_IMAGE.value:
+                            img_path = overlay.get("image_asset_path")
+                            if img_path and os.path.exists(img_path):
+                                if img_path not in loaded_image_assets:
+                                    asset = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+                                    loaded_image_assets[img_path] = asset
+                                asset = loaded_image_assets[img_path]
 
-                                if resized.shape[2] == 4:
-                                    # Alpha compositing
-                                    alpha = (resized[:, :, 3] / 255.0) * float(action_plan.params.get("opacity", 1.0))
-                                    for c in range(3):
-                                        frame[y1:y2, x1:x2, c] = (
-                                            alpha * resized[:, :, c] + (1.0 - alpha) * frame[y1:y2, x1:x2, c]
-                                        )
-                                else:
-                                    frame[y1:y2, x1:x2] = resized[:, :, :3]
+                                if asset is not None:
+                                    target_w = x2 - x1
+                                    target_h = y2 - y1
+                                    resized = cv2.resize(asset, (target_w, target_h), interpolation=cv2.INTER_AREA)
 
-                    elif act_type == ActionType.REPLACE_TEXT.value:
-                        text = action_plan.replacement_text
-                        if text:
-                            # 1. Blur or cover background region
-                            roi = frame[y1:y2, x1:x2]
-                            if roi.size > 0:
-                                blurred = cv2.GaussianBlur(roi, (25, 25), 0)
-                                frame[y1:y2, x1:x2] = blurred
+                                    if resized.shape[2] == 4:
+                                        alpha = (resized[:, :, 3] / 255.0) * float(overlay.get("opacity", 1.0))
+                                        for c in range(3):
+                                            frame[y1:y2, x1:x2, c] = (
+                                                alpha * resized[:, :, c] + (1.0 - alpha) * frame[y1:y2, x1:x2, c]
+                                            )
+                                    else:
+                                        frame[y1:y2, x1:x2] = resized[:, :, :3]
 
-                            # 2. Render text with PIL for Unicode Vietnamese support
-                            pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                            draw = ImageDraw.Draw(pil_img)
+                        elif o_type == OverlayActionType.REPLACE_TEXT.value:
+                            text = overlay.get("replacement_text", "")
+                            if text:
+                                pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                                draw = ImageDraw.Draw(pil_img)
 
-                            box_h = y2 - y1
-                            font_size = max(16, int(box_h * 0.6))
-                            try:
-                                font = ImageFont.truetype(self.font_path or "arial.ttf", font_size)
-                            except OSError:
-                                font = ImageFont.load_default()
+                                box_h = y2 - y1
+                                font_size = overlay.get("font_size") or max(16, int(box_h * 0.6))
+                                try:
+                                    font = ImageFont.truetype(self.font_path or "arial.ttf", font_size)
+                                except OSError:
+                                    font = ImageFont.load_default()
 
-                            # Compute text box position
-                            bbox_text = draw.textbbox((0, 0), text, font=font)
-                            text_w = bbox_text[2] - bbox_text[0]
-                            text_h = bbox_text[3] - bbox_text[1]
+                                bbox_text = draw.textbbox((0, 0), text, font=font)
+                                text_w = bbox_text[2] - bbox_text[0]
+                                text_h = bbox_text[3] - bbox_text[1]
 
-                            tx = x1 + max(0, (x2 - x1 - text_w) // 2)
-                            ty = y1 + max(0, (y2 - y1 - text_h) // 2)
+                                tx = x1 + max(0, (x2 - x1 - text_w) // 2)
+                                ty = y1 + max(0, (y2 - y1 - text_h) // 2)
 
-                            # Outline
-                            stroke_w = max(1, font_size // 12)
-                            draw.text((tx, ty), text, font=font, fill=(255, 255, 255), stroke_width=stroke_w, stroke_fill=(0, 0, 0))
+                                stroke_w = overlay.get("stroke_width", 2)
+                                draw.text((tx, ty), text, font=font, fill=(255, 255, 255), stroke_width=stroke_w, stroke_fill=(0, 0, 0))
 
-                            frame = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                                frame = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
             writer.write(frame)
             frame_idx += 1
@@ -196,7 +190,6 @@ class ActionVideoRenderer:
         ]
 
         if ffmpeg_encoder == "nvenc" or (ffmpeg_encoder == "auto" and cv2.cuda.getCudaEnabledDeviceCount() > 0):
-            # Fast re-encode with NVENC if requested/available
             cmd = [
                 "ffmpeg",
                 "-y",
@@ -213,8 +206,7 @@ class ActionVideoRenderer:
 
         try:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as exc:
-            # Fallback to simple stream copy / CPU ffmpeg
+        except subprocess.CalledProcessError:
             cmd_fallback = [
                 "ffmpeg",
                 "-y",
@@ -229,7 +221,6 @@ class ActionVideoRenderer:
             ]
             subprocess.run(cmd_fallback, capture_output=True, text=True, check=True)
 
-        # Clean temp directory
         try:
             shutil.rmtree(temp_dir)
         except OSError:

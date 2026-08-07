@@ -1,8 +1,8 @@
 """
 Action Plan & Rendering Plan Domain Entities
 
-Defines machine-readable action plans for rendering video artifacts and exporting
-output/jobs/<job_id>/action_plan.json for inspection/frontend consumption.
+Defines machine-readable action plans for multi-action (background + overlays) composable rendering.
+Exports output/jobs/<job_id>/action_plan.json.
 """
 
 from __future__ import annotations
@@ -26,35 +26,31 @@ class TrackActionPlan:
     track_id: str
     class_id: int
     class_name: str
-    action_type: str  # blur | preserve | solid_cover | replace_text | replace_image
     status: str = "active"  # active | ignored
     reason: str = ""  # below_confidence_threshold | class_disabled | policy_preserve
+    background: Dict[str, Any] = field(default_factory=dict)  # action: preserve|blur|solid_cover
+    overlays: List[Dict[str, Any]] = field(default_factory=list)  # list of overlay actions
     start_time: float = 0.0
     end_time: float = 0.0
     start_frame: int = 0
     end_frame: int = 0
     confidence: float = 0.0
-    params: Dict[str, Any] = field(default_factory=dict)
     frame_windows: List[FrameWindowAction] = field(default_factory=list)
-    replacement_text: str = ""
-    replacement_image_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "track_id": self.track_id,
             "class_id": self.class_id,
             "class_name": self.class_name,
-            "action_type": self.action_type,
             "status": self.status,
             "reason": self.reason,
+            "background": self.background,
+            "overlays": self.overlays,
             "start_time": round(self.start_time, 4),
             "end_time": round(self.end_time, 4),
             "start_frame": self.start_frame,
             "end_frame": self.end_frame,
             "confidence": round(self.confidence, 4),
-            "params": self.params,
-            "replacement_text": self.replacement_text,
-            "replacement_image_path": self.replacement_image_path,
             "frame_windows": [asdict(fw) for fw in self.frame_windows],
         }
 
@@ -73,10 +69,14 @@ class RenderingPlan:
         counts: Dict[str, int] = {}
         for act in self.actions:
             if act.status == "active":
-                key = act.action_type
+                bg_act = act.background.get("action", "preserve")
+                counts[bg_act] = counts.get(bg_act, 0) + 1
+                for o in act.overlays:
+                    o_act = o.get("action")
+                    if o_act:
+                        counts[o_act] = counts.get(o_act, 0) + 1
             else:
-                key = "ignored"
-            counts[key] = counts.get(key, 0) + 1
+                counts["ignored"] = counts.get("ignored", 0) + 1
         return counts
 
     def to_dict(self) -> Dict[str, Any]:

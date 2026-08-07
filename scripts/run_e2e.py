@@ -50,9 +50,9 @@ def parse_args():
     )
     parser.add_argument(
         "--preset",
-        choices=["blur-all", "translate-subtitle", "preserve-all"],
-        default="blur-all",
-        help="Pre-built policy preset (default: blur-all)",
+        choices=["default", "blur-all", "translate-subtitle", "preserve-all"],
+        default="default",
+        help="Pre-built policy preset (default: default)",
     )
     parser.add_argument(
         "--policy", type=str, default="", help="Path to custom policy YAML configuration file"
@@ -111,14 +111,17 @@ def preflight_check(args):
         effective_device = "cpu"
         print("  ✓ Compute Device: cpu")
 
-    # 6. Credentials check only if policy requires text replacement
+    # 6. Credentials check only if policy requires replace_text overlay
     policy = get_preset_policy(args.preset) if not args.policy else ProcessingPolicyConfig.from_yaml_file(args.policy)
-    needs_gemini = any(
-        cp.action == "replace_text" for cp in (policy.subtitle, policy.watermark, policy.logo, policy.other_burn_in_text)
-    )
+    needs_gemini = False
+    for class_cfg in (policy.subtitle, policy.watermark, policy.logo, policy.other_burn_in_text):
+        for o in class_cfg.overlays:
+            if o.action == "replace_text":
+                needs_gemini = True
+
     if needs_gemini:
         if not os.getenv("GEMINI_API_KEY"):
-            raise RuntimeError("BLOCKED BY EXTERNAL CREDENTIAL: GEMINI_API_KEY environment variable is required for replace_text action.")
+            raise RuntimeError("BLOCKED BY EXTERNAL CREDENTIAL: GEMINI_API_KEY environment variable is required for replace_text overlay action.")
         print("  ✓ External Credential: GEMINI_API_KEY verified")
     else:
         print("  ✓ Offline Execution: Policy does not require Gemini API. GEMINI_API_KEY check bypassed.")
@@ -147,11 +150,11 @@ def main():
     print("[2/5 - 5/5] Running Policy-Driven Media Processing Pipeline")
     print("=" * 60)
     print(f"  Preset / Policy: {args.preset if not args.policy else args.policy}")
-    print(f"  Class Actions:")
-    print(f"    - Subtitle:           {policy.subtitle.action}")
-    print(f"    - Watermark:          {policy.watermark.action}")
-    print(f"    - Logo:               {policy.logo.action}")
-    print(f"    - Other Burn-in Text: {policy.other_burn_in_text.action}\n")
+    print(f"  Class Policies:")
+    print(f"    - Subtitle:           bg={policy.subtitle.background.action}, overlays={[o.action for o in policy.subtitle.overlays]}")
+    print(f"    - Watermark:          bg={policy.watermark.background.action}, overlays={[o.action for o in policy.watermark.overlays]}")
+    print(f"    - Logo:               bg={policy.logo.background.action}, overlays={[o.action for o in policy.logo.overlays]}")
+    print(f"    - Other Burn-in Text: bg={policy.other_burn_in_text.background.action}, overlays={[o.action for o in policy.other_burn_in_text.overlays]}\n")
 
     service = MediaProcessingService()
     result = service.process_video(request)

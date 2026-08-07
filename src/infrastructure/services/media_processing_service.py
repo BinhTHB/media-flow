@@ -22,7 +22,7 @@ from src.application.services.action_policy_engine import ActionPolicyEngine
 from src.domain.entities.canonical_detection import CanonicalDetection, ClassAwareTrack
 from src.domain.entities.processing_policy import ProcessingPolicyConfig
 from src.domain.services.class_aware_tracker import ClassAwareTracker
-from src.infrastructure.benchmark.hybrid_subtitle.yolo_proposal import YoloTextProposalProvider
+from src.infrastructure.detection.yolo_proposal_provider import YoloTextProposalProvider
 from src.infrastructure.rendering.action_video_renderer import ActionVideoRenderer
 from src.infrastructure.services.lazy_enrichment_service import LazyEnrichmentService
 

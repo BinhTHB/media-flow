@@ -5,7 +5,7 @@ Manages lazy execution of expensive downstream providers (Gemini OCR, Gemini Tra
 Whisper ASR, Image Asset resolution).
 
 Ensures expensive dependencies are NEVER loaded or invoked unless an Action Plan explicitly
-requires them (e.g., action_type == replace_text or replace_image).
+requires them (e.g. overlay action == replace_text or replace_image).
 """
 
 from __future__ import annotations
@@ -13,11 +13,10 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Tuple
 
 from src.domain.entities.action_plan import RenderingPlan, TrackActionPlan
 from src.domain.entities.canonical_detection import ClassAwareTrack
-from src.domain.entities.processing_policy import ActionType
 
 logger = logging.getLogger(__name__)
 
@@ -42,46 +41,48 @@ class LazyEnrichmentService:
         input_video_path: str,
         device: str = "cuda",
     ) -> RenderingPlan:
-        # Only active actions need replacement text or replacement image
-        text_tracks = [
-            act for act in rendering_plan.actions
-            if act.status == "active" and act.action_type == ActionType.REPLACE_TEXT.value
-        ]
-        image_tracks = [
-            act for act in rendering_plan.actions
-            if act.status == "active" and act.action_type == ActionType.REPLACE_IMAGE.value
-        ]
+        # Collect active overlay targets
+        text_overlays: List[Tuple[TrackActionPlan, Dict[str, Any]]] = []
+        image_overlays: List[Tuple[TrackActionPlan, Dict[str, Any]]] = []
 
-        if not text_tracks and not image_tracks:
-            logger.info("LazyEnrichment: No active tracks require text/image enrichment. Skipping OCR, Translation, and STT.")
+        for act in rendering_plan.actions:
+            if act.status != "active":
+                continue
+            for o in act.overlays:
+                act_type = o.get("action")
+                if act_type == "replace_text":
+                    text_overlays.append((act, o))
+                elif act_type == "replace_image":
+                    image_overlays.append((act, o))
+
+        if not text_overlays and not image_overlays:
+            logger.info("LazyEnrichment: No active overlays require enrichment. Skipping OCR, Translation, and STT.")
             return rendering_plan
 
-        # Enrich text replacement tracks if present
-        if text_tracks:
-            logger.info("LazyEnrichment: Enriching %d text replacement tracks.", len(text_tracks))
-            self._enrich_text_replacement(text_tracks, tracks, input_video_path, device, rendering_plan)
+        if text_overlays:
+            logger.info("LazyEnrichment: Enriching %d text overlays.", len(text_overlays))
+            self._enrich_text_overlays(text_overlays, tracks, input_video_path, device, rendering_plan)
 
-        # Enrich image replacement tracks if present
-        if image_tracks:
-            logger.info("LazyEnrichment: Validating %d image replacement tracks.", len(image_tracks))
-            self._enrich_image_replacement(image_tracks)
+        if image_overlays:
+            logger.info("LazyEnrichment: Validating %d image overlays.", len(image_overlays))
+            self._enrich_image_overlays(image_overlays)
 
         return rendering_plan
 
-    def _enrich_text_replacement(
+    def _enrich_text_overlays(
         self,
-        text_action_plans: List[TrackActionPlan],
+        text_overlays: List[Tuple[TrackActionPlan, Dict[str, Any]]],
         tracks: List[ClassAwareTrack],
         input_video_path: str,
         device: str,
         rendering_plan: RenderingPlan,
     ) -> None:
-        needs_ocr = any(act.params.get("text_source", "ocr") in ("ocr", "hybrid") for act in text_action_plans)
-        needs_stt = any(act.params.get("text_source") in ("stt", "hybrid") for act in text_action_plans)
+        needs_ocr = any(o.get("text_source", "ocr") in ("ocr", "hybrid") for _, o in text_overlays)
+        needs_stt = any(o.get("text_source") in ("stt", "hybrid") for _, o in text_overlays)
 
         if (needs_ocr or needs_stt) and self.translation_provider_name == "gemini":
             if not os.getenv("GEMINI_API_KEY"):
-                raise RuntimeError("BLOCKED BY EXTERNAL CREDENTIAL: GEMINI_API_KEY is required for replace_text action.")
+                raise RuntimeError("BLOCKED BY EXTERNAL CREDENTIAL: GEMINI_API_KEY is required for replace_text overlay action.")
 
         from src.interfaces.config.config_loader import ConfigLoader
         from src.infrastructure.factory.provider_factory import ProviderFactory
@@ -101,7 +102,6 @@ class LazyEnrichmentService:
         ocr_provider = factory.create_ocr_provider(name=self.ocr_provider_name) if needs_ocr else None
         speech_provider = factory.create_speech_provider(name=self.speech_provider_name) if needs_stt else None
 
-        # Run STT if requested
         speech_segments = []
         if needs_stt and speech_provider is not None:
             video_provider = factory.create_video_provider("ffmpeg")
@@ -110,12 +110,12 @@ class LazyEnrichmentService:
 
         track_map = {t.track_id: t for t in tracks}
 
-        for act in text_action_plans:
+        for act, overlay in text_overlays:
             track = track_map.get(act.track_id)
             if not track or not track.groups:
                 continue
 
-            text_source = act.params.get("text_source", "ocr")
+            text_source = overlay.get("text_source", "ocr")
             raw_text = ""
 
             if text_source in ("ocr", "hybrid") and ocr_provider is not None:
@@ -153,7 +153,6 @@ class LazyEnrichmentService:
                         if res and len(res) > 0:
                             raw_text = res[0].text
 
-            # If text_source is STT or OCR yielded nothing in hybrid mode, try matching speech segments
             if (text_source == "stt" or (text_source == "hybrid" and not raw_text)) and speech_segments:
                 overlapping = [
                     s for s in speech_segments
@@ -162,19 +161,20 @@ class LazyEnrichmentService:
                 if overlapping:
                     raw_text = " ".join(s.text for s in overlapping)
 
+            target_lang = overlay.get("target_language", self.target_language)
             if raw_text and hasattr(translation_provider, "translate"):
                 from src.domain.entities.segment import Segment
                 seg = Segment(id=f"seg_{act.track_id}", start=act.start_time, end=act.end_time, text=raw_text)
-                translated = translation_provider.translate([seg], self.target_language)
+                translated = translation_provider.translate([seg], target_lang)
                 if translated and len(translated) > 0:
-                    act.replacement_text = translated[0].translated_text or raw_text
+                    overlay["replacement_text"] = translated[0].translated_text or raw_text
                 else:
-                    act.replacement_text = raw_text
+                    overlay["replacement_text"] = raw_text
             elif raw_text:
-                act.replacement_text = raw_text
+                overlay["replacement_text"] = raw_text
 
-    def _enrich_image_replacement(self, image_action_plans: List[TrackActionPlan]) -> None:
-        for act in image_action_plans:
-            asset_path = act.replacement_image_path
+    def _enrich_image_overlays(self, image_overlays: List[Tuple[TrackActionPlan, Dict[str, Any]]]) -> None:
+        for _, overlay in image_overlays:
+            asset_path = overlay.get("image_asset_path")
             if not asset_path or not os.path.exists(asset_path):
-                raise FileNotFoundError(f"Image asset for replace_image action not found at: {asset_path}")
+                raise FileNotFoundError(f"Image asset for replace_image overlay not found at: {asset_path}")
