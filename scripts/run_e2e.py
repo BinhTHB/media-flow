@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Media-Flow End-to-End Runner (Policy-Driven Architecture)
+MediaFlow End-to-End Runner (Feature-First Modular Clean Architecture V2)
 
-Executes the unified production pipeline:
-YOLO 4-class Detection -> Class-Aware Tracker -> Action Policy Engine -> RenderingPlan -> Lazy Enrichment -> Video Renderer -> Output Validation.
+Executes video processing via ProcessVideoUseCase, AudioPipeline, and VisualPipeline.
 """
 
 import argparse
@@ -33,14 +32,21 @@ if env_path.exists():
                     os.environ[k] = v
 
 import torch
-from src.application.dto.processing_request import ProcessingRequest
-from src.infrastructure.services.media_processing_service import MediaProcessingService
-from src.domain.entities.processing_policy import ProcessingPolicyConfig, get_preset_policy
+from src.application.process_video import ProcessVideoUseCase
+from src.application.request import ProcessingRequest
+from src.features.audio.pipeline import AudioPipeline, AudioRequest
+from src.features.translation.service import TranslationService
+from src.features.visual.pipeline import VisualPipeline, VisualRequest
+from src.features.visual.subtitle.processor import SubtitleProcessor
+from src.infrastructure.asr.whisper import WhisperASRAdapter
+from src.infrastructure.detection.yolo import YoloDetectorAdapter
+from src.infrastructure.translation.gemini_translation import GeminiTranslationAdapter
+from src.infrastructure.video.ffmpeg import FFmpegVideoAdapter
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run policy-driven media-flow END-TO-END pipeline on a video."
+        description="Run feature-first modular MediaFlow END-TO-END pipeline on a video."
     )
     parser.add_argument(
         "--input", "-i", required=True, help="Path to input video file (e.g. test_videos/real_mini_benchmark/sample5.mp4)"
@@ -50,12 +56,12 @@ def parse_args():
     )
     parser.add_argument(
         "--preset",
-        choices=["default", "blur-all", "translate-subtitle", "preserve-all"],
-        default="default",
-        help="Pre-built policy preset (default: default)",
+        choices=["blur-all", "translate-subtitle", "preserve-all"],
+        default="blur-all",
+        help="Policy preset (default: blur-all)",
     )
     parser.add_argument(
-        "--policy", type=str, default="", help="Path to custom policy YAML configuration file"
+        "--policy", type=str, default="", help="Path to policy YAML file"
     )
     parser.add_argument(
         "--device", choices=["auto", "cuda", "cpu"], default="auto", help="Execution device (auto|cuda|cpu)"
@@ -111,53 +117,93 @@ def preflight_check(args):
         effective_device = "cpu"
         print("  ✓ Compute Device: cpu")
 
-    # 6. Credentials check only if policy requires replace_text overlay
-    policy = get_preset_policy(args.preset) if not args.policy else ProcessingPolicyConfig.from_yaml_file(args.policy)
-    needs_gemini = False
-    for class_cfg in (policy.subtitle, policy.watermark, policy.logo, policy.other_burn_in_text):
-        for o in class_cfg.overlays:
-            if o.action == "replace_text":
-                needs_gemini = True
-
+    # 6. Credentials check only if preset/policy requires translate-subtitle
+    needs_gemini = args.preset == "translate-subtitle" or (args.policy and "translate" in args.policy)
     if needs_gemini:
         if not os.getenv("GEMINI_API_KEY"):
-            raise RuntimeError("BLOCKED BY EXTERNAL CREDENTIAL: GEMINI_API_KEY environment variable is required for replace_text overlay action.")
+            raise RuntimeError("BLOCKED BY EXTERNAL CREDENTIAL: GEMINI_API_KEY environment variable is required for subtitle translation.")
         print("  ✓ External Credential: GEMINI_API_KEY verified")
     else:
         print("  ✓ Offline Execution: Policy does not require Gemini API. GEMINI_API_KEY check bypassed.")
 
     print("[Preflight] All checks passed successfully.\n")
-    return effective_device, input_path, output_path, policy
+    return effective_device, input_path, output_path
 
 
 def main():
     args = parse_args()
-    effective_device, input_path, output_path, policy = preflight_check(args)
-    job_id = args.job_id or f"job_policy_{int(time.time())}"
+    effective_device, input_path, output_path = preflight_check(args)
+    job_id = args.job_id or f"job_v2_{int(time.time())}"
+
+    # Build requests based on preset
+    audio_req = AudioRequest(enabled=False)
+    if args.preset == "translate-subtitle":
+        visual_req = VisualRequest(
+            enabled=True,
+            subtitle_enabled=True,
+            subtitle_mode="translate_replace",
+            logo_enabled=True,
+            logo_action="preserve",
+            watermark_enabled=True,
+            watermark_action="preserve",
+            other_text_enabled=True,
+            other_text_action="preserve",
+        )
+    elif args.preset == "preserve-all":
+        visual_req = VisualRequest(
+            enabled=True,
+            subtitle_enabled=True,
+            subtitle_mode="preserve",
+            logo_enabled=True,
+            logo_action="preserve",
+            watermark_enabled=True,
+            watermark_action="preserve",
+            other_text_enabled=True,
+            other_text_action="preserve",
+        )
+    else:  # blur-all / default
+        visual_req = VisualRequest(
+            enabled=True,
+            subtitle_enabled=True,
+            subtitle_mode="blur",
+            logo_enabled=True,
+            logo_action="blur",
+            watermark_enabled=True,
+            watermark_action="blur",
+            other_text_enabled=True,
+            other_text_action="blur",
+        )
 
     request = ProcessingRequest(
         job_id=job_id,
         input_video=str(input_path),
         output_video=str(output_path),
+        audio=audio_req,
+        visual=visual_req,
         device=effective_device,
-        preset=args.preset,
-        policy_config=policy if not args.policy else None,
-        policy_file=args.policy if args.policy else None,
         overwrite=args.overwrite or True,
     )
 
     print("=" * 60)
-    print("[2/5 - 5/5] Running Policy-Driven Media Processing Pipeline")
+    print("[2/5 - 5/5] Running Modular Clean Architecture V2 Pipeline")
     print("=" * 60)
-    print(f"  Preset / Policy: {args.preset if not args.policy else args.policy}")
-    print(f"  Class Policies:")
-    print(f"    - Subtitle:           bg={policy.subtitle.background.action}, overlays={[o.action for o in policy.subtitle.overlays]}")
-    print(f"    - Watermark:          bg={policy.watermark.background.action}, overlays={[o.action for o in policy.watermark.overlays]}")
-    print(f"    - Logo:               bg={policy.logo.background.action}, overlays={[o.action for o in policy.logo.overlays]}")
-    print(f"    - Other Burn-in Text: bg={policy.other_burn_in_text.background.action}, overlays={[o.action for o in policy.other_burn_in_text.overlays]}\n")
+    print(f"  Preset: {args.preset}")
+    print(f"  Visual Subtitle Mode: {visual_req.subtitle_mode}\n")
 
-    service = MediaProcessingService()
-    result = service.process_video(request)
+    # Wire Providers and Feature Pipelines
+    video_util = FFmpegVideoAdapter()
+    detector = YoloDetectorAdapter(device=effective_device)
+    
+    translation_service = None
+    if args.preset == "translate-subtitle":
+        translation_adapter = GeminiTranslationAdapter()
+        translation_service = TranslationService(translation_adapter)
+
+    subtitle_processor = SubtitleProcessor(translation_service=translation_service)
+    visual_pipeline = VisualPipeline(detector=detector, subtitle_processor=subtitle_processor)
+
+    use_case = ProcessVideoUseCase(visual_pipeline=visual_pipeline, video_util=video_util)
+    result = use_case.execute(request)
 
     print("=" * 60)
     print("E2E EXECUTION SUMMARY")
@@ -165,15 +211,12 @@ def main():
     print(f"Status:                      {result.status}")
     print(f"Input Video:                 {result.input_video_path}")
     print(f"Final Output Artifact:       {result.output_video_path}")
-    print(f"Action Plan Artifact:        {result.action_plan_path}")
+    print(f"Workspace Directory:         {result.workspace_dir}")
     print(f"Total Duration:              {result.timings.get('total', 0.0):.2f}s")
     print(f"Video Info:                  {result.resolution} @ {result.fps:.2f} fps ({result.duration_sec:.2f}s)")
     print(f"YOLO Detection Summary:")
     for cls_name, count in result.detections_summary.items():
         print(f"  - {cls_name}: {count}")
-    print(f"Actions Executed:")
-    for act_type, count in result.actions_summary.items():
-        print(f"  - {act_type}: {count}")
     print("=" * 60)
 
 
