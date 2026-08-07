@@ -51,6 +51,7 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.infrastructure.detection.evaluation.review_store import (
+    FRAME_MIMES,
     MANIFEST_COLUMNS,
     build_summary,
     create_backup_once,
@@ -58,6 +59,7 @@ from src.infrastructure.detection.evaluation.review_store import (
     load_label,
     load_manifest,
     migrate_manifest,
+    resolve_frame_path,
     save_label,
     update_manifest_row,
     validate_objects,
@@ -141,6 +143,15 @@ def _to_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"true", "1", "yes"}
+
+
+def _frame_id_safe(frame_id: str) -> bool:
+    """Reject frame ids that could enable path traversal or extension tricks."""
+    if not frame_id or "/" in frame_id or "\\" in frame_id:
+        return False
+    if frame_id in {"", ".", ".."} or ".." in frame_id:
+        return False
+    return True
 
 
 def _frame_detail(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,7 +241,9 @@ def _save_frame(frame_id: str, payload: Dict[str, Any]) -> Tuple[bool, Optional[
 # ---------------------------------------------------------------------------
 class ReviewHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
-        pass  # quiet
+        # Minimal per-request logging (paths only, never binary payloads).
+        sys.stderr.write(f"[review] {self.command} {self.path}\n")
+        sys.stderr.flush()
 
     def _send_json(self, status: int, payload: Any) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -252,7 +265,12 @@ class ReviewHandler(BaseHTTPRequestHandler):
             self._send_bytes(404, b"not found", "text/plain")
             return
         data = path.read_bytes()
-        self._send_bytes(200, data, ctype)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
@@ -276,6 +294,11 @@ class ReviewHandler(BaseHTTPRequestHandler):
             rows = self._apply_filters(rows, query)
             details = [_frame_detail(r) for r in rows]
             self._send_json(200, details)
+            return
+
+        m = _match("/api/debug/frame/<id>", path)
+        if m:
+            self._handle_debug_frame(m[0])
             return
 
         m = _match("/api/frame/<id>/context/<off>", path)
@@ -391,12 +414,42 @@ class ReviewHandler(BaseHTTPRequestHandler):
         return rows
 
     def _handle_image(self, frame_id: str) -> None:
-        for ext in (".jpg", ".png", ".jpeg"):
-            p = FRAMES_DIR / f"{frame_id}{ext}"
-            if p.is_file():
-                self._serve_static(p, "image/jpeg" if ext != ".png" else "image/png")
-                return
-        self._send_bytes(404, b"no image", "text/plain")
+        if not _frame_id_safe(frame_id):
+            self._send_bytes(400, b"bad frame id", "text/plain")
+            return
+        path = resolve_frame_path(FRAMES_DIR, frame_id)
+        if path is None:
+            sys.stderr.write(f"[review] FRAME MISSING frame_id={frame_id}\n")
+            sys.stderr.flush()
+            self._send_bytes(404, b"frame not found", "text/plain")
+            return
+        mime = FRAME_MIMES.get(path.suffix.lower(), "image/jpeg")
+        self._serve_static(path, mime)
+
+    def _handle_debug_frame(self, frame_id: str) -> None:
+        row = get_row(MANIFEST_PATH, frame_id)
+        path = resolve_frame_path(FRAMES_DIR, frame_id) if _frame_id_safe(frame_id) else None
+        info = {
+            "frame_id": frame_id,
+            "manifest_found": row is not None,
+            "resolved_path": str(path) if path else None,
+            "exists": path is not None,
+            "size_bytes": path.stat().st_size if path else 0,
+            "mime": FRAME_MIMES.get(path.suffix.lower(), "image/jpeg") if path else None,
+        }
+        if path:
+            probe = _probe_video(path)
+            if probe is None:
+                import cv2  # local import to keep startup light
+                img = cv2.imread(str(path))
+                info["width"] = img.shape[1] if img is not None else 0
+                info["height"] = img.shape[0] if img is not None else 0
+                info["decode_ok"] = img is not None
+            else:
+                info["width"] = probe["width"]
+                info["height"] = probe["height"]
+                info["decode_ok"] = True
+        self._send_json(200, info)
 
     def _handle_context_list(self, frame_id: str) -> None:
         row = get_row(MANIFEST_PATH, frame_id)

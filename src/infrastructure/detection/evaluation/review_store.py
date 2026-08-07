@@ -62,6 +62,32 @@ def default_row() -> Dict[str, Any]:
     }
 
 
+FRAME_EXTENSIONS = (".jpg", ".jpeg", ".png")
+
+#: Allowed extension -> MIME type for serving frame images.
+FRAME_MIMES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+
+
+def resolve_frame_path(frames_dir: Path, frame_id: str) -> Optional[Path]:
+    """Resolve the actual frame file for ``frame_id`` inside ``frames_dir``.
+
+    Walks the allowed extensions rather than assuming ``.jpg``. Returns
+    ``None`` when no matching file exists. The returned path is guaranteed to
+    be within ``frames_dir`` (no traversal possible because ``frame_id`` is used
+    verbatim as the stem with a controlled extension).
+    """
+    frames_dir = frames_dir.resolve()
+    for ext in FRAME_EXTENSIONS:
+        cand = frames_dir / f"{frame_id}{ext}"
+        if cand.is_file():
+            return cand
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Manifest IO
 # ---------------------------------------------------------------------------

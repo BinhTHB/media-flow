@@ -55,8 +55,11 @@
   .box-item.selected { outline: 2px solid var(--accent); }
   .box-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
   .box-item .meta { flex: 1; }
-  .canvas-wrap { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; background: #0b0e12; padding: 16px; }
-  canvas { max-width: 100%; box-shadow: 0 0 24px rgba(0,0,0,.6); cursor: crosshair; }
+  .canvas-wrap { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; background: #0b0e12; padding: 16px; }
+  .canvas-stage { position: relative; display: inline-block; line-height: 0; }
+  #frameImg { display: block; max-width: 100%; height: auto; cursor: crosshair; user-select: none; -webkit-user-drag: none; box-shadow: 0 0 24px rgba(0,0,0,.6); }
+  canvas#cv { position: absolute; top: 0; left: 0; cursor: crosshair; }
+  .frame-error { position: absolute; top: 0; left: 0; display: none; align-items: center; justify-content: center; background: rgba(11,14,18,.92); color: var(--danger); font-size: 14px; padding: 24px; text-align: center; z-index: 5; white-space: pre-wrap; min-width: 320px; min-height: 180px; }
   .nav-bar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: var(--panel); border-top: 1px solid #2c3742; }
   .nav-bar .spacer { flex: 1; }
   .hint { font-size: 11px; color: var(--muted); }
@@ -170,7 +173,11 @@
   </div>
 
   <div class="canvas-wrap">
-    <canvas id="cv"></canvas>
+    <div class="canvas-stage" id="canvasStage">
+      <div id="frameError" class="frame-error" style="display:none"></div>
+      <img id="frameImg" alt="frame" draggable="false">
+      <canvas id="cv"></canvas>
+    </div>
   </div>
 </div>
 
@@ -261,8 +268,7 @@ async function loadFrame(frameId) {
   $("contextStrip").innerHTML = "";
   updateFrameInfo();
   renderBoxList();
-  await loadImage();
-  render();
+  loadImage();  // draws annotations once the <img> finishes loading
 }
 
 function updateFrameInfo() {
@@ -290,31 +296,44 @@ function updatePosInfo() {
 }
 
 // ---------------------------------------------------------------- image
-async function loadImage() {
+function showFrameError(d, url) {
+  const errEl = $("frameError");
+  errEl.style.display = "flex";
+  errEl.textContent = "ERROR LOADING FRAME\n\n" +
+    "Frame: " + (d ? d.frame_id : "?") + "\n" +
+    "Requested URL: " + (url || "?") + "\n" +
+    "HTTP status: see server log (FRAME MISSING / 404)";
+}
+function loadImage() {
   const d = state.detail;
   if (!d) return;
-  const img = new Image();
-  img.crossOrigin = "anonymous";
-  await new Promise((res, rej) => {
-    img.onload = res; img.onerror = () => rej(new Error("image load failed"));
-    img.src = "/api/frame/" + encodeURIComponent(d.frame_id) + "/image";
-  });
-  state.image = img;
+  const imgEl = $("frameImg");
+  const errEl = $("frameError");
+  errEl.style.display = "none";
+  imgEl.onload = () => {
+    errEl.style.display = "none";
+    state.image = imgEl;
+    render();
+  };
+  imgEl.onerror = () => {
+    state.image = null;
+    showFrameError(d, imgEl.src);
+  };
+  imgEl.src = "/api/frame/" + encodeURIComponent(d.frame_id) + "/image";
 }
 
-function computeLayout() {
+function positionCanvas() {
   const d = state.detail;
-  const img = state.image;
-  if (!d || !img) return;
-  const wrap = document.querySelector(".canvas-wrap");
-  const maxW = Math.max(300, wrap.clientWidth - 40);
-  const maxH = Math.max(300, wrap.clientHeight - 40);
-  const scale = Math.min(maxW / d.width, maxH / d.height, 1);
-  state.scale = scale;
-  state.offX = (maxW - d.width * scale) / 2;
-  state.offY = (maxH - d.height * scale) / 2;
-  cv.width = d.width * scale;
-  cv.height = d.height * scale;
+  const imgEl = state.image;
+  if (!d || !imgEl || imgEl.naturalWidth === 0) return;
+  const w = imgEl.clientWidth || imgEl.naturalWidth;
+  const h = imgEl.clientHeight || imgEl.naturalHeight;
+  if (w <= 0 || h <= 0) return;
+  cv.width = w;
+  cv.height = h;
+  state.scale = w / d.width;
+  state.offX = 0;
+  state.offY = 0;
 }
 
 function toImageCoords(e) {
@@ -329,11 +348,9 @@ function toImageCoords(e) {
 function render() {
   const d = state.detail;
   if (!d) { ctx2d.clearRect(0, 0, cv.width, cv.height); return; }
-  computeLayout();
+  positionCanvas();
+  if (cv.width <= 0 || cv.height <= 0) return;
   ctx2d.clearRect(0, 0, cv.width, cv.height);
-  if (state.image) {
-    ctx2d.drawImage(state.image, state.offX, state.offY, d.width * state.scale, d.height * state.scale);
-  }
   state.boxes.forEach((b, i) => {
     const [x1, y1, x2, y2] = b.bbox_xyxy;
     const color = COLORS[b.class_name] || "#fff";
