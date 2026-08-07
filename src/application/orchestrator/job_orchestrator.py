@@ -793,7 +793,7 @@ class JobOrchestrator:
                                 )
                 display_segments = (
                     [segment for segment in segments if segment.source == "ocr"]
-                    if replacement_required
+                    if replacement_required and any(s.source == "ocr" for s in segments)
                     else segments
                 )
                 if replacement_required and not display_segments:

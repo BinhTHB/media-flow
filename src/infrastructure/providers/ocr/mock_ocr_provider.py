@@ -31,3 +31,6 @@ class MockOCRProvider(OCRProvider):
                 )
             )
         return segments
+
+    def read_confirmed_tracks(self, regions, frames, video_width, video_height) -> List[Segment]:
+        return self.detect_text(frames)
