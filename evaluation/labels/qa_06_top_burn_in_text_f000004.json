@@ -1,0 +1,23 @@
+{
+  "frame_id": "qa_06_top_burn_in_text_f000004",
+  "video_id": "qa_06_top_burn_in_text",
+  "frame_index": 4,
+  "timestamp_seconds": 2.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        83.0625,
+        150.46875,
+        451.5,
+        191.71875
+      ],
+      "confidence": 0.678223
+    }
+  ]
+}

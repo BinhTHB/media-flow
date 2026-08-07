@@ -1,0 +1,34 @@
+{
+  "frame_id": "qa_10_two_line_subtitle_f000044",
+  "video_id": "qa_10_two_line_subtitle",
+  "frame_index": 44,
+  "timestamp_seconds": 22.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        131.25,
+        788.25,
+        404.25,
+        828.75
+      ],
+      "confidence": 0.594727
+    },
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        87.5625,
+        742.125,
+        446.625,
+        786.75
+      ],
+      "confidence": 0.485352
+    }
+  ]
+}

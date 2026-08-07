@@ -1,0 +1,23 @@
+{
+  "frame_id": "qa_08_logo_sticker_f000040",
+  "video_id": "qa_08_logo_sticker",
+  "frame_index": 40,
+  "timestamp_seconds": 20.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        83.34375,
+        766.125,
+        452.25,
+        807.0
+      ],
+      "confidence": 0.665527
+    }
+  ]
+}

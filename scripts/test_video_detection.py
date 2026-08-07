@@ -62,6 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--conf-watermark", type=float, default=None)
     p.add_argument("--conf-logo", type=float, default=None)
     p.add_argument("--conf-other_burn_in_text", type=float, default=None)
+    p.add_argument(
+        "--classes", default=None,
+        help="Comma-separated classes to DETECT, e.g. subtitle,other_burn_in_text "
+             "(default: all classes)",
+    )
+    p.add_argument(
+        "--cover-classes", default=None,
+        help="Comma-separated classes allowed to be COVERED downstream, e.g. "
+             "subtitle,other_burn_in_text (default: all classes). Detection is "
+             "unaffected; this only sets the safe_cover policy.",
+    )
     return p
 
 
@@ -157,6 +168,17 @@ def main() -> int:
     if args.conf_other_burn_in_text is not None:
         conf["other_burn_in_text"] = args.conf_other_burn_in_text
     cfg.confidence = conf
+
+    # Class selection: --classes restricts which classes are detected;
+    # --cover-classes restricts which classes are allowed to be covered.
+    if args.classes:
+        selected = {c.strip() for c in args.classes.split(",") if c.strip()}
+        for name in cfg.class_policy:
+            cfg.class_policy[name]["detect"] = name in selected
+    if args.cover_classes:
+        allowed = {c.strip() for c in args.cover_classes.split(",") if c.strip()}
+        for name in cfg.class_policy:
+            cfg.class_policy[name]["safe_cover"] = name in allowed
 
     cap = cv2.VideoCapture(str(input_path))
     if not cap.isOpened():

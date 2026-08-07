@@ -24,6 +24,18 @@ DEFAULT_PER_CLASS_CONFIDENCE: Dict[str, float] = {
     "other_burn_in_text": 0.20,
 }
 
+# Per-class action policy. Distinguishes *detecting* a class from *acting* on it
+# (safe_cover = whether the class may be covered/removed downstream). The default
+# keeps every class detected and coverable, which matches the legacy pipeline
+# that treated all burn-in regions as coverable text. Providers/rendering may
+# tighten `safe_cover` later (e.g. watermark/logo usually should not be covered).
+DEFAULT_CLASS_POLICY: Dict[str, Dict[str, bool]] = {
+    "subtitle": {"detect": True, "safe_cover": True},
+    "watermark": {"detect": True, "safe_cover": True},
+    "logo": {"detect": True, "safe_cover": True},
+    "other_burn_in_text": {"detect": True, "safe_cover": True},
+}
+
 
 @dataclass
 class TemporalConfig:
@@ -46,6 +58,9 @@ class DetectionConfig:
     agnostic_nms: bool = False
     verbose: bool = False
     confidence: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_PER_CLASS_CONFIDENCE))
+    class_policy: Dict[str, Dict[str, bool]] = field(default_factory=lambda: {
+        k: dict(v) for k, v in DEFAULT_CLASS_POLICY.items()
+    })
     temporal: TemporalConfig = field(default_factory=TemporalConfig)
     config_path: Optional[str] = None
 
@@ -123,6 +138,19 @@ def load_detection_config(
             if isinstance(v, (int, float)):
                 per_class[str(k)] = float(v)
 
+    policy_raw = yolo_raw.get("class_policy", {})
+    class_policy = {k: dict(v) for k, v in DEFAULT_CLASS_POLICY.items()}
+    if isinstance(policy_raw, dict):
+        for k, v in policy_raw.items():
+            if not isinstance(v, dict):
+                continue
+            entry = class_policy.get(str(k), {"detect": True, "safe_cover": True})
+            if "detect" in v:
+                entry["detect"] = _b(v["detect"])
+            if "safe_cover" in v:
+                entry["safe_cover"] = _b(v["safe_cover"])
+            class_policy[str(k)] = entry
+
     temporal_raw = yolo_raw.get("temporal", {}) if isinstance(yolo_raw.get("temporal"), dict) else {}
     temporal = TemporalConfig(
         enabled=_b(temporal_raw.get("enabled", TemporalConfig().enabled)),
@@ -143,6 +171,7 @@ def load_detection_config(
         agnostic_nms=_b(yolo_raw.get("agnostic_nms", False)),
         verbose=_b(yolo_raw.get("verbose", False)),
         confidence=per_class,
+        class_policy=class_policy,
         temporal=temporal,
         config_path=str(resolved_p),
     )

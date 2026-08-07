@@ -1,0 +1,34 @@
+{
+  "frame_id": "qa_02_highres_portrait_f000300",
+  "video_id": "qa_02_highres_portrait",
+  "frame_index": 300,
+  "timestamp_seconds": 10.0,
+  "width": 1440,
+  "height": 2560,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 0,
+      "class_name": "subtitle",
+      "bbox_xyxy": [
+        410.0,
+        1932.0,
+        1035.0,
+        2058.0
+      ],
+      "confidence": 0.82959
+    },
+    {
+      "class_id": 0,
+      "class_name": "subtitle",
+      "bbox_xyxy": [
+        518.0,
+        0.0,
+        893.0,
+        29.09375
+      ],
+      "confidence": 0.082397
+    }
+  ]
+}

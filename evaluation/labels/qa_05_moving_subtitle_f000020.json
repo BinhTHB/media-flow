@@ -1,0 +1,23 @@
+{
+  "frame_id": "qa_05_moving_subtitle_f000020",
+  "video_id": "qa_05_moving_subtitle",
+  "frame_index": 20,
+  "timestamp_seconds": 10.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        84.0,
+        410.25,
+        452.625,
+        451.125
+      ],
+      "confidence": 0.689453
+    }
+  ]
+}

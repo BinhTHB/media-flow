@@ -1,0 +1,11 @@
+{
+  "frame_id": "qa_02_highres_portrait_f000630",
+  "video_id": "qa_02_highres_portrait",
+  "frame_index": 630,
+  "timestamp_seconds": 21.0,
+  "width": 1440,
+  "height": 2560,
+  "verified": false,
+  "label_source": "empty_unverified",
+  "objects": []
+}

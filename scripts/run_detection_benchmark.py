@@ -80,8 +80,13 @@ CSV_COLUMNS = [
     "frames",
     "duration_seconds",
     "processing_seconds",
+    "decode_seconds",
+    "inference_seconds",
+    "render_seconds",
+    "mux_seconds",
     "pipeline_fps",
     "inference_fps",
+    "raw_model_fps",
     "subtitle_count",
     "watermark_count",
     "logo_count",
@@ -113,6 +118,7 @@ class VideoStats:
     mux_seconds: float = 0.0
     pipeline_fps: float = 0.0
     inference_fps: float = 0.0
+    raw_model_fps: float = 0.0
     per_class: Dict[str, int] = field(default_factory=lambda: {
         "subtitle": 0, "watermark": 0, "logo": 0, "other_burn_in_text": 0,
     })
@@ -346,6 +352,7 @@ def run_one(
     st.render_seconds = round(render_t, 3)
     st.pipeline_fps = round(processed / st.processing_seconds, 2) if st.processing_seconds else 0.0
     st.inference_fps = round(processed / infer_t, 2) if infer_t else 0.0
+    st.raw_model_fps = st.inference_fps  # infer_t isolates model.predict wall-time
 
     # Audio preservation + duration delta.
     st.audio_present = has_audio_stream(video_path)
@@ -393,8 +400,13 @@ def stats_to_row(st: VideoStats) -> Dict[str, Any]:
         "frames": st.frames,
         "duration_seconds": st.duration_seconds,
         "processing_seconds": st.processing_seconds,
+        "decode_seconds": st.decode_seconds,
+        "inference_seconds": st.inference_seconds,
+        "render_seconds": st.render_seconds,
+        "mux_seconds": st.mux_seconds,
         "pipeline_fps": st.pipeline_fps,
         "inference_fps": st.inference_fps,
+        "raw_model_fps": st.raw_model_fps,
         "subtitle_count": st.per_class.get("subtitle", 0),
         "watermark_count": st.per_class.get("watermark", 0),
         "logo_count": st.per_class.get("logo", 0),

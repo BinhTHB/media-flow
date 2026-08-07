@@ -1,0 +1,11 @@
+{
+  "frame_id": "qa_03_landscape_16x9_f000044",
+  "video_id": "qa_03_landscape_16x9",
+  "frame_index": 44,
+  "timestamp_seconds": 22.0,
+  "width": 960,
+  "height": 540,
+  "verified": false,
+  "label_source": "empty_unverified",
+  "objects": []
+}

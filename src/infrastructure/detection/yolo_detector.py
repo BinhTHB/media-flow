@@ -28,6 +28,7 @@ from src.infrastructure.detection.paths import resolve_yolo_weights
 from src.infrastructure.detection.postprocess import (
     postprocess_frame,
 )
+from src.infrastructure.detection.postprocess import filter_by_detect_policy
 from src.infrastructure.detection.schemas import (
     Detection,
     DetectionResult,
@@ -57,6 +58,7 @@ class YoloBurnInDetector(BurnInDetector):
         agnostic_nms: Optional[bool] = None,
         verbose: Optional[bool] = None,
         confidence: Optional[Dict[str, float]] = None,
+        class_policy: Optional[Dict[str, Dict[str, bool]]] = None,
         temporal: Optional[Any] = None,
         *,
         share_model: bool = True,
@@ -80,6 +82,11 @@ class YoloBurnInDetector(BurnInDetector):
             self.config.verbose = verbose
         if confidence is not None:
             self.config.confidence = {**self.config.confidence, **confidence}
+        if class_policy is not None:
+            merged = {k: dict(v) for k, v in self.config.class_policy.items()}
+            for k, v in class_policy.items():
+                merged[str(k)] = {**merged.get(str(k), {"detect": True, "safe_cover": True}), **v}
+            self.config.class_policy = merged
 
         weights_path = resolve_yolo_weights(
             config_value=self.config.weights,
@@ -194,6 +201,33 @@ class YoloBurnInDetector(BurnInDetector):
             )
         return detections
 
+    def predict_raw(
+        self,
+        bgr_image,
+        *,
+        frame_index: int = 0,
+        timestamp_seconds: float = 0.0,
+        confidence: float = 0.05,
+    ) -> DetectionResult:
+        """Run raw model inference with a single low confidence cutoff.
+
+        Unlike :meth:`detect_frame` this skips per-class thresholding,
+        expansion, grouping and temporal stabilization, returning every box the
+        model emits above ``confidence`` (with model-space XYXY). This is the
+        preferred entry point for ground-truth evaluation and threshold sweeps,
+        where per-class thresholds are applied later and no post-processing is
+        wanted to bias IoU against hand-labeled boxes.
+        """
+        result = self._run_predict([bgr_image], conf=float(confidence))[0]
+        raw = self._result_to_detections(result, frame_index, timestamp_seconds)
+        return DetectionResult(
+            frame_index=frame_index,
+            timestamp_seconds=float(timestamp_seconds),
+            frame_width=int(result.orig_shape[1]),
+            frame_height=int(result.orig_shape[0]),
+            detections=raw,
+        )
+
     def detect_frame(
         self, bgr_image, *, frame_index: int = 0, timestamp_seconds: float = 0.0
     ) -> DetectionResult:
@@ -205,6 +239,7 @@ class YoloBurnInDetector(BurnInDetector):
             width=result.orig_shape[1],
             height=result.orig_shape[0],
         )
+        post = filter_by_detect_policy(post, self.config.class_policy)
         stabilized = self.temporal.stabilize(frame_index, post)
         res = DetectionResult(
             frame_index=frame_index,
@@ -242,6 +277,7 @@ class YoloBurnInDetector(BurnInDetector):
                 width=result.orig_shape[1],
                 height=result.orig_shape[0],
             )
+            post = filter_by_detect_policy(post, self.config.class_policy)
             stabilized = self.temporal.stabilize(fi, post)
             res = DetectionResult(
                 frame_index=fi,
@@ -254,12 +290,16 @@ class YoloBurnInDetector(BurnInDetector):
             out.append(res)
         return out
 
-    def _run_predict(self, images) -> Any:
+    def _run_predict(self, images, *, conf: Optional[float] = None) -> Any:
         import torch
 
         kwargs: Dict[str, Any] = {
             "imgsz": self.config.imgsz,
-            "conf": min(self.config.confidence.values()) if self.config.confidence else 0.15,
+            "conf": (
+                float(conf)
+                if conf is not None
+                else min(self.config.confidence.values()) if self.config.confidence else 0.15
+            ),
             "iou": self.config.iou,
             "max_det": self.config.max_det,
             "agnostic_nms": self.config.agnostic_nms,
@@ -290,6 +330,11 @@ class YoloBurnInDetector(BurnInDetector):
         except Exception:
             pass
         _DETECTOR_CACHE.pop(str(self.weights_path), None)
+
+    def reset_temporal(self) -> None:
+        """Reset the temporal stabilizer's active track state."""
+        if hasattr(self, "temporal") and self.temporal is not None:
+            self.temporal.reset()
 
 
 def get_yolo_detector(

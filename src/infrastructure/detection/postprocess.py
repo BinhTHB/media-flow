@@ -275,3 +275,32 @@ def postprocess_frame(
     if group_close:
         return group_close_boxes_by_class(deduped, gap_ratio=gap_ratio)
     return deduped
+
+
+def filter_by_detect_policy(
+    detections: Iterable[Detection],
+    policy: Dict[str, Dict[str, bool]],
+) -> List[Detection]:
+    """Drop detections whose class has ``detect: false`` in the class policy.
+
+    Separates *detection* from *action*: classes with ``detect: false`` are not
+    emitted at all, while classes with ``safe_cover: false`` are still detected
+    but must not be covered downstream. Default policy keeps every class both
+    detected and coverable (legacy behavior).
+    """
+    out: List[Detection] = []
+    for det in detections:
+        entry = (policy or {}).get(det.class_name, {})
+        if not entry.get("detect", True):
+            continue
+        out.append(det)
+    return out
+
+
+def class_safe_cover(
+    class_name: str,
+    policy: Optional[Dict[str, Dict[str, bool]]] = None,
+) -> bool:
+    """Return whether a class is allowed to be covered under the policy."""
+    entry = (policy or {}).get(class_name, {})
+    return bool(entry.get("safe_cover", True))

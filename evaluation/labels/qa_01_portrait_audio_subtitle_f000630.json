@@ -1,0 +1,34 @@
+{
+  "frame_id": "qa_01_portrait_audio_subtitle_f000630",
+  "video_id": "qa_01_portrait_audio_subtitle",
+  "frame_index": 630,
+  "timestamp_seconds": 21.0,
+  "width": 720,
+  "height": 1280,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 0,
+      "class_name": "subtitle",
+      "bbox_xyxy": [
+        291.5,
+        956.5,
+        424.75,
+        1024.0
+      ],
+      "confidence": 0.989258
+    },
+    {
+      "class_id": 1,
+      "class_name": "watermark",
+      "bbox_xyxy": [
+        291.5,
+        569.5,
+        342.0,
+        766.0
+      ],
+      "confidence": 0.191895
+    }
+  ]
+}

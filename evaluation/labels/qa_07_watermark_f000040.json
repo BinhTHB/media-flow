@@ -1,0 +1,45 @@
+{
+  "frame_id": "qa_07_watermark_f000040",
+  "video_id": "qa_07_watermark",
+  "frame_index": 40,
+  "timestamp_seconds": 20.0,
+  "width": 540,
+  "height": 960,
+  "verified": false,
+  "label_source": "prelabel_unverified",
+  "objects": [
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        83.15625,
+        765.75,
+        452.25,
+        807.0
+      ],
+      "confidence": 0.70752
+    },
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        40.78125,
+        468.75,
+        158.4375,
+        490.125
+      ],
+      "confidence": 0.365723
+    },
+    {
+      "class_id": 3,
+      "class_name": "other_burn_in_text",
+      "bbox_xyxy": [
+        390.0,
+        32.015625,
+        505.125,
+        57.890625
+      ],
+      "confidence": 0.13208
+    }
+  ]
+}
