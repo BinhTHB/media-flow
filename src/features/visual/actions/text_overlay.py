@@ -21,11 +21,15 @@ class TextOverlayAction:
         font_path: Optional[str] = None,
         font_size: Optional[int] = None,
         stroke_width: int = 2,
+        bg_box: bool = True,
+        bg_color: Tuple[int, int, int, int] = (15, 15, 15, 245),
     ):
         self.text = text
         self.font_path = font_path
         self.font_size = font_size
         self.stroke_width = stroke_width
+        self.bg_box = bg_box
+        self.bg_color = bg_color
 
     def execute(self, frame: Any, bbox: BBox) -> Any:
         import cv2
@@ -40,10 +44,17 @@ class TextOverlayAction:
         if target_w <= 0 or target_h <= 0:
             return frame
 
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
+
+        if self.bg_box:
+            overlay = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
+            draw_ov = ImageDraw.Draw(overlay)
+            draw_ov.rectangle([x1, y1, x2, y2], fill=self.bg_color)
+            pil_img = Image.alpha_composite(pil_img, overlay)
+
         draw = ImageDraw.Draw(pil_img)
 
-        font_size = self.font_size or max(16, int(target_h * 0.6))
+        font_size = self.font_size or max(16, int(target_h * 0.55))
         try:
             font = ImageFont.truetype(self.font_path or "arial.ttf", font_size)
         except OSError:
@@ -65,4 +76,4 @@ class TextOverlayAction:
             stroke_fill=(0, 0, 0),
         )
 
-        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        return cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)

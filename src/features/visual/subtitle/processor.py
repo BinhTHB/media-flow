@@ -11,6 +11,7 @@ import logging
 from typing import Any, List, Optional
 
 from src.core.contracts import OCRPort
+from src.core.models.bbox import BBox
 from src.core.models.subtitle_event import SubtitleEvent
 from src.core.models.track import Track
 from src.features.translation.service import TranslationService
@@ -168,14 +169,25 @@ class SubtitleProcessor:
         # Default to first (mid_ts crop)
         return valid[0]
 
+    @staticmethod
+    def get_source_suppression_bbox(bbox: BBox, pad_x: int = 18, pad_y: int = 14) -> BBox:
+        x1, y1, x2, y2 = bbox.xyxy_int()
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(bbox.frame_width, x2 + pad_x)
+        y2 = min(bbox.frame_height, y2 + pad_y)
+        return BBox(x1=x1, y1=y1, x2=x2, y2=y2, frame_width=bbox.frame_width, frame_height=bbox.frame_height)
+
     def render_frame_events(self, frame: Any, frame_index: int, events: List[SubtitleEvent]) -> Any:
         for event in events:
             # FAIL-SAFE: ONLY blur and render overlay when replacement status is READY!
             if event.replacement_status == "READY" and event.blur_applied and event.overlay_applied:
-                # Apply blur to original subtitle region
-                frame = self.blur_action.execute(frame, event.anchor_bbox)
-                # Render translated text overlay at source position
-                frame = self.renderer.render_event(frame, event, event.anchor_bbox)
+                # Calculate expanded source suppression region from Chinese source bbox
+                suppression_bbox = self.get_source_suppression_bbox(event.anchor_bbox, pad_x=18, pad_y=14)
+                # 1. Apply Gaussian Blur over entire source suppression region
+                frame = self.blur_action.execute(frame, suppression_bbox, padding_px=0)
+                # 2. Render dark backdrop box + Vietnamese text overlay over source suppression region
+                frame = self.renderer.render_event(frame, event, suppression_bbox)
             else:
                 # PRESERVE original source pixels!
                 pass

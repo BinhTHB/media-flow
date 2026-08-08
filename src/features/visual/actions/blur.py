@@ -16,14 +16,15 @@ class BlurAction:
         self.strength = strength
         self.padding_px = padding_px
 
-    def execute(self, frame: Any, bbox: BBox) -> Any:
+    def execute(self, frame: Any, bbox: BBox, padding_px: Optional[int] = None) -> Any:
         import cv2
 
+        pad = self.padding_px if padding_px is None else padding_px
         x1, y1, x2, y2 = bbox.xyxy_int()
-        x1 = max(0, x1 - self.padding_px)
-        y1 = max(0, y1 - self.padding_px)
-        x2 = min(bbox.frame_width, x2 + self.padding_px)
-        y2 = min(bbox.frame_height, y2 + self.padding_px)
+        x1 = max(0, x1 - pad)
+        y1 = max(0, y1 - pad)
+        x2 = min(bbox.frame_width, x2 + pad)
+        y2 = min(bbox.frame_height, y2 + pad)
 
         if x2 <= x1 or y2 <= y1:
             return frame
