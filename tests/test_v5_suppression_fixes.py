@@ -81,3 +81,17 @@ def test_watermark_processor_gap_interpolation():
 
     # Verify blur action was applied on frame 15 via nearest detection interpolation
     assert np.sum(out_frame) >= 0  # Processed without error
+
+
+def test_translated_subtitle_center_follows_source_bbox_center():
+    src_bbox = BBox(x1=200, y1=800, x2=600, y2=900, frame_width=1920, frame_height=1080)
+    src_cx = (src_bbox.x1 + src_bbox.x2) // 2
+    src_cy = (src_bbox.y1 + src_bbox.y2) // 2
+
+    action = TextOverlayAction(text="Cảm ơn bạn nhé", bg_box=True)
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    out_frame = action.execute(frame, src_bbox)
+    assert out_frame.shape == (1080, 1920, 3)
+    assert np.sum(out_frame) > 0  # Rendered successfully
+

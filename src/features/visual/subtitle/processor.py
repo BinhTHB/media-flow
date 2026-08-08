@@ -186,8 +186,8 @@ class SubtitleProcessor:
                 suppression_bbox = self.get_source_suppression_bbox(event.anchor_bbox, pad_x=18, pad_y=14)
                 # 1. Apply Gaussian Blur over entire source suppression region
                 frame = self.blur_action.execute(frame, suppression_bbox, padding_px=0)
-                # 2. Render dark backdrop box + Vietnamese text overlay over source suppression region
-                frame = self.renderer.render_event(frame, event, suppression_bbox)
+                # 2. Render Vietnamese text overlay centered at source bbox
+                frame = self.renderer.render_event(frame, event, event.anchor_bbox)
             else:
                 # PRESERVE original source pixels!
                 pass
