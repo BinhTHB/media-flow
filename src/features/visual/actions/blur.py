@@ -36,7 +36,8 @@ class BlurAction:
 
         roi = frame[y1:y2, x1:x2]
         if roi.size > 0:
-            blurred_roi = cv2.GaussianBlur(roi, (ksize, ksize), 0)
+            b1 = cv2.GaussianBlur(roi, (ksize, ksize), 0)
+            blurred_roi = cv2.GaussianBlur(b1, (ksize, ksize), 0)
             frame[y1:y2, x1:x2] = blurred_roi
 
         return frame

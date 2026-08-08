@@ -69,3 +69,21 @@ def test_single_frame_visual_noise_no_split():
     merged = segmenter._merge_micro_fragments(groups)
     # The 1-frame noise micro-fragment is merged back, avoiding fragmenting into 3 events
     assert len(merged) < len(groups)
+
+
+def test_first_usable_subtitle_detection_blurred_immediately():
+    from src.features.visual.actions.blur import BlurAction
+
+    blur_action = BlurAction(strength=45.0)
+    frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    frame[200:300, 200:400] = 255  # White text area
+    orig_frame = frame.copy()
+
+    bbox = BBox(x1=200, y1=200, x2=400, y2=300, frame_width=1000, frame_height=1000)
+
+    # First usable detection is blurred immediately
+    out_frame = blur_action.execute(frame, bbox)
+    assert out_frame.shape == frame.shape
+    # High-contrast white box should be smoothed/blurred
+    assert not np.array_equal(out_frame[200:300, 200:400], orig_frame[200:300, 200:400])
+

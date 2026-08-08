@@ -163,6 +163,15 @@ class VisualPipeline:
             for det in tr.detections:
                 sub_dets_by_frame.setdefault(det.frame_index, []).append(det)
 
+            # Backward-fill safety: If track starts at frame N, fill preceding frames (~25 frames / 0.8s) if unmapped
+            if tr.detections:
+                first_det = tr.detections[0]
+                start_idx = first_det.frame_index
+                backward_fill_count = int(round(fps * 0.85))  # ~25 frames
+                for b_idx in range(max(0, start_idx - backward_fill_count), start_idx):
+                    if b_idx not in sub_dets_by_frame:
+                        sub_dets_by_frame.setdefault(b_idx, []).append(first_det)
+
         while True:
             ret, frame = cap.read()
             if not ret or frame is None:
