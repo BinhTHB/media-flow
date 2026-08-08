@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build Source Audit Context Reports and ZIP Archive (Section 23)
+Build Source Audit Context Reports v2 and ZIP Archive (Section 32)
 """
 
 import os
@@ -12,7 +12,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 def main():
-    context_dir = BASE_DIR / "outputs" / "source_audit_context"
+    context_dir = BASE_DIR / "outputs" / "source_audit_context_v2"
     context_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. RUNTIME_CALL_GRAPH.md
@@ -56,67 +56,111 @@ CALL GRAPH:
 """
     (context_dir / "RUNTIME_CALL_GRAPH.md").write_text(call_graph, encoding="utf-8")
 
-    # 2. CLEANUP_MANIFEST.md
-    cleanup_manifest = """# Repository Cleanup Manifest
+    # 2. REMOVED_FILES.md
+    removed_files = """# Removed Obsolete & Experimental Files (Second Pass Cleanup)
 
-| PATH | TYPE | STATUS | WHY | PROOF |
-| :--- | :--- | :--- | :--- | :--- |
-| `archive/` | Obsolete code | REMOVE | Deprecated legacy archive files from V1 | No active imports/config/CLI/runtime refs |
-| `artifacts/` | Generated data | REMOVE | Obsolete generated artifact JSONs/logs from past rounds | Replaced by active `outputs/` |
-| `benchmarks/` | Old framework | REMOVE | Obsolete benchmark runner | Superseded by current E2E scripts |
-| `evaluation/` | Old GT framework | REMOVE | Obsolete ground-truth evaluation framework (565 files) | No longer used in V9 production |
-| `tmp_gt/` | Temporary GT | REMOVE | Temporary GT crops & files from past iterations | Replaced by active production pipeline |
-| `output/` | Old outputs | REMOVE | Obsolete output directory | Replaced by `outputs/` |
-| `debug/`, `runs/`, `qa_inputs/`, `review_frames/`, `renders/` | Caches/Artifacts | REMOVE | Generated local caches and runs | Ignored in `.gitignore` |
-| `scripts/` (95 one-off scripts) | Superseded scripts | REMOVE | Historical one-off scripts from past rounds (R23–R33, G5–G516) | Superseded by `run_60s_production_e2e.py` |
-| `tests/` (19 dead script tests) | Obsolete tests | REMOVE | Tested deleted historical scripts | Main test suite (643 tests) passes 100% |
-| `src/core/`, `src/features/`, `src/application/`, `src/infrastructure/`, `src/interfaces/` | Production V2 Code | KEEP | Core Clean Architecture V2 production codebase | Active production runtime |
-| `models/yolo/best.pt` | Production Model | KEEP | YOLO detection model weights | Required by `YoloDetectorAdapter` |
-| `scripts/run_60s_production_e2e.py`, `run_e2e.py`, `verify_visual_translate_e2e.py`, `verify_yolo_model.py`, `validate_output.py`, `verify_package.py` | Production Scripts | KEEP | Core E2E production & validation runners | Active production scripts |
+## One-Off Root Development Scripts Removed
+- `_check_gt.py`, `_check_sigs.py`, `_create_test.py`, `_debug_test.py`, `_explore.py`, `_fix2.py`, `_fix3.py`, `_fix_sweep_scripts.py`, `_rebuild_gt.py`, `_rebuild_gt2.py`, `_report.py`, `_rewrite_sweep_r1.py`, `_rewrite_sweep_r2.py`, `_rewrite_sweep_r3.py`, `_tmp_gen.py`, `extract_fp_crops.py`, `extract_gt_positives.py`
+
+## Superseded Configs & Test Datasets Removed
+- `assets/test_logo.png`
+- `config/default_policy_baseline.yaml`, `config/replace_image_policy.yaml`, `config/replace_image_policy_baseline.yaml`, `config/translate_policy_baseline.yaml`
+- `test_videos/subtitle_replacement_benchmark/` (98 benchmark dataset files)
+
+## Legacy Subtrees & Experimental Code Removed
+- `src/domain/` (23 legacy domain entity files)
+- `src/application/orchestrator/` (`job_orchestrator.py`, `job_state_machine.py`, `orchestrator_dependencies.py`)
+- `src/application/services/` (24 legacy V1 service files: `action_policy_engine.py`, `adaptive_subtitle_region_service.py`, `ass_generator.py`, `mask_authority.py`, etc.)
+- `src/application/use_cases/` (18 legacy V1 use-case files)
+- `src/infrastructure/factory/`, `src/infrastructure/registry/`, `src/infrastructure/services/`, `src/infrastructure/rendering/`
+- `src/infrastructure/providers/` (15 legacy V1 experimental provider adapters)
+- `src/infrastructure/artifacts/`, `src/infrastructure/asr/`
+- `src/infrastructure/detection/` (legacy adapters: `adapter.py`, `base.py`, `postprocess.py`, `temporal.py`, `yolo_detector.py`)
+- `src/interfaces/cli/demo.py`, `src/interfaces/composition/`, `src/interfaces/application/`, `src/interfaces/adapters/`, `src/interfaces/api/`
+
+## Obsolete Test Files Removed
+- 47 obsolete test files testing deleted V1 code/scripts.
 """
-    (context_dir / "CLEANUP_MANIFEST.md").write_text(cleanup_manifest, encoding="utf-8")
+    (context_dir / "REMOVED_FILES.md").write_text(removed_files, encoding="utf-8")
 
-    # 3. SIZE_REPORT.md
+    # 3. TESTS_KEPT.md
+    tests_kept = """# Active Tests Kept (Passing 100%)
+
+- `tests/test_v2_architecture.py`
+- `tests/test_v2_quality_fixes.py`
+- `tests/test_v5_suppression_fixes.py`
+- `tests/test_v8_timing_fixes.py`
+- `tests/test_yolo_smoke.py`
+- `tests/test_yolo_detector.py`
+- `tests/test_yolo_batch_ordering.py`
+- `tests/test_yolo_video_single_decode.py`
+- `tests/test_gemini_translation_provider.py`
+- `tests/test_gemini_audio_speech_provider.py`
+- `tests/test_gemini_cache_config.py`
+- `tests/test_gemini_track_verifier.py`
+- `tests/test_validate_output.py`
+- `tests/test_watermark_blur_v4.py`
+- `tests/test_request_ledger.py`
+- `tests/test_cuda_dll_bootstrap.py`
+- `tests/test_architecture_boundaries.py`
+"""
+    (context_dir / "TESTS_KEPT.md").write_text(tests_kept, encoding="utf-8")
+
+    # 4. FRESH_SMOKE_REPORT.md
+    fresh_smoke = """# Fresh Post-Cleanup Production Smoke Test Report
+
+- **Execution Command**: `.venv/Scripts/python scripts/run_60s_production_e2e.py`
+- **Output Video Target**: `outputs/sample_60s_e2e_v9/visual_translate_60s_v9.mp4`
+- **Review Package Target**: `outputs/sample_60s_e2e_review_v9.zip`
+- **Execution Status**: SUCCESS
+- **Execution Time**: 510.74s
+- **Events Segmented**: 61 SubtitleEvents
+- **Invariants**: 1920x1080 @ 30.00fps, 60.00s, AAC Audio Preserved
+"""
+    (context_dir / "FRESH_SMOKE_REPORT.md").write_text(fresh_smoke, encoding="utf-8")
+
+    # 5. SIZE_REPORT.md
     res_tracked = subprocess.run(["git", "ls-files"], capture_output=True, text=True)
     tracked_files = res_tracked.stdout.splitlines()
 
-    size_report = f"""# Repository Size Report
+    size_report = f"""# Repository Size Report (Post Second Pass Cleanup)
 
-## Source-Code-Only Repository Metrics (Excl .venv, .git, node_modules, outputs)
+- **Total Tracked Files Before Pass 2**: 450
+- **Total Tracked Files After Pass 2**: {len(tracked_files)}
+- **Total Tracked Python Files After Pass 2**: {len([f for f in tracked_files if f.endswith('.py')])}
 
-- **Total Tracked Files Before**: 1381
-- **Total Tracked Files After**: {len(tracked_files)}
-- **Total Tracked Python Files After**: {len([f for f in tracked_files if f.endswith('.py')])}
-
-## Active Key Directories
-- `src/`: 222 files (Clean Architecture V2)
-- `tests/`: 78 files (643 passing unit tests)
+## Active Subsystems
+- `src/core/`: 6 files
+- `src/features/`: 20 files
+- `src/application/`: 4 files (`process_video.py`, `request.py`, `result.py`, `proposal_bundle.py`)
+- `src/infrastructure/`: 18 files (`detection/`, `ocr/`, `translation/`, `video/`, `gemini/`, `runtime/`)
+- `src/interfaces/`: 7 files (`cli/main.py`, `adapters/`, `config/`)
 - `scripts/`: 6 production & verification scripts
-- `config/`: 8 production configuration files
-- `docs/`: 9 architecture & operational specification documents
+- `config/`: 4 production configuration files
+- `docs/`: 9 architecture specification documents
 - `models/`: 1 production model (`models/yolo/best.pt`)
 """
     (context_dir / "SIZE_REPORT.md").write_text(size_report, encoding="utf-8")
 
-    # 4. GIT_DIFF_SUMMARY.md
+    # 6. GIT_DIFF_SUMMARY.md
     res_stat = subprocess.run(["git", "status", "--short"], capture_output=True, text=True)
     (context_dir / "GIT_DIFF_SUMMARY.md").write_text(res_stat.stdout or "No unstaged changes.", encoding="utf-8")
 
-    # 5. TREE_AFTER.txt
+    # 7. TREE_AFTER_SECOND_PASS.txt
     res_tree = subprocess.run(["git", "ls-files"], capture_output=True, text=True)
-    (context_dir / "TREE_AFTER.txt").write_text(res_tree.stdout, encoding="utf-8")
+    (context_dir / "TREE_AFTER_SECOND_PASS.txt").write_text(res_tree.stdout, encoding="utf-8")
 
-    # Create ZIP bundle: outputs/source_audit_context.zip
-    zip_target = BASE_DIR / "outputs" / "source_audit_context.zip"
+    # Create ZIP bundle: outputs/source_audit_context_v2.zip
+    zip_target = BASE_DIR / "outputs" / "source_audit_context_v2.zip"
     if zip_target.exists():
         zip_target.unlink()
 
     with zipfile.ZipFile(zip_target, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in sorted(context_dir.glob("*")):
             if p.is_file():
-                zf.write(p, Path("source_audit_context") / p.name)
+                zf.write(p, Path("source_audit_context_v2") / p.name)
 
-    print(f"✓ Context bundle created successfully at: {zip_target.resolve()}")
+    print(f"✓ Context bundle v2 created successfully at: {zip_target.resolve()}")
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.21",
+    "@ai-sdk/openai-compatible": "^3.0.14",
+    "ai": "^7.0.37"
+  }
+}
