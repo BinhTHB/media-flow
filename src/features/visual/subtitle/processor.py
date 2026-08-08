@@ -52,36 +52,53 @@ class SubtitleProcessor:
         if not all_events:
             return []
 
-        # 2. OCR Stage (Representative Crop selection from stable middle of event)
+        # 2. OCR Stage (Multi-candidate crop selection & consensus)
         if self.ocr_provider is not None and video_path:
             import cv2
 
             cap = cv2.VideoCapture(video_path)
-            for event in all_events:
-                # Pick stable middle frame timestamp
-                mid_ts = (event.start_time + event.end_time) / 2.0
-                cap.set(cv2.CAP_PROP_POS_MSEC, mid_ts * 1000.0)
-                ret, frame_img = cap.read()
+            all_crops = []
+            crop_metadata = []
 
-                if ret and frame_img is not None:
-                    x1, y1, x2, y2 = event.anchor_bbox.xyxy_int()
-                    crop = frame_img[y1:y2, x1:x2]
-                    if crop.size > 0:
-                        try:
-                            texts = self.ocr_provider.read_crops([crop])
-                            if texts and texts[0].strip():
-                                event.source_text = texts[0].strip()
-                            else:
-                                event.replacement_status = "OCR_EMPTY"
-                        except Exception as exc:
-                            logger.warning("OCR failed for event %s: %s", event.event_id, exc)
-                            event.replacement_status = "OCR_FAILED"
-                    else:
-                        event.replacement_status = "OCR_EMPTY"
-                else:
-                    event.replacement_status = "OCR_FAILED"
+            for event in all_events:
+                dur = max(0.0, event.end_time - event.start_time)
+                mid_ts = (event.start_time + event.end_time) / 2.0
+                timestamps = [mid_ts]
+
+                if dur >= 1.2:
+                    t1 = max(event.start_time + 0.1, mid_ts - 0.3)
+                    timestamps.append(t1)
+
+                for c_idx, ts in enumerate(timestamps):
+                    cap.set(cv2.CAP_PROP_POS_MSEC, ts * 1000.0)
+                    ret, frame_img = cap.read()
+                    if ret and frame_img is not None:
+                        x1, y1, x2, y2 = event.anchor_bbox.xyxy_int()
+                        crop = frame_img[y1:y2, x1:x2]
+                        if crop.size > 0:
+                            all_crops.append(crop)
+                            crop_metadata.append((event, c_idx))
 
             cap.release()
+
+            if all_crops:
+                try:
+                    texts = self.ocr_provider.read_crops(all_crops)
+                    event_candidates = {}
+                    for (ev, c_idx), text in zip(crop_metadata, texts):
+                        event_candidates.setdefault(ev.event_id, []).append(text.strip() if text else "")
+
+                    for event in all_events:
+                        cands = event_candidates.get(event.event_id, [])
+                        final_text = self._resolve_ocr_consensus(cands)
+                        if final_text:
+                            event.source_text = final_text
+                        else:
+                            event.replacement_status = "OCR_EMPTY"
+                except Exception as exc:
+                    logger.warning("OCR failed for subtitle events: %s", exc)
+                    for event in all_events:
+                        event.replacement_status = "OCR_FAILED"
 
         # 3. Translation Stage
         events_needing_translation = [e for e in all_events if e.source_text]
@@ -123,6 +140,33 @@ class SubtitleProcessor:
                 )
 
         return all_events
+
+    @staticmethod
+    def _resolve_ocr_consensus(candidates: List[str]) -> str:
+        valid = [c.strip() for c in candidates if c and c.strip()]
+        if not valid:
+            return ""
+        if len(valid) == 1:
+            return valid[0]
+
+        first = valid[0]
+        # Check string duplication artifact: e.g. "拜拜" vs "拜拜拜拜" or "谢谢" vs "谢谢谢谢"
+        for c in valid:
+            if c != first and len(c) > 0 and len(first) > 0:
+                if len(c) == 2 * len(first) and c == first + first:
+                    return first
+                if len(first) == 2 * len(c) and first == c + c:
+                    return c
+
+        # Majority vote
+        from collections import Counter
+        counts = Counter(valid)
+        most_common, count = counts.most_common(1)[0]
+        if count > 1:
+            return most_common
+
+        # Default to first (mid_ts crop)
+        return valid[0]
 
     def render_frame_events(self, frame: Any, frame_index: int, events: List[SubtitleEvent]) -> Any:
         for event in events:

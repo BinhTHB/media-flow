@@ -29,24 +29,30 @@ class GeminiOCRAdapter(OCRPort):
         if not crop_images or not self.api_key:
             return ["" for _ in crop_images]
 
-        parts: list[dict[str, Any]] = [{
-            "text": (
-                "Transcribe each on-screen subtitle image crop exactly into its original source characters. "
-                "Return only a JSON array with one string per crop image: "
-                '["original_text_1", "original_text_2"]. '
-                "Do not translate, classify, or explain."
-            )
-        }]
+        prompt_text = (
+            "Transcribe each on-screen subtitle image crop into its exact visible source characters.\n"
+            "Rules:\n"
+            "1. Transcribe ONLY the characters physically visible in the crop image.\n"
+            "2. Do NOT extrapolate missing words, complete sentences, or guess unreadable text.\n"
+            "3. Do NOT repeat words or characters unless they are physically repeated multiple times in the image.\n"
+            "4. Do NOT translate, paraphrase, or rewrite.\n"
+            "5. If text is unreadable or absent, return an empty string \"\".\n"
+            "6. Return ONLY a JSON object mapping each item_id to its exact transcribed text:\n"
+            '{\n  "item_0": "exact_visible_text_0",\n  "item_1": "exact_visible_text_1"\n}'
+        )
 
-        valid_indices = []
+        parts: list[dict[str, Any]] = [{"text": prompt_text}]
+
+        valid_item_ids = []
         for idx, crop in enumerate(crop_images):
             if crop is None or crop.size == 0:
                 continue
             ok, encoded = cv2.imencode(".png", crop)
             if not ok:
                 continue
+            item_id = f"item_{idx}"
             parts.extend([
-                {"text": f"crop_index={idx}"},
+                {"text": f"item_id={item_id}"},
                 {
                     "inline_data": {
                         "mime_type": "image/png",
@@ -54,9 +60,9 @@ class GeminiOCRAdapter(OCRPort):
                     }
                 },
             ])
-            valid_indices.append(idx)
+            valid_item_ids.append(item_id)
 
-        if not valid_indices:
+        if not valid_item_ids:
             return ["" for _ in crop_images]
 
         try:
@@ -79,10 +85,18 @@ class GeminiOCRAdapter(OCRPort):
             payload = parse_json(response.text)
             results = ["" for _ in crop_images]
 
-            if isinstance(payload, list):
+            if isinstance(payload, dict):
+                for idx, item_id in enumerate(valid_item_ids):
+                    val = payload.get(item_id)
+                    if isinstance(val, str):
+                        results[idx] = val.strip()
+            elif isinstance(payload, list):
                 for idx_pos, val in enumerate(payload):
-                    if idx_pos < len(valid_indices) and isinstance(val, str):
-                        results[valid_indices[idx_pos]] = val.strip()
+                    if idx_pos < len(valid_item_ids):
+                        if isinstance(val, dict) and "text" in val:
+                            results[idx_pos] = str(val["text"]).strip()
+                        elif isinstance(val, str):
+                            results[idx_pos] = val.strip()
 
             return results
         except Exception as exc:

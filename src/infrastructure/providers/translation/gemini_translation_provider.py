@@ -45,9 +45,14 @@ class GeminiTranslationProvider(TranslationProvider):
     def _translate_chunk(self, texts: List[str], target_language: str) -> List[str]:
         numbered_lines = "\n".join(f"{index}: {text}" for index, text in enumerate(texts))
         prompt = (
-            f"Translate each numbered line into {target_language}. "
-            "Preserve every line number using the exact format 'i: translated_text'. "
-            "Return only translated numbered lines with no explanations.\n\n"
+            f"Translate each numbered video subtitle line into natural, conversational {target_language}.\n"
+            "Translation guidelines:\n"
+            "1. Produce fluent, spoken-style subtitles suitable for video captions.\n"
+            "2. Avoid word-for-word awkward or archaic translations (e.g. translate '拜拜' as 'Tạm biệt' or 'Chào nhé', NOT 'Biệt ly').\n"
+            "3. Keep translations concise and appropriate for on-screen display.\n"
+            "4. Preserve original tone, emotion, and line count.\n"
+            "5. Preserve every line number using the exact format 'i: translated_text'.\n"
+            "6. Return only translated numbered lines with no explanations or extra quotes.\n\n"
             f"{numbered_lines}"
         )
 
