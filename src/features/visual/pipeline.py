@@ -153,13 +153,15 @@ class VisualPipeline:
         frame_idx = 0
         events_by_frame: Dict[int, List[SubtitleEvent]] = {}
         for ev in subtitle_events:
-            for b in ev.bbox_trajectory:
-                pass
-            # map events to frame indices
             start_f = int(round(ev.start_time * fps))
             end_f = int(round(ev.end_time * fps))
             for f_i in range(start_f, end_f + 1):
                 events_by_frame.setdefault(f_i, []).append(ev)
+
+        sub_dets_by_frame: Dict[int, List[Any]] = {}
+        for tr in subtitle_tracks:
+            for det in tr.detections:
+                sub_dets_by_frame.setdefault(det.frame_index, []).append(det)
 
         while True:
             ret, frame = cap.read()
@@ -174,7 +176,13 @@ class VisualPipeline:
             if request.other_text_enabled:
                 frame = other_proc.process_frame_tracks(frame, frame_idx, other_tracks)
 
-            # B. Process Subtitle Processor rendering
+            # B. Per-frame Subtitle Source Blur based on YOLO Detections
+            if request.subtitle_enabled and frame_idx in sub_dets_by_frame and self.subtitle_processor is not None:
+                for sub_det in sub_dets_by_frame[frame_idx]:
+                    supp_bbox = self.subtitle_processor.get_source_suppression_bbox(sub_det.bbox, pad_x=18, pad_y=14)
+                    frame = self.subtitle_processor.blur_action.execute(frame, supp_bbox, padding_px=0)
+
+            # C. Subtitle Vietnamese Text Overlay rendering (Only when READY)
             if request.subtitle_enabled and frame_idx in events_by_frame and self.subtitle_processor is not None:
                 frame = self.subtitle_processor.render_frame_events(
                     frame, frame_idx, events_by_frame[frame_idx]

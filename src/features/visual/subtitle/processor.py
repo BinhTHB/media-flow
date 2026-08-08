@@ -47,7 +47,7 @@ class SubtitleProcessor:
 
         # 1. Segment spatial tracks into temporal SubtitleEvents
         for track in tracks:
-            events = self.segmenter.segment_track(track)
+            events = self.segmenter.segment_track(track, video_path=video_path)
             all_events.extend(events)
 
         if not all_events:
@@ -180,15 +180,7 @@ class SubtitleProcessor:
 
     def render_frame_events(self, frame: Any, frame_index: int, events: List[SubtitleEvent]) -> Any:
         for event in events:
-            # FAIL-SAFE: ONLY blur and render overlay when replacement status is READY!
-            if event.replacement_status == "READY" and event.blur_applied and event.overlay_applied:
-                # Calculate expanded source suppression region from Chinese source bbox
-                suppression_bbox = self.get_source_suppression_bbox(event.anchor_bbox, pad_x=18, pad_y=14)
-                # 1. Apply Gaussian Blur over entire source suppression region
-                frame = self.blur_action.execute(frame, suppression_bbox, padding_px=0)
-                # 2. Render Vietnamese text overlay centered at source bbox
+            # FAIL-SAFE: ONLY render Vietnamese overlay when replacement status is READY!
+            if event.replacement_status == "READY" and event.overlay_applied:
                 frame = self.renderer.render_event(frame, event, event.anchor_bbox)
-            else:
-                # PRESERVE original source pixels!
-                pass
         return frame
