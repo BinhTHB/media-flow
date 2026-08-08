@@ -1,8 +1,0 @@
-{
-  "status": "BLOCKED",
-  "stage": "e2e_gpu",
-  "job_id": "round28-sample5",
-  "git_sha": "d048dcd661e483f19aa29dfe615d6f0366699305",
-  "reason": "GPU E2E not executed. PaddlePaddle-GPU is not available in local configuration (no CUDA backend). Cannot run full pipeline without GPU OCR. Sweep + offline replay completed with Paddle CPU fallback \u2014 see artifacts for diagnosis.",
-  "timestamp": "2026-07-24T08:30:18.060036+00:00"
-}

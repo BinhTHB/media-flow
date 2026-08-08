@@ -1,9 +1,0 @@
-video_id,frame_ids,reason
-,,"No training manifest exists in this repository, so no video could be
-linked to training provenance. Leakage prevention is enforced by policy:
-sampling is per-video (never mixed across sets) and final reporting must
-confirm the sampled videos were not used to fine-tune the YOLO model."
-subtitle_replacement_benchmark,all,"Synthetic clips generated for an earlier
-subtitle-region pipeline; not part of the burn-in evaluation set."
-frozen_gt_sample5,all,"input/sample5.mp4 was used for prior QA rounds;
-keep it out of the held-out burn-in set."
