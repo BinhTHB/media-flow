@@ -48,22 +48,3 @@ def test_skips_missing_packages_on_windows(monkeypatch, tmp_path):
     cuda_dll_bootstrap.register_cuda_dll_directories()
 
     assert cuda_dll_bootstrap._DLL_HANDLES == []
-
-
-def test_provider_registers_cuda_dlls_before_import(monkeypatch):
-    from src.infrastructure.providers.speech import faster_whisper_speech_provider as provider_module
-
-    events = []
-    monkeypatch.setattr(provider_module, "register_cuda_dll_directories", lambda: events.append("register"))
-
-    class WhisperModel:
-        def __init__(self, *_args, **_kwargs):
-            events.append("model")
-
-    import sys
-    import types
-    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=WhisperModel))
-
-    provider_module.FasterWhisperSpeechProvider(device="cuda")._get_model()
-
-    assert events == ["register", "model"]

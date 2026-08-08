@@ -120,6 +120,8 @@ build/
 .netlify/
 
 # IDE / OS
+FINAL_PHYSICAL_TREE.txt
+.hermes/
 .DS_Store
 Thumbs.db
 desktop.ini

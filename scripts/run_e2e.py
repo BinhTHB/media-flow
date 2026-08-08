@@ -38,7 +38,6 @@ from src.features.audio.pipeline import AudioPipeline, AudioRequest
 from src.features.translation.service import TranslationService
 from src.features.visual.pipeline import VisualPipeline, VisualRequest
 from src.features.visual.subtitle.processor import SubtitleProcessor
-from src.infrastructure.asr.whisper import WhisperASRAdapter
 from src.infrastructure.detection.yolo import YoloDetectorAdapter
 from src.infrastructure.translation.gemini_translation import GeminiTranslationAdapter
 from src.infrastructure.video.ffmpeg import FFmpegVideoAdapter
