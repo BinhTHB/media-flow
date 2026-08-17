@@ -139,6 +139,8 @@ config.local.*
 *.local.yaml
 *.local.yml
 config.yml
+# Editor / tool configs with sensitive data
+opencode.json
 
 # Databases
 *.db
