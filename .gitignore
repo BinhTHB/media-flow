@@ -95,7 +95,9 @@ subtitles/generated/
 *.vtt
 
 # Large models / data
-models/
+/models/*
+!/models/yolo/
+/models/yolo/*
 checkpoints/
 weights/
 *.pt
@@ -109,6 +111,10 @@ weights/
 *.joblib
 *.npy
 *.npz
+
+# Keep the fine-tuned YOLO detector weights versioned. It is small (~5 MB)
+# and required at runtime by the detector, so re-include it despite *.pt above.
+!/models/yolo/best.pt
 
 # Node / frontend
 node_modules/
