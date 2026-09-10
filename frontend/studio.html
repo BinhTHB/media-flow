@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MediaFlow local AI media studio">
+  <title>MediaFlow · AI Studio</title>
+  <link rel="stylesheet" href="/dubbing.css">
+  <link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+  <header class="topbar studio-topbar">
+    <a class="brand" href="/" aria-label="MediaFlow Studio">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40"><path d="M8 9h9l5 6h10v16H8z"/><path d="m18 19 8 5-8 5z"/></svg></span>
+      <span><strong>MediaFlow</strong><small>AI STUDIO</small></span>
+    </a>
+    <nav class="studio-nav" aria-label="Tool navigation">
+      <a data-tool-link="tts" href="/studio.html?tool=tts">TTS</a>
+      <a data-tool-link="subtitle" href="/studio.html?tool=subtitle">Subtitle</a>
+      <a data-tool-link="stt" href="/studio.html?tool=stt">STT</a>
+      <a data-tool-link="clone" href="/studio.html?tool=clone">Clone</a>
+      <a data-tool-link="dubbing" href="/studio.html?tool=dubbing">Dubbing</a>
+    </nav>
+    <div class="top-actions">
+      <span class="runtime" id="runtimeState"><i></i>Đang kết nối…</span>
+      <a class="ghost-button" href="/index.html">Cleanup</a>
+    </div>
+  </header>
+
+  <main class="studio-home">
+    <section class="studio-hero">
+      <div>
+        <span class="overline">LOCAL MEDIA WORKSPACE</span>
+        <h1>Một workspace cho mọi luồng media</h1>
+        <p>Thiết kế theo workflow upload → phân tích → chỉnh sửa → xuất file, nhưng mọi thao tác vẫn nằm trong MediaFlow local.</p>
+      </div>
+      <div class="runtime-card">
+        <span class="runtime-card-icon">◎</span>
+        <span><strong id="runtimeTitle">Local runtime</strong><small id="runtimeDetail">Đang kiểm tra capability…</small></span>
+      </div>
+    </section>
+
+    <section class="tool-cards" aria-label="Media tools">
+      <a class="tool-card" data-tool-link="tts" href="/studio.html?tool=tts"><span class="tool-icon">∿</span><strong>Text to Speech</strong><small>Tạo voice từ script</small></a>
+      <a class="tool-card" data-tool-link="subtitle" href="/studio.html?tool=subtitle"><span class="tool-icon">▤</span><strong>Subtitle</strong><small>Đọc, dịch và render SRT</small></a>
+      <a class="tool-card" data-tool-link="stt" href="/studio.html?tool=stt"><span class="tool-icon">◉</span><strong>Speech to Text</strong><small>Transcript theo timestamp</small></a>
+      <a class="tool-card" data-tool-link="clone" href="/studio.html?tool=clone"><span class="tool-icon">♬</span><strong>Voice Clone</strong><small>Quản lý voice profile</small></a>
+      <a class="tool-card featured" data-tool-link="dubbing" href="/dubbing.html"><span class="tool-icon">✦</span><strong>Video Dubbing</strong><small>Workspace timeline nhiều track</small><b>OPEN</b></a>
+    </section>
+
+    <section class="tool-workspace">
+      <div class="tool-copy">
+        <span class="overline" id="toolKicker">TEXT TO SPEECH</span>
+        <h2 id="toolTitle">Tạo voice từ script</h2>
+        <p id="toolDescription">Nhập một đoạn text, chọn voice và kiểm tra pipeline trước khi nối provider thật.</p>
+        <div class="contract-list">
+          <div><i>1</i><span><strong>Input</strong><small id="inputContract">Text + voice profile</small></span></div>
+          <div><i>2</i><span><strong>Processing</strong><small id="processingContract">TTS adapter (chưa cấu hình)</small></span></div>
+          <div><i>3</i><span><strong>Output</strong><small id="outputContract">MP3/WAV artifact</small></span></div>
+        </div>
+      </div>
+      <div class="tool-form panel">
+        <div id="toolForm"></div>
+        <p class="form-message" id="toolMessage" role="status" aria-live="polite"></p>
+      </div>
+      <aside class="tool-result panel">
+        <div class="section-title"><span>CAPABILITY</span><span class="mini-status" id="toolStatus">PARTIAL</span></div>
+        <div class="capability-list" id="capabilityList"><div class="empty-state">Đang tải…</div></div>
+        <a class="primary-button result-link" href="/dubbing.html">Mở Dubbing Workspace <span>→</span></a>
+      </aside>
+    </section>
+
+    <section class="local-tools">
+      <div class="section-head"><div><span class="overline">LOCAL TOOLBOX</span><h2>Các khối có thể ghép vào pipeline</h2></div><span class="section-note">Không copy cloud claims; chỉ hiển thị năng lực thật</span></div>
+      <div class="capability-cards">
+        <article><b>◈</b><strong>Multi-language</strong><small>Ngôn ngữ nguồn/đích là request data, không hard-code UI.</small></article>
+        <article><b>♙</b><strong>Speaker mapping</strong><small>Giữ speaker_id và voice profile xuyên suốt job.</small></article>
+        <article><b>∿</b><strong>Timeline fit</strong><small>AudioComposer sở hữu timing, không để TTS tự quyết định.</small></article>
+        <article><b>⌂</b><strong>Local-first</strong><small>Video, transcript và output nằm trong project.</small></article>
+      </div>
+    </section>
+  </main>
+
+  <script src="/studio.js" defer></script>
+</body>
+</html>

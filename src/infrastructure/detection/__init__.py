@@ -23,11 +23,24 @@ from src.infrastructure.detection.schemas import (
     verify_class_mapping,
 )
 from src.infrastructure.detection.base import BurnInDetector
+from typing import Any
+
 from src.infrastructure.detection.config import DetectionConfig, load_detection_config
-from src.infrastructure.detection.yolo_detector import (
-    YoloBurnInDetector,
-    get_yolo_detector,
-)
+
+
+def __getattr__(name: str) -> Any:
+    """Load the optional Ultralytics adapter only when it is requested."""
+    if name in {"YoloBurnInDetector", "get_yolo_detector"}:
+        from src.infrastructure.detection.yolo_detector import (
+            YoloBurnInDetector,
+            get_yolo_detector,
+        )
+
+        return {
+            "YoloBurnInDetector": YoloBurnInDetector,
+            "get_yolo_detector": get_yolo_detector,
+        }[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "MEDIA_FLOW_YOLO_WEIGHTS_ENV",

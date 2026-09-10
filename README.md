@@ -2,6 +2,36 @@
 
 Hệ thống dịch video short (tiếng Trung/Anh → Việt) theo kiến trúc **Clean Architecture + Feature-based modules**.
 
+## Giao diện web local
+
+Khởi động bằng đúng Python trong virtual environment:
+
+```powershell
+.venv\Scripts\python.exe -m src.interfaces.web.server
+```
+
+Mở `http://127.0.0.1:8765` để vào AI Studio (mặc định). Giao diện hỗ trợ chọn TTS, Subtitle, STT, Voice Clone và Dubbing theo workflow studio; màn hình cleanup/preset cũ vẫn giữ tại `http://127.0.0.1:8765/index.html`.
+
+Dữ liệu upload được lưu tại `input/uploads/`; video kết quả nằm trong `outputs/`. Server chỉ bind localhost mặc định và không dùng shell khi gọi pipeline.
+
+### Dubbing Studio
+
+Mở `http://127.0.0.1:8765/dubbing.html` để chạy pipeline dubbing quality-auto:
+
+- ASR remote: ưu tiên Groq `whisper-large-v3`; nếu transcript có dấu hiệu nghi ngờ thì mới gọi Gemini Audio làm secondary evidence, rồi OpenRouter consensus sửa text nhưng giữ nguyên timestamp;
+- dịch tách riêng theo pipeline: Visual Subtitle và Audio Dubbing tạo hai `TranslationService` độc lập; `auto` ưu tiên OpenRouter free-model pool (Ling 3.0 Flash → Gemma 4 26B A4B → MiniMax M2.7), semantic validator chống cross-segment leakage và chỉ escalation dòng nghi ngờ;
+- TTS: `auto` ưu tiên ElevenLabs Free API với `eleven_v3` + `language_code=vi` + Sarah premade (short-segment benchmark tốt nhất trong các premade miễn phí đã thử), fallback Fish S2.1 Pro Free rồi Edge; Gemini 3.1 Flash Live chỉ explicit experimental vì không đảm bảo đọc nguyên văn; Gemini 3.1 Flash TTS Preview không nằm trong auto vì free RPD quá thấp;
+- timeline: FFmpeg fit duration + delay/mix theo timestamp;
+- VisualPipeline chỉ xử lý pixel/video-only; AudioPipeline chỉ xử lý audio; `ProcessVideoUseCase` là nơi duy nhất mux final MP4.
+
+`POST /api/dubbing/plan` kiểm tra capability thật; khi READY, nút Export dùng `scripts/run_final_dubbing.py`: thử ElevenLabs Dubbing v2 để tự diarize/clone speaker và giữ ambience, so transcript nguồn với Groq+correction; chỉ nhận output ElevenLabs nếu semantic gate pass, nếu fail thì tự fallback MediaFlow. Vì API chỉnh transcript/translation của Dubbing v2 là Enterprise-only, Free tier không cố vá một dub sai nghĩa sau khi render.
+
+Video 1080p dài có thể chạy lâu hơn timeout của Aki MCP; đó là timeout của kênh điều khiển, không phải lỗi pipeline. Khi cần chạy đầy đủ, mở terminal local và giữ nguyên lệnh E2E.
+
+### AI Studio shell
+
+Mở `http://127.0.0.1:8765/studio.html` để xem trang tổng hợp TTS, Subtitle, STT, Voice Clone và Dubbing. Đây là giao diện MediaFlow viết mới, tham khảo workflow upload → phân tích → timeline → xuất của YupVox nhưng không sao chép logo, asset hoặc nội dung độc quyền. Các nút provider chưa cấu hình sẽ báo trạng thái thật thay vì tạo audio giả.
+
 ## Kiến trúc
 
 ```
@@ -97,6 +127,12 @@ eal_mini_benchmark\sample5.mp4 `
 
 ### Yêu cầu & Model
 - **YOLO Weights**: `models/yolo/best.pt` (nạp 4 class: subtitle, watermark, logo, other_burn_in_text).
+- **Đúng interpreter**: luôn chạy E2E bằng `.venv\Scripts\python.exe`. Lệnh `python` trên Windows có thể trỏ vào Miniconda và không nhìn thấy `ultralytics` trong `.venv`.
+
+```powershell
+.venv\Scripts\python.exe -m pip install ultralytics opencv-python
+.venv\Scripts\python.exe scripts\run_e2e.py --input input\sample5.mp4 --output outputs\retry_blur_sample5.mp4 --preset blur-all --device auto --overwrite
+```
 - **FFmpeg & FFprobe**: Đã cài đặt trong PATH hệ thống.
 - **Biến môi trường**: `GEMINI_API_KEY` chỉ bắt buộc khi action của policy là `replace_text`. Chế độ `blur-all` mặc định chạy 100% offline mà không cần API Key.
 - **Artifacts**: Mỗi job xuất kế hoạch hành động máy đọc được tại `outputs/action_plan.json`.
@@ -162,8 +198,25 @@ Output JSON hiển thị segments đã xử lý. Nếu bật `--subtitle`, file 
 
 ## Cách chạy unit tests
 
+Chạy toàn bộ quality gate offline (compile, secret scan, architecture, pytest):
+
+```powershell
+.venv\Scripts\python.exe scripts\quality.py
+```
+
+Hoặc chỉ pytest:
+
 ```bash
 pytest
+```
+
+Xem `docs/QUALITY_AND_OPERATIONS.md` cho CI, lifecycle và benchmark policy.
+
+Các test dùng model YOLO thật là integration test và mặc định được bỏ qua. Bật rõ ràng khi môi trường đã cài Ultralytics và có `models/yolo/best.pt`:
+
+```powershell
+$env:MEDIA_FLOW_RUN_YOLO_INTEGRATION="1"
+pytest tests/test_yolo_batch_ordering.py tests/test_yolo_smoke.py
 ```
 
 ## Cách thay mock provider bằng provider thật
@@ -225,17 +278,7 @@ This milestone makes the project capable of processing a real short video (under
 pip install -r requirements.txt  # (or install manually below)
 ```
 
-Manual dependencies:
-```bash
-# Audio extraction
-pip install faster-whisper
-
-# Translation
-pip install openai
-
-# Config parsing
-pip install pyyaml
-```
+Các dependency runtime chính đã nằm trong `requirements.txt`. Gemini/Groq adapters dùng REST/stdlib nên không cần SDK riêng. `edge-tts` cung cấp TTS online nhẹ máy; FFmpeg/FFprobe vẫn là dependency hệ thống.
 
 ### FFmpeg Installation
 
@@ -252,40 +295,51 @@ ffmpeg -version
 
 ### API Key
 
-For OpenAI translation, set the `OPENAI_API_KEY` environment variable:
+Provider được route theo cấu hình. `GEMINI_API_KEY` vẫn cần cho Visual OCR; audio-only có thể chạy Groq + ElevenLabs/OpenRouter/Edge mà không cần dùng Gemini cho TTS.
 
 ```bash
-# Linux/macOS
-export OPENAI_API_KEY=sk-...
+# Core / fallback
+GEMINI_API_KEY=...
+GROQ_API_KEY=...  # ASR primary
 
-# Windows PowerShell
-$env:OPENAI_API_KEY="sk-..."
+# Translation primary. Có thể dùng một key, pool phân cách bằng dấu phẩy/chấm phẩy,
+# Toàn bộ OpenRouter pool đặt trong đúng một biến, phân cách bằng dấu phẩy.
+OPENROUTER_API_KEYS=key1,key2,key3
 
-# Windows CMD
-set OPENAI_API_KEY=sk-...
+# ElevenLabs Free API pool (optional; used by Eleven v3 TTS + Dubbing v2)
+ELEVENLABS_API_KEYS=key1,key2,key3
+ELEVENLABS_TTS_MODEL=eleven_v3
+ELEVENLABS_LANGUAGE_CODE=vi
+ELEVENLABS_VOICE_ID=EXAVITQu4vr4xnSDxMaL
+
+# Fish fallback/explicit TTS dùng cùng OpenRouter pool
+OPENROUTER_TTS_MODEL=fish-audio/s2.1-pro-free:free
+# Override voice bằng --voice elevenlabs:<voice_id> hoặc --voice fish:<voice_id>
 ```
+
+OpenRouter adapter rotate key sau mỗi request thành công, bỏ key 401/403 khỏi adapter instance, cooldown key gặp 429 và fallback model trước khi chuyển sang Gemini.
 
 ## Running a Real Example
 
-```bash
-python src/interfaces/cli/demo.py sample.mp4 \
-    --stt \
-    --translate \
-    --subtitle \
-    --speech-provider faster-whisper \
-    --translation-provider openai \
-    --whisper-model base
+Audio dubbing only (không chạy YOLO):
+
+```powershell
+.venv\Scripts\python.exe scripts\run_e2e.py --input input\sample5.mp4 --output outputs\dubbed.mp4 --preset dub-audio --asr-provider auto --translation-provider auto --tts-provider auto --overwrite
 ```
 
-Flags:
-- `--video-provider` — `mock` or `ffmpeg` (default from config: `ffmpeg`)
-- `--speech-provider` — `mock` or `faster-whisper` (default: `mock`)
-- `--translation-provider` — `mock` or `openai` (default: `mock`)
-- `--whisper-model` — `tiny`, `base`, `small`, `medium` (default: `base`)
-- `--output-dir` — output directory (default: `output`)
-- `--keep-audio` — keep the extracted `audio.wav` file
-- `--source-lang` — `zh`, `en`, `auto` (default: `zh`)
-- `--target-lang` — target language (default: `vi`)
+Full translate video (visual subtitle replacement + dubbed audio):
+
+```powershell
+.venv\Scripts\python.exe scripts\run_e2e.py --input input\sample5.mp4 --output outputs\translated.mp4 --preset translate-video --asr-provider auto --translation-provider auto --tts-provider auto --overwrite
+```
+
+- `--asr-provider auto|groq|gemini`: `auto` ưu tiên Groq Whisper Large V3, fallback Gemini Audio.
+- `--asr-correction auto|off|openrouter`: `auto` chỉ kích hoạt secondary Gemini + OpenRouter consensus khi primary transcript có dấu hiệu nghi ngờ; không đổi timestamp.
+- `--translation-provider auto|openrouter|gemini`: `auto` ưu tiên OpenRouter key/model pool, semantic validator + isolated repair, rồi Gemini escalation nếu cần.
+- `--tts-provider auto|elevenlabs|fish|gemini-live|edge`: `auto` đi theo ElevenLabs v3 → Fish → Edge. ElevenLabs đọc `ELEVENLABS_API_KEYS` và rotate khi key bị 401/402/403/429; `gemini-live` chỉ dùng explicit vì có thể paraphrase thay vì đọc verbatim. Default ElevenLabs voice hiện là Sarah (`EXAVIT...`), còn UI cho A/B Sarah/Brian/Adam/Fish/Edge bằng preview audio thật.
+- ElevenLabs Dubbing v2 đã có adapter riêng (`src/infrastructure/elevenlabs_dubbing.py`) dùng cùng key pool, tự detect speaker/clone voice/translate/giữ background và chỉ rotate key khi create-project bị từ chối rõ ràng trước khi có `project_id`.
+- `--source-language`: ngôn ngữ speech nguồn (`auto`, `zh`, `en`, `ja`, `ko`, `vi`).
+- `--target-language`: ngôn ngữ đích, mặc định `vi`.
 
 ## Expected Outputs
 

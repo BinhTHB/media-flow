@@ -34,34 +34,74 @@ def extract_audio(video_path: str, output_audio_path: str) -> str:
 def mux_audio_video(video_no_audio_path: str, audio_source_path: str, output_path: str) -> str:
     out_p = Path(output_path).resolve()
     out_p.parent.mkdir(parents=True, exist_ok=True)
+    audio_path = Path(audio_source_path)
 
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i", str(video_no_audio_path),
-        "-i", str(audio_source_path),
-        "-c:v", "copy",
-        "-c:a", "copy",
-        "-map", "0:v:0",
-        "-map", "1:a:0?",
-        str(out_p),
-    ]
-    try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError:
-        cmd_fallback = [
+    # Dubbed timelines are canonical WAV/PCM. Some FFmpeg builds allow PCM inside
+    # MP4, but browser/player support is inconsistent, so encode WAV/PCM to AAC
+    # proactively instead of waiting for stream-copy to fail.
+    force_aac = audio_path.suffix.lower() in {".wav", ".pcm"}
+    if force_aac:
+        cmd = [
             "ffmpeg",
             "-y",
             "-i", str(video_no_audio_path),
             "-i", str(audio_source_path),
-            "-c:v", "libx264",
-            "-preset", "fast",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-map", "0:v:0",
+            "-map", "1:a:0?",
+            "-shortest",
+            str(out_p),
+        ]
+    else:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", str(video_no_audio_path),
+            "-i", str(audio_source_path),
+            "-c:v", "copy",
             "-c:a", "copy",
             "-map", "0:v:0",
             "-map", "1:a:0?",
             str(out_p),
         ]
-        subprocess.run(cmd_fallback, capture_output=True, text=True, check=True)
+
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError:
+        # Keep the video stream untouched and encode audio to universally supported AAC.
+        cmd_fallback = [
+            "ffmpeg",
+            "-y",
+            "-i", str(video_no_audio_path),
+            "-i", str(audio_source_path),
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-map", "0:v:0",
+            "-map", "1:a:0?",
+            "-shortest",
+            str(out_p),
+        ]
+        try:
+            subprocess.run(cmd_fallback, capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError:
+            cmd_reencode = [
+                "ffmpeg",
+                "-y",
+                "-i", str(video_no_audio_path),
+                "-i", str(audio_source_path),
+                "-c:v", "libx264",
+                "-preset", "fast",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                "-map", "0:v:0",
+                "-map", "1:a:0?",
+                "-shortest",
+                str(out_p),
+            ]
+            subprocess.run(cmd_reencode, capture_output=True, text=True, check=True)
 
     return str(out_p)
 

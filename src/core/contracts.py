@@ -31,10 +31,50 @@ class DetectorPort(ABC):
         pass
 
 
+class SceneBoundaryPort(ABC):
+    @abstractmethod
+    def detect_cuts(self, video_path: str) -> List[int]:
+        """Return frame indices where a new scene starts."""
+        pass
+
+
+class AudioExtractionPort(ABC):
+    @abstractmethod
+    def extract_audio(self, video_path: str, output_audio_path: str) -> str:
+        """Extract a canonical audio stream from a video file."""
+        pass
+
+
 class ASRPort(ABC):
     @abstractmethod
     def transcribe(self, audio_path: str, language: str = "auto") -> List[SpeechSegment]:
         """Transcribe speech in an audio file into SpeechSegments."""
+        pass
+
+
+class ASRCorrectionPort(ABC):
+    @abstractmethod
+    def correct_segments(
+        self,
+        segments: List[SpeechSegment],
+        language: str = "auto",
+        audio_path: Optional[str] = None,
+    ) -> List[SpeechSegment]:
+        """Conservatively correct ASR text while preserving segment ids/timestamps."""
+        pass
+
+
+class SpokenRewritePort(ABC):
+    @abstractmethod
+    def rewrite_for_duration(
+        self,
+        text: str,
+        source_text: str,
+        target_duration: float,
+        current_duration: float,
+        target_language: str = "vi",
+    ) -> str:
+        """Shorten spoken copy to fit a target duration while preserving essential meaning."""
         pass
 
 

@@ -63,22 +63,9 @@ providers:
       direct_video_stage_timeout_seconds: 120
       direct_video_no_progress_timeout_seconds: 300
       direct_video_job_timeout_seconds: 600
-      model: gemini-3.5-flash-lite
-      max_retries: 5
-      cache_enabled: true
-      cache_dir: .cache/gemini
-      cache_namespace: shared
-      scheduler: {}
-      file_manager_enabled: false
 
   subtitle:
     mock: {}
-
-  speech:
-    faster-whisper:
-      model_size: base
-      device: cuda
-      compute_type: float16
 
   ocr:
     mock: {}

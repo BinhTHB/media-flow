@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
 from typing import Any, List
 
 import cv2
@@ -65,40 +66,60 @@ class GeminiOCRAdapter(OCRPort):
         if not valid_item_ids:
             return ["" for _ in crop_images]
 
-        try:
-            from src.infrastructure.gemini.client import GeminiClient
-            from src.infrastructure.gemini.contracts import GeminiRequest
-            from src.infrastructure.gemini.structured_output import parse_json
+        from src.infrastructure.gemini.client import GeminiClient
+        from src.infrastructure.gemini.contracts import GeminiRequest
+        from src.infrastructure.gemini.structured_output import parse_json
 
-            client = GeminiClient(api_key=self.api_key)
-            response = client.generate_content(
-                GeminiRequest(
-                    contents=[{"parts": parts}],
-                    model=self.model,
-                    generation_config={"temperature": 0.0},
-                    request_id="v2_crop_ocr_batch",
-                    source_kind="v2_crop_ocr",
-                    api_surface="generate_content",
-                )
-            )
-
-            payload = parse_json(response.text)
-            results = ["" for _ in crop_images]
-
-            if isinstance(payload, dict):
-                for idx, item_id in enumerate(valid_item_ids):
-                    val = payload.get(item_id)
-                    if isinstance(val, str):
-                        results[idx] = val.strip()
-            elif isinstance(payload, list):
-                for idx_pos, val in enumerate(payload):
-                    if idx_pos < len(valid_item_ids):
-                        if isinstance(val, dict) and "text" in val:
-                            results[idx_pos] = str(val["text"]).strip()
-                        elif isinstance(val, str):
-                            results[idx_pos] = val.strip()
-
-            return results
-        except Exception as exc:
-            logger.warning("GeminiOCRAdapter.read_crops failed: %s", exc)
+        raw_keys = str(self.api_key or "")
+        keys = [part.strip() for part in raw_keys.replace(";", ",").split(",") if part.strip()]
+        if not keys:
             return ["" for _ in crop_images]
+
+        max_attempts = max(2, min(4, len(keys) * 2))
+        last_exc: Exception | None = None
+        for attempt in range(max_attempts):
+            key = keys[attempt % len(keys)]
+            try:
+                client = GeminiClient(api_key=key)
+                response = client.generate_content(
+                    GeminiRequest(
+                        contents=[{"parts": parts}],
+                        model=self.model,
+                        generation_config={"temperature": 0.0},
+                        request_id="v2_crop_ocr_batch",
+                        source_kind="v2_crop_ocr",
+                        api_surface="generate_content",
+                    )
+                )
+
+                payload = parse_json(response.text)
+                results = ["" for _ in crop_images]
+
+                if isinstance(payload, dict):
+                    for idx, item_id in enumerate(valid_item_ids):
+                        val = payload.get(item_id)
+                        if isinstance(val, str):
+                            results[idx] = val.strip()
+                elif isinstance(payload, list):
+                    for idx_pos, val in enumerate(payload):
+                        if idx_pos < len(valid_item_ids):
+                            if isinstance(val, dict) and "text" in val:
+                                results[idx_pos] = str(val["text"]).strip()
+                            elif isinstance(val, str):
+                                results[idx_pos] = val.strip()
+
+                if not any(value.strip() for value in results):
+                    raise RuntimeError("Gemini OCR returned only empty strings for non-empty subtitle crops")
+                return results
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "GeminiOCRAdapter.read_crops attempt %s/%s failed: %s",
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                if attempt + 1 < max_attempts:
+                    time.sleep(min(2.0, 0.5 * (attempt + 1)))
+
+        raise RuntimeError(f"Gemini OCR failed after {max_attempts} attempts: {last_exc}")

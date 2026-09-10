@@ -23,21 +23,55 @@ class BBox:
     def __post_init__(self):
         if self.frame_width <= 0 or self.frame_height <= 0:
             raise ValueError(f"Frame dimensions must be positive, got {self.frame_width}x{self.frame_height}")
-        # Clamp coordinates to frame boundary
-        cx1 = max(0.0, min(float(self.frame_width), float(self.x1)))
-        cy1 = max(0.0, min(float(self.frame_height), float(self.y1)))
-        cx2 = max(0.0, min(float(self.frame_width), float(self.x2)))
-        cy2 = max(0.0, min(float(self.frame_height), float(self.y2)))
 
-        if cx2 <= cx1:
-            cx2 = min(float(self.frame_width), cx1 + 1.0)
-        if cy2 <= cy1:
-            cy2 = min(float(self.frame_height), cy1 + 1.0)
+        coordinates = tuple(float(value) for value in (self.x1, self.y1, self.x2, self.y2))
+        x1, y1, x2, y2 = coordinates
+        if not (0.0 <= x1 < x2 <= float(self.frame_width)):
+            raise ValueError(
+                f"BBox x coordinates must satisfy 0 <= x1 < x2 <= {self.frame_width}, "
+                f"got {x1}..{x2}"
+            )
+        if not (0.0 <= y1 < y2 <= float(self.frame_height)):
+            raise ValueError(
+                f"BBox y coordinates must satisfy 0 <= y1 < y2 <= {self.frame_height}, "
+                f"got {y1}..{y2}"
+            )
 
-        object.__setattr__(self, "x1", cx1)
-        object.__setattr__(self, "y1", cy1)
-        object.__setattr__(self, "x2", cx2)
-        object.__setattr__(self, "y2", cy2)
+        object.__setattr__(self, "x1", x1)
+        object.__setattr__(self, "y1", y1)
+        object.__setattr__(self, "x2", x2)
+        object.__setattr__(self, "y2", y2)
+
+    @classmethod
+    def clamped(
+        cls,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        frame_width: int,
+        frame_height: int,
+        *,
+        minimum_size: float = 1.0,
+    ) -> "BBox":
+        """Build a valid box by explicitly clamping raw pipeline geometry."""
+        if frame_width <= 0 or frame_height <= 0:
+            raise ValueError(f"Frame dimensions must be positive, got {frame_width}x{frame_height}")
+        minimum = float(minimum_size)
+        if minimum <= 0 or minimum > frame_width or minimum > frame_height:
+            raise ValueError("minimum_size must be positive and fit within the frame")
+
+        left = max(0.0, min(float(frame_width), float(x1)))
+        top = max(0.0, min(float(frame_height), float(y1)))
+        right = max(0.0, min(float(frame_width), float(x2)))
+        bottom = max(0.0, min(float(frame_height), float(y2)))
+        if right <= left:
+            left = min(left, float(frame_width) - minimum)
+            right = left + minimum
+        if bottom <= top:
+            top = min(top, float(frame_height) - minimum)
+            bottom = top + minimum
+        return cls(left, top, right, bottom, frame_width, frame_height)
 
     @property
     def width(self) -> float:

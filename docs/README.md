@@ -1,7 +1,7 @@
 # MediaFlow Documentation
 
 **Documentation version:** V2 — Feature-first Modular Clean Architecture  
-**Status:** TARGET SPECIFICATION FOR THE NEXT REFACTOR  
+**Status:** CURRENT AUTHORITATIVE SPECIFICATION
 
 This directory is the authoritative documentation set for `media-flow`. It intentionally replaces the previous collection of phase reports, architecture audits, benchmark reports, experimental subtitle policies, and duplicated `docs/core/` files.
 
@@ -16,7 +16,8 @@ Read these in this order:
 5. [`GEMINI_RUNTIME.md`](GEMINI_RUNTIME.md) — shared Gemini infrastructure rules.
 6. [`YOLO.md`](YOLO.md) — production YOLO detector contract and 4-class mapping.
 7. [`E2E_VALIDATION.md`](E2E_VALIDATION.md) — acceptance and regression validation.
-8. [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) — temporary guide for migrating the current codebase to V2.
+8. [`QUALITY_AND_OPERATIONS.md`](QUALITY_AND_OPERATIONS.md) — offline quality gate, CI, job lifecycle, and benchmark policy.
+9. [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) — historical migration guidance; current behavior is defined by the documents above.
 
 ## Canonical product shape
 
@@ -43,19 +44,13 @@ Audio and Visual are independent features. Neither may require the other to run.
 
 ## Documentation rules
 
-- These files describe the **target production architecture**, not historical experiments.
+- These files describe the **current production architecture and contracts**, not historical experiments.
 - Historical reports are intentionally not copied into this active docs set. Git history is the archive.
 - Do not infer current production behavior from an old benchmark, phase name, output folder, or deleted report.
 - When implementation changes intentionally, update the corresponding authoritative document in the same change.
 - Do not add another architecture document unless it replaces `ARCHITECTURE.md` through an explicit decision.
 - Temporary implementation notes belong in issues/commits, not as permanent `PHASE_X_REPORT.md` files.
 
-## Current transition
+## Current implementation
 
-The codebase may still contain the previous generic policy/action architecture while V2 migration is in progress. During that transition:
-
-- `ARCHITECTURE.md` defines the destination.
-- `MIGRATION_PLAN.md` defines how to get there safely.
-- Existing tested provider, YOLO, tracking, rendering, Gemini-runtime and job-artifact code should be reused where appropriate rather than rewritten blindly.
-
-After migration is complete, `MIGRATION_PLAN.md` may be removed or reduced to a short historical note.
+The runtime follows the V2 feature boundaries: `ProcessVideoUseCase` composes independent Audio and Visual pipelines, provider construction is lazy at the interface composition boundary, and local CLI/web jobs share `JobRunner` plus durable `JobStore` state. `MIGRATION_PLAN.md` is retained only as historical guidance and is not the source of truth for current behavior.

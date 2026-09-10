@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mediaflow.local/benchmark-manifest.schema.json",
+  "title": "MediaFlow offline benchmark manifest",
+  "type": "object",
+  "required": ["version", "cases", "thresholds"],
+  "properties": {
+    "version": {"const": 1},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "fixture", "expected"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "fixture": {"type": "string", "minLength": 1},
+          "expected": {"type": "object"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": {"type": "number"}
+    }
+  },
+  "additionalProperties": false
+}

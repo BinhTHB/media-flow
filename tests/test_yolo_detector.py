@@ -107,14 +107,15 @@ class _InferenceMode:
 
 
 def _patch_env(monkeypatch, model=None):
-    import torch
-
     model = model if model is not None else _FakeModel()
     monkeypatch.setattr(
         "src.infrastructure.detection.yolo_detector.YOLO",
         lambda *a, **k: model,
     )
-    monkeypatch.setattr(torch, "inference_mode", lambda *a, **k: _InferenceMode())
+    monkeypatch.setattr(
+        "src.infrastructure.detection.yolo_detector._inference_mode",
+        lambda *a, **k: _InferenceMode(),
+    )
     monkeypatch.setattr(
         "src.infrastructure.detection.yolo_detector.resolve_yolo_weights",
         lambda *a, **k: "fake.pt",
@@ -211,3 +212,92 @@ def test_release_no_raise(monkeypatch):
     _patch_env(monkeypatch, model)
     d = YoloBurnInDetector(config=_base_config())
     d.release()
+
+
+def _adapter_detection(frame_index, confidence, class_name="subtitle", x1=100, x2=500):
+    from src.core.models.bbox import BBox
+    from src.core.models.detection import Detection
+
+    class_ids = {"subtitle": 0, "watermark": 1, "logo": 2, "other_burn_in_text": 3}
+    return Detection(
+        class_id=class_ids[class_name],
+        class_name=class_name,
+        confidence=confidence,
+        bbox=BBox(x1, 300, x2, 340, 640, 360),
+        frame_index=frame_index,
+        timestamp_seconds=frame_index / 30.0,
+    )
+
+
+def test_yolo_adapter_rescues_dense_weak_subtitle_bridge_only():
+    from src.infrastructure.detection.yolo import YoloDetectorAdapter
+
+    adapter = YoloDetectorAdapter.__new__(YoloDetectorAdapter)
+    adapter._base_conf = 0.05
+    adapter._subtitle_rescue_conf = 0.01
+    adapter._subtitle_rescue_max_gap_seconds = 3.0
+    adapter._subtitle_rescue_min_support_ratio = 0.25
+    detections = [
+        _adapter_detection(0, 0.8),
+        *[_adapter_detection(frame, 0.02) for frame in (1, 2, 3, 4)],
+        _adapter_detection(3, 0.02, class_name="other_burn_in_text"),
+        _adapter_detection(6, 0.8),
+    ]
+
+    result = adapter._filter_and_rescue(detections, fps=30.0)
+
+    assert [d.frame_index for d in result if d.class_name == "subtitle"] == [0, 1, 2, 3, 4, 6]
+    assert all(d.class_name != "other_burn_in_text" for d in result)
+
+
+def test_yolo_adapter_rejects_sparse_weak_subtitle_bridge():
+    from src.infrastructure.detection.yolo import YoloDetectorAdapter
+
+    adapter = YoloDetectorAdapter.__new__(YoloDetectorAdapter)
+    adapter._base_conf = 0.05
+    adapter._subtitle_rescue_conf = 0.01
+    adapter._subtitle_rescue_max_gap_seconds = 3.0
+    adapter._subtitle_rescue_min_support_ratio = 0.25
+    detections = [
+        _adapter_detection(0, 0.8),
+        _adapter_detection(3, 0.02),
+        _adapter_detection(6, 0.8),
+    ]
+
+    result = adapter._filter_and_rescue(detections, fps=30.0)
+
+    assert [d.frame_index for d in result if d.class_name == "subtitle"] == [0, 6]
+
+
+def test_yolo_adapter_requests_detection_only_bundle():
+    """Long-video adapter calls must not retain full-resolution frame buffers."""
+    from src.infrastructure.detection.yolo import YoloDetectorAdapter
+
+    class _DetectionOnlyProvider:
+        def detect_video(self, _video_path, stride=1, retain_images=True):
+            assert stride == 1
+            assert retain_images is False
+            return SimpleNamespace(
+                video_width=640,
+                video_height=360,
+                frames=[SimpleNamespace(
+                    frame_index=0,
+                    timestamp_sec=0.0,
+                    detections=[{
+                        "class_id": 0,
+                        "class_name": "subtitle",
+                        "confidence": 0.9,
+                        "bbox_xyxy": [10.0, 20.0, 200.0, 60.0],
+                        "candidate_id": "F00000_C01",
+                    }],
+                )],
+            )
+
+    adapter = YoloDetectorAdapter.__new__(YoloDetectorAdapter)
+    adapter.provider = _DetectionOnlyProvider()
+    detections = adapter.detect_video("unused.mp4")
+
+    assert len(detections) == 1
+    assert detections[0].class_name == "subtitle"
+    assert detections[0].bbox.frame_width == 640
+    assert detections[0].bbox.frame_height == 360

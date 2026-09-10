@@ -20,8 +20,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from ultralytics import YOLO
-
 from src.infrastructure.detection.base import BurnInDetector
 from src.infrastructure.detection.config import DetectionConfig
 from src.infrastructure.detection.paths import resolve_yolo_weights
@@ -37,6 +35,25 @@ from src.infrastructure.detection.schemas import (
 from src.infrastructure.detection.temporal import TemporalStabilizer
 
 logger = logging.getLogger(__name__)
+
+YOLO: Any = None
+
+
+def _load_yolo_class() -> Any:
+    """Import Ultralytics only when a concrete detector is instantiated."""
+    global YOLO
+    if YOLO is None:
+        from ultralytics import YOLO as UltralyticsYOLO
+
+        YOLO = UltralyticsYOLO
+    return YOLO
+
+
+def _inference_mode() -> Any:
+    import torch
+
+    return torch.inference_mode()
+
 
 #: Shared detector instances keyed by resolved weights path, so multiple
 #: pipeline components that use the same model share one loaded model.
@@ -99,7 +116,7 @@ class YoloBurnInDetector(BurnInDetector):
         self._verify_device()
 
         load_start = time.monotonic()
-        self._model = YOLO(str(weights_path))
+        self._model = _load_yolo_class()(str(weights_path))
         self._load_time_s = time.monotonic() - load_start
 
         self._class_names: Dict[int, str] = dict(self._model.names)
@@ -165,8 +182,6 @@ class YoloBurnInDetector(BurnInDetector):
     def _result_to_detections(
         self, result: Any, frame_index: int, timestamp_seconds: float
     ) -> List[Detection]:
-        import torch
-
         detections: List[Detection] = []
         if result.boxes is None or len(result.boxes) == 0:
             return detections
@@ -291,8 +306,6 @@ class YoloBurnInDetector(BurnInDetector):
         return out
 
     def _run_predict(self, images, *, conf: Optional[float] = None) -> Any:
-        import torch
-
         kwargs: Dict[str, Any] = {
             "imgsz": self.config.imgsz,
             "conf": (
@@ -312,16 +325,17 @@ class YoloBurnInDetector(BurnInDetector):
                 kwargs["quantize"] = 16
             except Exception:  # pragma: no cover - fallback only
                 kwargs["half"] = True
-        with torch.inference_mode():
+        with _inference_mode():
             return self._model.predict(images, **kwargs)
 
     def release(self) -> None:
         try:
             import gc
-            import torch
 
             if self._device == "cuda":
                 try:
+                    import torch
+
                     torch.cuda.empty_cache()
                 except Exception:
                     pass

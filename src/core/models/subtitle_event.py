@@ -22,6 +22,7 @@ class SubtitleEvent:
     end_time: float
     anchor_bbox: BBox
     bbox_trajectory: List[BBox] = field(default_factory=list)
+    bbox_frame_indices: List[int] = field(default_factory=list)
     crop_paths: List[str] = field(default_factory=list)
     source_text: str = ""
     translated_text: str = ""
@@ -43,6 +44,7 @@ class SubtitleEvent:
             "overlay_applied": self.overlay_applied,
             "anchor_bbox": self.anchor_bbox.to_dict(),
             "bbox_trajectory": [b.to_dict() for b in self.bbox_trajectory],
+            "bbox_frame_indices": list(self.bbox_frame_indices),
             "crop_paths": self.crop_paths,
             "source_text": self.source_text,
             "translated_text": self.translated_text,
@@ -57,6 +59,7 @@ class SubtitleEvent:
             end_time=float(data["end_time"]),
             anchor_bbox=BBox.from_dict(data["anchor_bbox"]),
             bbox_trajectory=[BBox.from_dict(b) for b in data.get("bbox_trajectory", [])],
+            bbox_frame_indices=[int(v) for v in data.get("bbox_frame_indices", [])],
             crop_paths=list(data.get("crop_paths", [])),
             source_text=str(data.get("source_text", "")),
             translated_text=str(data.get("translated_text", "")),

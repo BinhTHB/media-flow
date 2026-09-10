@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
@@ -43,30 +44,25 @@ class ProcessVideoUseCase:
         timings = {}
         warnings = []
 
-        # 1. Job Workspace Isolation
-        job_dir = (self.workspace_base_dir / job_id).resolve()
-        job_dir.mkdir(parents=True, exist_ok=True)
-        logs_dir = job_dir / "logs"
-        logs_dir.mkdir(parents=True, exist_ok=True)
-
+        # Validate before creating job/output artifacts whenever possible.
         input_path = Path(request.input_video).resolve()
-        if not input_path.exists():
+        if not input_path.is_file():
             raise ValidationError(f"Input video file not found: {input_path}")
-
         output_path = Path(request.output_video).resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
         if output_path.exists() and not request.overwrite:
             raise ValidationError(f"Output video already exists: {output_path}")
+        if self.video_util is None:
+            raise ValidationError("VideoUtilPort (video_util) must be injected into ProcessVideoUseCase.")
 
-        # Save job.json
-        job_json_path = job_dir / "job.json"
-        with open(job_json_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "job_id": job_id,
-                "request": request.to_dict(),
-                "created_at": time.time(),
-            }, f, indent=2, ensure_ascii=False)
+        job_dir = (self.workspace_base_dir / job_id).resolve()
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "logs").mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self._atomic_json(job_dir / "job.json", {
+            "job_id": job_id,
+            "request": request.to_dict(),
+            "created_at": time.time(),
+        })
 
         # 2. Execute Visual Pipeline
         visual_result = None
@@ -97,9 +93,6 @@ class ProcessVideoUseCase:
         visual_video = visual_result.rendered_video_path if (visual_result and visual_result.rendered_video_path) else str(input_path)
         audio_source = audio_result.dubbed_audio_path if (audio_result and audio_result.dubbed_audio_path) else str(input_path)
 
-        if self.video_util is None:
-            raise ValidationError("VideoUtilPort (video_util) must be injected into ProcessVideoUseCase.")
-
         final_video_path = self.video_util.mux_audio_video(
             video_no_audio_path=visual_video,
             audio_source_path=audio_source,
@@ -112,14 +105,13 @@ class ProcessVideoUseCase:
         total_duration = time.monotonic() - start_time
         timings["total"] = round(total_duration, 3)
 
-        overall_status = "SUCCESS"
-        if visual_result and visual_result.status == "FAILED":
-            overall_status = "FAILED"
-        if audio_result and audio_result.status == "PARTIAL":
-            overall_status = "PARTIAL"
-            warnings.extend(audio_result.warnings)
+        audio_status = audio_result.status if audio_result else "SKIPPED"
+        visual_status = visual_result.status if visual_result else "SKIPPED"
+        warnings.extend(audio_result.warnings if audio_result else [])
+        warnings.extend(visual_result.warnings if visual_result else [])
+        overall_status = self._aggregate_status(audio_status, visual_status)
 
-        return ProcessingResult(
+        result = ProcessingResult(
             job_id=job_id,
             status=overall_status,
             input_video_path=str(input_path),
@@ -127,11 +119,44 @@ class ProcessVideoUseCase:
             duration_sec=probe_info["duration"],
             fps=probe_info["fps"],
             resolution=f"{probe_info['width']}x{probe_info['height']}",
-            audio_status=audio_result.status if audio_result else "SKIPPED",
-            visual_status=visual_result.status if visual_result else "SKIPPED",
+            audio_status=audio_status,
+            visual_status=visual_status,
             detections_summary=visual_result.detections_summary if visual_result else {},
             tracks_summary=visual_result.tracks_summary if visual_result else {},
             workspace_dir=str(job_dir),
             timings=timings,
             warnings=warnings,
+            provenance={
+                "input": str(input_path),
+                "audio_artifact": audio_source,
+                "visual_artifact": visual_video,
+                "final_artifact": final_video_path,
+            },
         )
+        self._atomic_json(job_dir / "result.json", result.to_dict())
+        return result
+
+    @staticmethod
+    def _aggregate_status(*statuses: str) -> str:
+        active = {status for status in statuses if status != "SKIPPED"}
+        for status in ("BLOCKED", "FAILED", "PARTIAL"):
+            if status in active:
+                return status
+        return "SUCCESS"
+
+    @staticmethod
+    def _atomic_json(path: Path, payload: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        except Exception:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+            raise

@@ -7,15 +7,18 @@ Independent from VisualPipeline: zero visual/YOLO/OCR imports.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
+import wave
 from pathlib import Path
 from typing import Optional
 
 from src.features.audio.composer import AudioComposer
 from src.features.audio.models import AudioRequest, AudioResult, TTSClip
-from src.features.audio.ports import ASRPort, TTSPort
+from src.features.audio.ports import AudioExtractionPort, ASRCorrectionPort, ASRPort, TTSPort
+from src.core.contracts import SpokenRewritePort
 from src.features.translation.service import TranslationService
 
 logger = logging.getLogger(__name__)
@@ -25,14 +28,22 @@ class AudioPipeline:
     def __init__(
         self,
         asr_provider: Optional[ASRPort] = None,
+        asr_corrector: Optional[ASRCorrectionPort] = None,
         translation_service: Optional[TranslationService] = None,
+        spoken_rewriter: Optional[SpokenRewritePort] = None,
         tts_provider: Optional[TTSPort] = None,
         composer: Optional[AudioComposer] = None,
+        audio_extractor: Optional[AudioExtractionPort] = None,
+        max_rewrite_attempts: int = 3,
     ):
         self.asr_provider = asr_provider
+        self.asr_corrector = asr_corrector
         self.translation_service = translation_service
+        self.spoken_rewriter = spoken_rewriter
         self.tts_provider = tts_provider
         self.composer = composer or AudioComposer()
+        self.audio_extractor = audio_extractor
+        self.max_rewrite_attempts = max(0, int(max_rewrite_attempts))
 
     def process(self, request: AudioRequest, job_workspace_dir: str) -> AudioResult:
         start_time = time.monotonic()
@@ -55,9 +66,14 @@ class AudioPipeline:
         # 1. Audio Extraction
         t0 = time.monotonic()
         input_path = request.audio_path
-        if input_path.endswith((".mp4", ".mkv", ".avi", ".mov", ".webm")):
-            from src.infrastructure.video.ffmpeg import extract_audio
-            extract_audio(input_path, extracted_audio_path)
+        if input_path.lower().endswith((".mp4", ".mkv", ".avi", ".mov", ".webm")):
+            if self.audio_extractor is None:
+                raise RuntimeError(
+                    "Audio extraction provider is not configured for video input."
+                )
+            extracted_audio_path = self.audio_extractor.extract_audio(
+                input_path, extracted_audio_path
+            )
         else:
             extracted_audio_path = input_path
         timings["audio_extraction"] = round(time.monotonic() - t0, 3)
@@ -72,15 +88,34 @@ class AudioPipeline:
         )
         timings["asr"] = round(time.monotonic() - t0, 3)
 
+        # 2b. Contextual ASR correction (fail-open, timestamps untouched)
+        if self.asr_corrector is not None and speech_segments:
+            t0 = time.monotonic()
+            raw_snapshot = [segment.source_text for segment in speech_segments]
+            try:
+                speech_segments = self.asr_corrector.correct_segments(
+                    speech_segments,
+                    language=request.source_language,
+                    audio_path=extracted_audio_path,
+                )
+            except Exception as exc:
+                warnings.append(f"ASR correction failed open: {exc}")
+                for segment, original in zip(speech_segments, raw_snapshot):
+                    segment.source_text = original
+            timings["asr_correction"] = round(time.monotonic() - t0, 3)
+
         # 3. Shared Translation
         if self.translation_service is not None and speech_segments:
             t0 = time.monotonic()
             raw_texts = [s.source_text for s in speech_segments]
             translated_texts = self.translation_service.translate_texts(
-                raw_texts, target_language=request.target_language
+                raw_texts,
+                target_language=request.target_language,
+                source_language=request.source_language,
             )
             for seg, trans in zip(speech_segments, translated_texts):
                 seg.translated_text = trans
+                seg.spoken_text = trans
             timings["translation"] = round(time.monotonic() - t0, 3)
 
         # 4. Dubbing / TTS
@@ -98,25 +133,68 @@ class AudioPipeline:
                 tts_dir.mkdir(parents=True, exist_ok=True)
 
                 for seg in speech_segments:
-                    text_to_speak = seg.translated_text or seg.source_text
+                    text_to_speak = seg.spoken_text or seg.translated_text or seg.source_text
                     if not text_to_speak.strip():
                         continue
                     clip_path = str(tts_dir / f"tts_{seg.segment_id}.mp3")
+                    trimmed_path = tts_dir / f"trimmed_{seg.segment_id}.wav"
+                    target_duration = max(0.08, seg.end_time - seg.start_time)
+                    rewrite_count = 0
                     try:
-                        out_clip = self.tts_provider.synthesize(
-                            text=text_to_speak, output_path=clip_path, voice=request.voice
+                        while True:
+                            raw_clip = self.tts_provider.synthesize(
+                                text=text_to_speak, output_path=clip_path, voice=request.voice
+                            )
+                            out_clip = str(
+                                self.composer.trim_tts_silence(Path(raw_clip), trimmed_path)
+                            )
+                            natural_duration = self.composer.probe_duration(Path(out_clip))
+                            speed_ratio = natural_duration / target_duration if target_duration else 1.0
+                            if speed_ratio <= self.composer.max_speedup + 1e-6:
+                                break
+
+                            if self.spoken_rewriter is None or rewrite_count >= self.max_rewrite_attempts:
+                                raise RuntimeError(
+                                    f"natural TTS needs {speed_ratio:.2f}x speed-up; "
+                                    f"cap is {self.composer.max_speedup:.2f}x"
+                                )
+
+                            rewritten = self.spoken_rewriter.rewrite_for_duration(
+                                text=text_to_speak,
+                                source_text=seg.source_text,
+                                target_duration=target_duration,
+                                current_duration=natural_duration,
+                                target_language=request.target_language,
+                            ).strip()
+                            if not rewritten or rewritten == text_to_speak:
+                                raise RuntimeError(
+                                    f"duration rewrite could not shorten a {speed_ratio:.2f}x TTS clip"
+                                )
+                            text_to_speak = rewritten
+                            seg.spoken_text = rewritten
+                            rewrite_count += 1
+
+                        provider_name = getattr(
+                            self.tts_provider,
+                            "last_provider_name",
+                            type(self.tts_provider).__name__,
                         )
-                        duration = seg.end_time - seg.start_time
                         tts_clips.append(
                             TTSClip(
                                 segment_id=seg.segment_id,
                                 start_time=seg.start_time,
                                 end_time=seg.end_time,
                                 audio_clip_path=out_clip,
-                                duration=duration,
+                                duration=target_duration,
+                                spoken_text=text_to_speak,
+                                natural_duration=natural_duration,
+                                speed_ratio=speed_ratio,
+                                rewrite_count=rewrite_count,
+                                provider_name=provider_name,
                             )
                         )
                     except Exception as exc:
+                        status = "PARTIAL"
                         warnings.append(f"TTS synthesis failed for segment {seg.segment_id}: {exc}")
 
                 timings["tts"] = round(time.monotonic() - t0, 3)
@@ -124,13 +202,48 @@ class AudioPipeline:
                 if tts_clips:
                     t0 = time.monotonic()
                     dubbed_audio_path = str(audio_dir / "dubbed_timeline.wav")
+                    source_duration = self._audio_duration(extracted_audio_path)
+                    last_speech_end = speech_segments[-1].end_time if speech_segments else 0.0
                     dubbed_audio_path = self.composer.compose_dubbed_timeline(
                         tts_clips=tts_clips,
-                        total_duration=speech_segments[-1].end_time if speech_segments else 0.0,
+                        total_duration=max(source_duration, last_speech_end),
                         output_audio_path=dubbed_audio_path,
                         original_audio_path=extracted_audio_path,
                     )
                     timings["audio_composition"] = round(time.monotonic() - t0, 3)
+                elif speech_segments:
+                    status = "PARTIAL"
+                    warnings.append("Dubbing produced no usable TTS clips.")
+
+        # Persist a non-secret, job-local audit after any duration-aware rewrites.
+        clip_by_id = {clip.segment_id: clip for clip in tts_clips}
+        try:
+            (audio_dir / "segments.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "segment_id": seg.segment_id,
+                            "start_time": seg.start_time,
+                            "end_time": seg.end_time,
+                            "source_text": seg.source_text,
+                            "source_language": seg.source_language,
+                            "translated_text": seg.translated_text,
+                            "spoken_text": seg.spoken_text,
+                            "tts_provider": clip_by_id.get(seg.segment_id).provider_name if seg.segment_id in clip_by_id else "",
+                            "natural_tts_duration": round(clip_by_id.get(seg.segment_id).natural_duration, 4) if seg.segment_id in clip_by_id else 0.0,
+                            "target_duration": round(clip_by_id.get(seg.segment_id).duration, 4) if seg.segment_id in clip_by_id else round(seg.end_time - seg.start_time, 4),
+                            "speed_ratio": round(clip_by_id.get(seg.segment_id).speed_ratio, 4) if seg.segment_id in clip_by_id else 0.0,
+                            "rewrite_count": clip_by_id.get(seg.segment_id).rewrite_count if seg.segment_id in clip_by_id else 0,
+                        }
+                        for seg in speech_segments
+                    ],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            warnings.append(f"Could not write audio segments audit: {exc}")
 
         timings["total"] = round(time.monotonic() - start_time, 3)
 
@@ -144,3 +257,13 @@ class AudioPipeline:
             warnings=warnings,
             timings=timings,
         )
+
+    @staticmethod
+    def _audio_duration(path: str) -> float:
+        """Return duration for the canonical extracted PCM WAV without FFmpeg coupling."""
+        try:
+            with wave.open(path, "rb") as handle:
+                rate = handle.getframerate()
+                return handle.getnframes() / float(rate) if rate else 0.0
+        except (wave.Error, OSError):
+            return 0.0

@@ -8,13 +8,14 @@ from typing import Any, List
 class DecodedFrame:
     """A frame and its YOLO detections from one video-stream decode pass.
 
-    Stores the original full-res image plus a 720p context version and
-    pre-extracted full-res crops per detection (STEP-0 cache).
+    Optionally stores the original full-res image plus a 720p context
+    version and pre-extracted full-res crops per detection (STEP-0 cache).
+    Detection-only callers can disable image retention to keep long videos bounded.
     """
 
     frame_index: int
     timestamp_sec: float
-    image: Any
+    image: Any | None
     image_path: str | None
     detections: list[dict[str, Any]] = field(default_factory=list)
     image_720p: Any | None = None  # Downscale ~720px max dimension (context for Gemini)
@@ -49,7 +50,7 @@ class ProposalBundle:
         *,
         frame_index: int,
         timestamp_sec: float,
-        image: Any,
+        image: Any | None,
         image_path: str | None,
         detections: list[dict[str, Any]],
     ) -> None:

@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
 
 from src.infrastructure.detection import DetectionConfig, YoloBurnInDetector
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("MEDIA_FLOW_RUN_YOLO_INTEGRATION") != "1",
+    reason="real YOLO integration tests are opt-in",
+)
 
 
 def test_batch_ordering_and_timestamps():

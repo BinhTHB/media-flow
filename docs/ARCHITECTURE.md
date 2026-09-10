@@ -17,7 +17,7 @@ The goal is not maximum abstraction. The goal is maximum practical independence 
 
 ```text
                          Interface
-                    CLI / future REST API
+                    CLI / local Web API
                               │
                               ▼
                          Application
@@ -208,8 +208,9 @@ src/
 │   ├── gemini/
 │   └── video/
 └── interfaces/
-    ├── cli/
-    └── api/
+    ├── composition/
+    ├── jobs/
+    └── web/
 ```
 
 Exact filenames may differ when reuse makes another layout cleaner. The dependency rules are more important than folder names.
@@ -322,7 +323,7 @@ Prefer a product-shaped request rather than a generic workflow graph:
 }
 ```
 
-Runtime/request override should win over project config, which wins over defaults. Do not maintain two conflicting business-policy configuration files.
+Runtime/request override wins over environment, which wins over project config, which wins over code defaults. Do not maintain two conflicting business-policy configuration files.
 
 ## 10. Lazy execution
 

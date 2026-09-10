@@ -49,7 +49,7 @@ class SubtitleEventSegmenter:
         min_discontinuity_frames: int = 3,
         min_event_duration: float = 0.25,
         content_sample_stride_frames: int = 3,
-        content_change_threshold: float = 0.22,
+        content_change_threshold: float = 0.18,
     ):
         self.max_gap_seconds = max_gap_seconds
         self.bbox_discontinuity_threshold = bbox_discontinuity_threshold
@@ -73,17 +73,24 @@ class SubtitleEventSegmenter:
         if not track.detections:
             return []
 
+        # A tracker frame can contain several horizontally-adjacent YOLO fragments
+        # belonging to the same subtitle row. Temporal segmentation must operate on
+        # one observation per video frame; otherwise sampling every N detections
+        # advances by an unpredictable fraction of a frame and misses real caption
+        # changes while manufacturing micro-events.
+        detections = self._collapse_same_frame_detections(track.detections)
+
         # Step 1: Primary temporal gap & bbox discontinuity splitting
         initial_groups: List[Tuple[str, List[Detection]]] = []
-        current_group: List[Detection] = [track.detections[0]]
+        current_group: List[Detection] = [detections[0]]
         current_split_reason = "initial"
 
-        n = len(track.detections)
+        n = len(detections)
         i = 1
 
         while i < n:
-            prev = track.detections[i - 1]
-            curr = track.detections[i]
+            prev = detections[i - 1]
+            curr = detections[i]
 
             gap = curr.timestamp_seconds - prev.timestamp_seconds
             iou = prev.bbox.iou(curr.bbox)
@@ -94,7 +101,7 @@ class SubtitleEventSegmenter:
             elif iou < self.bbox_discontinuity_threshold:
                 persists = True
                 for lookahead in range(1, min(self.min_discontinuity_frames, n - i)):
-                    ahead_det = track.detections[i + lookahead]
+                    ahead_det = detections[i + lookahead]
                     if prev.bbox.iou(ahead_det.bbox) >= self.bbox_discontinuity_threshold:
                         persists = False
                         break
@@ -123,8 +130,12 @@ class SubtitleEventSegmenter:
             else:
                 final_groups.append((reason, group_dets))
 
-        # Step 3: Merge micro-fragments that were split due to transient noise
-        merged_groups = self._merge_micro_fragments(final_groups)
+        # Step 3: Keep content boundaries intact. A previous generic micro-fragment
+        # merger used an OR-condition (current OR previous is short), which could
+        # chain-merge a whole sequence of genuine caption changes into one multi-
+        # second event. Duplicate fragments are now merged safely *after OCR*, when
+        # semantic equality is known.
+        merged_groups = final_groups
 
         # Step 4: Build SubtitleEvent objects
         events: List[SubtitleEvent] = []
@@ -132,6 +143,40 @@ class SubtitleEventSegmenter:
             events.append(self._build_event(track.track_id, idx, group_dets, reason))
 
         return events
+
+    @staticmethod
+    def _collapse_same_frame_detections(detections: List[Detection]) -> List[Detection]:
+        if not detections:
+            return []
+        by_frame: dict[int, List[Detection]] = {}
+        for det in detections:
+            by_frame.setdefault(int(det.frame_index), []).append(det)
+
+        collapsed: List[Detection] = []
+        for frame_index in sorted(by_frame):
+            group = by_frame[frame_index]
+            boxes = [d.bbox for d in group]
+            box = BBox(
+                x1=min(b.x1 for b in boxes),
+                y1=min(b.y1 for b in boxes),
+                x2=max(b.x2 for b in boxes),
+                y2=max(b.y2 for b in boxes),
+                frame_width=boxes[0].frame_width,
+                frame_height=boxes[0].frame_height,
+            )
+            first = group[0]
+            collapsed.append(
+                Detection(
+                    class_id=first.class_id,
+                    class_name=first.class_name,
+                    confidence=max(float(d.confidence) for d in group),
+                    bbox=box,
+                    frame_index=frame_index,
+                    timestamp_seconds=min(float(d.timestamp_seconds) for d in group),
+                    candidate_id="+".join(d.candidate_id for d in group if d.candidate_id),
+                )
+            )
+        return collapsed
 
     def _split_by_content_change(
         self, detections: List[Detection], video_path: str
@@ -143,7 +188,39 @@ class SubtitleEventSegmenter:
         n = len(detections)
         split_indices = [0]
 
+        # Compare all samples through one stable crop window. Resizing each
+        # detection's own bbox independently normalizes away exactly the spatial
+        # changes that distinguish one subtitle sentence from the next.
+        boxes = [d.bbox for d in detections]
+        fw = boxes[0].frame_width
+        fh = boxes[0].frame_height
+        centers_x = sorted((b.x1 + b.x2) / 2.0 for b in boxes)
+        center_x = centers_x[len(centers_x) // 2]
+        widths = sorted(float(b.width) for b in boxes)
+        median_w = widths[len(widths) // 2]
+        # A long sentence elsewhere in the same spatial track must not make the
+        # change-detection crop enormous. We only need a stable central glyph
+        # window, not the full caption width.
+        stable_w = min(float(fw) * 0.52, max(median_w * 1.20, float(fw) * 0.28))
+
+        y1_values = sorted(float(b.y1) for b in boxes)
+        y2_values = sorted(float(b.y2) for b in boxes)
+        p10_index = int(round((len(boxes) - 1) * 0.10))
+        p90_y_index = int(round((len(boxes) - 1) * 0.90))
+        y1 = max(0.0, y1_values[p10_index] - 8.0)
+        y2 = min(float(fh), y2_values[p90_y_index] + 8.0)
+        stable_bbox = BBox(
+            x1=max(0.0, center_x - stable_w / 2.0),
+            y1=y1,
+            x2=min(float(fw), center_x + stable_w / 2.0),
+            y2=y2,
+            frame_width=fw,
+            frame_height=fh,
+        )
+
         prev_norm = None
+        prev_local_norm = None
+        prev_sample_det = None
         i = 0
 
         while i < n:
@@ -151,27 +228,41 @@ class SubtitleEventSegmenter:
             cap.set(cv2.CAP_PROP_POS_FRAMES, det.frame_index)
             ret, frame = cap.read()
             if ret and frame is not None:
-                norm = _extract_norm_crop(frame, det.bbox)
+                norm = _extract_norm_crop(frame, stable_bbox)
+                local_norm = _extract_norm_crop(frame, det.bbox)
                 if norm is not None and prev_norm is not None:
-                    diff = float(np.mean(np.abs(norm.astype(float) - prev_norm.astype(float))) / 255.0)
-                    if diff >= self.content_change_threshold:
-                        # Refine boundary in range [i - stride, i]
-                        refined_idx = i
-                        for r_idx in range(max(1, i - self.content_sample_stride_frames), i + 1):
-                            r_det = detections[r_idx]
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, r_det.frame_index)
-                            r_ret, r_frame = cap.read()
-                            if r_ret and r_frame is not None:
-                                r_norm = _extract_norm_crop(r_frame, r_det.bbox)
-                                if r_norm is not None and prev_norm is not None:
-                                    r_diff = float(np.mean(np.abs(r_norm.astype(float) - prev_norm.astype(float))) / 255.0)
-                                    if r_diff >= 0.18:
-                                        refined_idx = r_idx
-                                        break
-                        if refined_idx > split_indices[-1]:
-                            split_indices.append(refined_idx)
+                    stable_diff = float(np.mean(np.abs(norm.astype(float) - prev_norm.astype(float))) / 255.0)
+                    local_diff = 0.0
+                    if local_norm is not None and prev_local_norm is not None:
+                        local_diff = float(np.mean(np.abs(local_norm.astype(float) - prev_local_norm.astype(float))) / 255.0)
+                    width_ratio = 0.0
+                    if prev_sample_det is not None:
+                        prev_w = max(1.0, float(prev_sample_det.bbox.width))
+                        width_ratio = abs(float(det.bbox.width) - prev_w) / prev_w
+
+                    # Strong changes in a stable screen-space crop are reliable
+                    # caption boundaries. A weaker stable change is accepted only
+                    # when the local glyph crop changes strongly AND the detected
+                    # row width changes materially. This catches short→long caption
+                    # switches without reacting to compression/animation noise.
+                    strong_change = stable_diff >= self.content_change_threshold
+                    supported_change = (
+                        stable_diff >= 0.12
+                        and local_diff >= 0.23
+                        and width_ratio >= 0.15
+                    )
+                    if strong_change or supported_change:
+                        # Sampling is normally every 3 frames (~100 ms at 30 fps),
+                        # already finer than viewer-perceptible subtitle timing. Do
+                        # not perform noisy frame-by-frame refinement here; the
+                        # boundary refiner later tightens first/last matching frames.
+                        if i > split_indices[-1]:
+                            split_indices.append(i)
                 if norm is not None:
                     prev_norm = norm
+                if local_norm is not None:
+                    prev_local_norm = local_norm
+                prev_sample_det = det
             i += self.content_sample_stride_frames
 
         cap.release()
@@ -225,6 +316,7 @@ class SubtitleEventSegmenter:
         mid_idx = len(detections) // 2
         anchor_bbox = detections[mid_idx].bbox
         trajectory = [d.bbox for d in detections]
+        trajectory_frames = [int(d.frame_index) for d in detections]
 
         event_id = f"{track_id}_E{index:02d}"
         return SubtitleEvent(
@@ -234,5 +326,6 @@ class SubtitleEventSegmenter:
             end_time=end_time,
             anchor_bbox=anchor_bbox,
             bbox_trajectory=trajectory,
+            bbox_frame_indices=trajectory_frames,
             split_reason=split_reason,
         )

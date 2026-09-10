@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+from argparse import Namespace
+from pathlib import Path
+
+import pytest
+
+import scripts.run_e2e as cli
+from src.application.result import ProcessingResult
+from src.core.errors import ValidationError
+from src.interfaces.jobs.runner import JobError, JobOptions, JobRunner
+from src.interfaces.web.server import build_job_options
+
+
+class FakeUseCase:
+    def __init__(self, result: ProcessingResult | None = None, error: Exception | None = None) -> None:
+        self.result = result
+        self.error = error
+
+    def execute(self, request):
+        if self.error:
+            raise self.error
+        assert self.result is not None
+        return self.result
+
+
+def _options(tmp_path: Path, profile: str = "balanced") -> JobOptions:
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"fixture")
+    return JobOptions(
+        input_path=str(source),
+        output_path=str(tmp_path / "output.mp4"),
+        preset="preserve-all",
+        device="cpu",
+        overwrite=True,
+        profile=profile,
+        no_visual_cache=True,
+    )
+
+
+def _result(options: JobOptions) -> ProcessingResult:
+    Path(options.output_path).write_bytes(b"output")
+    return ProcessingResult(
+        job_id="offline",
+        status="SUCCESS",
+        input_video_path=options.input_path,
+        output_video_path=options.output_path,
+        detections_summary={"subtitle": 2},
+    )
+
+
+def test_runner_emits_structured_progress_offline(tmp_path, monkeypatch) -> None:
+    options = _options(tmp_path)
+    monkeypatch.setattr(JobRunner, "_preflight", lambda self, value: "cpu")
+    runner = JobRunner(use_case_factory=lambda opts, request: (FakeUseCase(_result(opts)), {}))
+    events = []
+
+    result = runner.run(options, events.append)
+
+    assert result.status == "SUCCESS"
+    assert [event.type for event in events] == ["started", "progress", "progress", "progress", "completed"]
+    assert [event.progress for event in events] == [5, 25, 40, 92, 100]
+    assert events[-2].details == {"detections": {"subtitle": 2}}
+    assert events[-1].to_dict()["details"]["result"]["status"] == "SUCCESS"
+
+
+def test_runner_maps_failure_and_emits_failed_event(tmp_path, monkeypatch) -> None:
+    options = _options(tmp_path)
+    monkeypatch.setattr(JobRunner, "_preflight", lambda self, value: "cpu")
+    runner = JobRunner(
+        use_case_factory=lambda opts, request: (FakeUseCase(error=ValidationError("bad media")), {})
+    )
+    events = []
+
+    with pytest.raises(JobError) as raised:
+        runner.run(options, events.append)
+
+    assert raised.value.code == "validation_error"
+    assert events[-1].type == "failed"
+    assert events[-1].details == {"error": {"code": "validation_error", "message": "bad media"}}
+
+
+def test_cli_and_web_resolve_same_runner_options(tmp_path) -> None:
+    options = _options(tmp_path, profile="fast")
+    web = build_job_options({
+        "id": "same-job",
+        "input_path": options.input_path,
+        "output_path": options.output_path,
+        "preset": options.preset,
+        "profile": options.profile,
+        "device": options.device,
+        "overwrite": options.overwrite,
+    })
+    captured = {}
+
+    class CapturingRunner:
+        def run(self, received, callback):
+            captured["options"] = received
+            return _result(received)
+
+    args = Namespace(
+        input=options.input_path, output=options.output_path, preset=options.preset,
+        device=options.device, job_id="same-job", overwrite=True, profile="fast",
+        source_language="auto", target_language="vi", voice="elevenlabs:env",
+        asr_provider="auto", asr_correction="auto", translation_provider="auto",
+        duration_rewrite="auto", max_tts_speedup=1.30, tts_provider="auto",
+        visual_cache_dir=options.visual_cache_dir, no_visual_cache=True,
+        yolo_weights=options.yolo_weights, yolo_imgsz=1024, yolo_conf=0.05,
+        yolo_iou=0.70, yolo_subtitle_rescue_conf=0.01,
+        yolo_subtitle_rescue_max_gap_seconds=3.0,
+        yolo_subtitle_rescue_min_support_ratio=0.25, subtitle_layout="temporal",
+    )
+
+    cli.run_job(args, runner=CapturingRunner())
+
+    resolved = captured["options"]
+    assert type(resolved) is type(web) is JobOptions
+    assert (resolved.input_path, resolved.output_path, resolved.preset, resolved.profile) == (
+        web.input_path, web.output_path, web.preset, web.profile,
+    )

@@ -1,0 +1,6 @@
+{
+  "job_id": "benchmark-offline",
+  "provider_mode": "fake",
+  "input_bytes": 7,
+  "expected_events": ["started", "progress", "progress", "progress", "completed"]
+}

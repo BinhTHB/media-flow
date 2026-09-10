@@ -17,7 +17,8 @@ frame_width, frame_height
 
 Rules:
 
-- coordinates are clamped/validated against the frame;
+- direct construction validates coordinates against the frame and rejects invalid geometry;
+- pipeline/provider boundaries that accept raw geometry must opt into explicit clamping;
 - `x2 > x1`, `y2 > y1`;
 - normalized representation may be included for serialization/debugging.
 
@@ -103,6 +104,8 @@ translated_text?   # may be populated by shared translation
 
 Rules:
 
+- direct construction rejects negative or non-positive timing;
+- provider boundaries may use an explicit timing-normalization factory;
 - `end_time > start_time`;
 - timestamps are monotonic or explicitly sortable;
 - no fabricated text for silence/failed segments.

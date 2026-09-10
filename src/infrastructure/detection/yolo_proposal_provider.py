@@ -66,6 +66,7 @@ class YoloTextProposalProvider:
         stride: int = 1,
         output_dir: str | None = None,
         min_pixel_std: float = 1.0,
+        retain_images: bool = True,
     ) -> ProposalBundle:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -121,7 +122,10 @@ class YoloTextProposalProvider:
             if orig_img is None:
                 raise RuntimeError(f"YOLO returned no image data at frame_index={fi}.")
 
-            pixel_std = float(orig_img.std())
+            # Avoid NumPy std() default float64 promotion: a 1920x1080 RGB frame
+            # would allocate another ~47.5 MiB just for this validation statistic.
+            _, stddev = cv2.meanStdDev(orig_img)
+            pixel_std = float(stddev.mean())
             if pixel_std < min_pixel_std:
                 raise RuntimeError(
                     f"Blank/gray frame detected at frame_index={fi} (std={pixel_std:.4f} < {min_pixel_std})."
@@ -133,7 +137,7 @@ class YoloTextProposalProvider:
                 img_path = os.path.join(output_dir, f"frame_{fi:06d}.jpg")
                 cv2.imwrite(img_path, orig_img)
 
-            image_720p = _resize_720p(orig_img)
+            image_720p = _resize_720p(orig_img) if retain_images else None
 
             frame_detections: List[Dict[str, Any]] = []
             frame_crops: list[Any] = []
@@ -166,13 +170,14 @@ class YoloTextProposalProvider:
                 py1 = max(0, y1 - CROP_PADDING)
                 px2 = min(W, x2 + CROP_PADDING)
                 py2 = min(H, y2 + CROP_PADDING)
-                crop = orig_img[py1:py2, px1:px2].copy()
-                frame_crops.append(crop)
+                if retain_images:
+                    crop = orig_img[py1:py2, px1:px2].copy()
+                    frame_crops.append(crop)
 
             bundle.add_frame(
                 frame_index=fi,
                 timestamp_sec=round(ts, 4),
-                image=orig_img,
+                image=orig_img if retain_images else None,
                 image_path=img_path,
                 detections=frame_detections,
             )

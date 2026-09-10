@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MediaFlow local video dubbing studio MVP">
+  <title>MediaFlow · Dubbing Studio</title>
+  <link rel="stylesheet" href="/dubbing.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="MediaFlow Studio">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40"><path d="M8 9h9l5 6h10v16H8z"/><path d="m18 19 8 5-8 5z"/></svg>
+      </span>
+      <span><strong>MediaFlow</strong><small>DUBBING MVP</small></span>
+    </a>
+    <div class="project-heading">
+      <span>Local project</span>
+      <strong id="projectName">Chưa chọn video</strong>
+    </div>
+    <div class="top-actions">
+      <span class="runtime" id="runtimeState"><i></i>Đang kết nối…</span>
+      <a class="ghost-button" href="/studio.html">AI Studio</a>
+      <button class="publish-button" id="exportButton" type="button" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+        Xuất bản Dubbing
+      </button>
+    </div>
+  </header>
+
+  <main class="studio-grid">
+    <aside class="left-column">
+      <section class="panel upload-panel">
+        <div class="section-title"><span>TẢI LÊN VIDEO</span><button class="icon-button" id="refreshFiles" title="Làm mới danh sách" type="button">↻</button></div>
+        <label class="drop-zone" for="fileInput">
+          <input id="fileInput" type="file" accept="video/*" hidden>
+          <span class="upload-icon" aria-hidden="true">⇧</span>
+          <strong>Kéo và thả video vào đây</strong>
+          <small>hoặc bấm để chọn file trong dự án</small>
+          <span class="upload-actions"><b>Từ máy tính</b><b>Từ URL</b></span>
+        </label>
+        <div class="source-list" id="sourceList" aria-live="polite">
+          <div class="empty-state">Đang tải danh sách video…</div>
+        </div>
+      </section>
+
+      <section class="panel speakers-panel">
+        <div class="section-title">
+          <span>NHÂN VẬT <em id="speakerCount">0</em></span>
+          <button class="icon-button" id="addSpeaker" title="Thêm nhân vật" type="button">+</button>
+        </div>
+        <p class="helper" id="speakerHint">Chạy phân tích để nhận diện và giữ voice theo nhân vật.</p>
+        <div class="speaker-list" id="speakerList">
+          <div class="empty-state">Chưa có dữ liệu speaker.</div>
+        </div>
+      </section>
+
+      <section class="panel language-panel">
+        <label class="select-field"><span>NGÔN NGỮ GỐC</span>
+          <select id="sourceLanguage">
+            <option value="auto">Tự nhận diện</option>
+            <option value="zh">中文 · Tiếng Trung</option>
+            <option value="en">English · Tiếng Anh</option>
+            <option value="ja">日本語 · Tiếng Nhật</option>
+            <option value="ko">한국어 · Tiếng Hàn</option>
+            <option value="vi">Tiếng Việt</option>
+          </select>
+        </label>
+        <label class="select-field"><span>NGÔN NGỮ DỊCH</span>
+          <select id="targetLanguage">
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+          </select>
+        </label>
+        <label class="check-row"><input id="preserveAmbience" type="checkbox" disabled><span class="checkmark"></span><span>Giữ nhạc nền/ambience · cần source separation (chưa bật)</span></label>
+        <label class="select-field"><span>KHỚP THỜI LƯỢNG</span>
+          <select id="fitPolicy">
+            <option value="fit">Tự co giãn voice vào timestamp</option>
+          </select>
+        </label>
+        <button class="primary-button" id="planButton" type="button" disabled>
+          <span>Phân tích &amp; tạo kế hoạch</span><span>→</span>
+        </button>
+        <p class="form-message" id="formMessage" role="status" aria-live="polite"></p>
+      </section>
+    </aside>
+
+    <section class="center-column">
+      <div class="canvas-header">
+        <div><span class="overline">AI DUBBING STUDIO</span><h1>Video workspace</h1></div>
+        <div class="capability-badge" id="capabilityBadge">Kiểm tra provider…</div>
+      </div>
+
+      <div class="video-shell" id="videoShell">
+        <video id="videoPlayer" controls playsinline></video>
+        <div class="video-empty" id="videoEmpty">
+          <span class="empty-play" aria-hidden="true">▶</span>
+          <strong>Chọn video để bắt đầu</strong>
+          <small>Preview nguồn và bản dubbing sẽ xuất hiện ở đây</small>
+        </div>
+        <div class="caption-overlay" id="captionOverlay" hidden>
+          <span id="sourceCaption"></span><strong id="targetCaption"></strong>
+        </div>
+      </div>
+
+      <section class="timeline-panel">
+        <div class="timeline-toolbar">
+          <div class="timecode"><strong id="currentTime">00:00</strong><span>/ <span id="totalTime">00:00</span></span></div>
+          <div class="transport">
+            <button type="button" data-seek="-5" title="Lùi 5 giây">◀◀</button>
+            <button type="button" id="playToggle" title="Phát / dừng">▶</button>
+            <button type="button" data-seek="5" title="Tiến 5 giây">▶▶</button>
+          </div>
+          <span class="timeline-note">Timeline preview · <span id="timelineState">chưa phân tích</span></span>
+        </div>
+        <div class="timeline-ruler"><span>00:00</span><span>00:10</span><span>00:20</span><span>00:30</span><span>00:40</span></div>
+        <div class="tracks" id="tracks">
+          <div class="track-row"><span class="track-label">▣ Video</span><div class="track-lane thumbnails"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="track-row"><span class="track-label">▤ Phụ đề gốc</span><div class="track-lane subtitle-track"><i>Chưa có transcript</i></div></div>
+          <div class="track-row"><span class="track-label">◈ Bản dịch</span><div class="track-lane translation-track"><i>Chưa có bản dịch</i></div></div>
+          <div class="track-row speaker-track-row"><span class="track-label speaker-purple">◉ Speaker 01</span><div class="track-lane waveform purple"><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="track-row speaker-track-row"><span class="track-label speaker-blue">◉ Speaker 02</span><div class="track-lane waveform blue"><i></i><i></i><i></i><i></i><i></i></div></div>
+        </div>
+        <div class="playhead" id="playhead" aria-hidden="true"><i></i></div>
+      </section>
+
+      <div class="pipeline-note" id="pipelineNote">
+        <span class="note-icon">i</span>
+        <span>Đây là bản xem thử UX. Audio thật chỉ chạy khi ASR, TTS và AudioComposer được cấu hình.</span>
+      </div>
+    </section>
+
+    <aside class="right-column">
+      <section class="panel script-panel">
+        <div class="tab-bar" role="tablist">
+          <button class="tab is-active" type="button" data-tab="script" role="tab">Kịch bản</button>
+          <button class="tab" type="button" data-tab="characters" role="tab">Nhân vật</button>
+        </div>
+        <div id="scriptTab" class="tab-content">
+          <div class="script-card source-card">
+            <div class="card-heading"><span>● <b>GỐC</b></span><button class="play-line" data-time="0" type="button">▶</button></div>
+            <strong>Chưa có transcript</strong>
+            <small>Chạy phân tích để nạp lời thoại theo timestamp.</small>
+          </div>
+          <div class="swap-icon" aria-hidden="true">⇅</div>
+          <div class="script-card target-card">
+            <div class="card-heading"><span>● <b>DỊCH</b></span><button class="play-line" data-time="0" type="button">▶</button></div>
+            <strong>Bản dịch sẽ hiển thị tại đây</strong>
+            <small>Giữ từng đoạn riêng để kiểm tra trước khi lồng tiếng.</small>
+          </div>
+        </div>
+        <div id="charactersTab" class="tab-content" hidden>
+          <div class="character-empty">Mỗi speaker sẽ có voice, volume và trạng thái đồng bộ riêng.</div>
+        </div>
+      </section>
+
+      <section class="panel voice-panel">
+        <div class="section-title"><span>GÁN GIỌNG CHO NHÂN VẬT</span><span class="mini-status">MVP</span></div>
+        <label class="select-field"><span>SPEAKER ĐANG CHỌN</span>
+          <select id="voiceSpeaker"><option value="S01">Speaker 01</option></select>
+        </label>
+        <label class="select-field"><span>VOICE</span>
+          <select id="voiceSelect">
+            <optgroup label="ElevenLabs v3 · Free API · language=vi">
+              <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL" selected>ElevenLabs · Sarah · Nữ · shortlist #1</option>
+              <option value="elevenlabs:nPczCjzI2devNBz1zQrb">ElevenLabs · Brian · Nam · shortlist #2</option>
+              <option value="elevenlabs:pNInz6obpgDQGcFmaJgB">ElevenLabs · Adam · Nam</option>
+              <option value="elevenlabs:env">ElevenLabs · Voice ID trong .env</option>
+            </optgroup>
+            <optgroup label="Fish S2.1 Pro Free · experimental / quota thấp">
+              <option value="fish:28902432d87243f08638ba59a1569781">Fish · Nam trẻ tự nhiên</option>
+              <option value="fish:99dc73af301a419b8043e4fc401bd305">Fish · Nam kể chuyện</option>
+              <option value="fish:c5660c5f4f7b4b74be5f248a75d7fee6">Fish · Nữ GenZ · voice cũ</option>
+              <option value="fish:e246b97671944988a54d53c43b74c64a">Fish · Nam trầm, bình tĩnh</option>
+              <option value="fish:6ff0bb19af754d7684f9f4a74392e466">Fish · Nam news-anchor</option>
+            </optgroup>
+            <optgroup label="Gemini 3.1 Flash Live · experimental (không verbatim-safe)">
+              <option value="gemini-live:">Gemini Live · default voice</option>
+              <option value="gemini-live:Sulafat">Gemini Live · Sulafat · Ấm</option>
+              <option value="gemini-live:Achird">Gemini Live · Achird · Thân thiện</option>
+              <option value="gemini-live:Leda">Gemini Live · Leda · Trẻ trung</option>
+            </optgroup>
+            <optgroup label="Edge · emergency fallback rõ chữ">
+              <option value="vi-VN-HoaiMyNeural">Hoài My · Nữ · Việt Nam</option>
+              <option value="vi-VN-NamMinhNeural">Nam Minh · Nam · Việt Nam</option>
+            </optgroup>
+          </select>
+        </label>
+        <button class="secondary-button" id="previewVoice" type="button">▶ Nghe thử giọng</button>
+        <label class="switch-row"><span>Đồng bộ khẩu hình</span><input id="lipSync" type="checkbox" checked><i></i></label>
+      </section>
+
+      <section class="panel stages-panel">
+        <div class="section-title"><span>PIPELINE</span><span class="mini-status" id="planStatus">IDLE</span></div>
+        <ol class="stage-list" id="stageList">
+          <li class="is-ready"><i>1</i><span>Nạp và kiểm tra media</span><b>READY</b></li>
+          <li><i>2</i><span>Nhận diện lời thoại</span><b>WAIT</b></li>
+          <li><i>3</i><span>Dịch theo từng đoạn</span><b>WAIT</b></li>
+          <li><i>4</i><span>Tạo voice</span><b>WAIT</b></li>
+          <li><i>5</i><span>Ghép timeline</span><b>WAIT</b></li>
+          <li><i>6</i><span>Mux và kiểm tra</span><b>WAIT</b></li>
+        </ol>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="feature-strip">
+    <div><b>◎</b><span><strong>Multi-language</strong><small>ASR + dịch theo segment</small></span></div>
+    <div><b>♙</b><span><strong>Speaker mapping</strong><small>Giữ voice xuyên suốt</small></span></div>
+    <div><b>∿</b><span><strong>Timeline fit</strong><small>Khớp lời thoại vào slot</small></span></div>
+    <div><b>☁</b><span><strong>Local-first</strong><small>Không upload ra ngoài</small></span></div>
+  </footer>
+
+  <script src="/dubbing.js" defer></script>
+</body>
+</html>

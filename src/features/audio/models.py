@@ -27,6 +27,11 @@ class TTSClip:
     end_time: float
     audio_clip_path: str
     duration: float
+    spoken_text: str = ""
+    natural_duration: float = 0.0
+    speed_ratio: float = 1.0
+    rewrite_count: int = 0
+    provider_name: str = ""
 
 
 @dataclass

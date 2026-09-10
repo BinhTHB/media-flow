@@ -142,6 +142,12 @@ For subtitle replacement inspect representative frames for:
 
 For blur classes inspect temporal stability and obvious false region damage.
 
+### Dual-row 30-second fixture
+
+For the user-approved centered caption layout in `outputs/real30/source_first30.mp4`, keep the bottom suppression plate centered even when YOLO detects only one end of a line. Detected extents may expand the minimum plate to include long lines and edge feathering. This fixture-specific layout approval does not establish a universal subtitle position for other content.
+
+Check source/output pairs around 5.5–6.5s and 14.5–15.5s, plus samples throughout the clip. The v12 OCR scan returned no CJK leaks despite visible Chinese and English suffixes at 15s. Inspect image pixels directly; OCR and successful encoding alone do not establish visual acceptance. Unit regressions cover wide source geometry and partial left-side detections.
+
 ## 9. Before/after refactor comparison
 
 Before destructive cleanup, capture at least one known current E2E baseline. After migration run the same input/config and compare structural invariants and intended feature behavior.

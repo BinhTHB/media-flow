@@ -21,6 +21,7 @@ class SubtitleRenderer:
 
         overlay_action = TextOverlayAction(
             text=event.translated_text,
-            stroke_width=2,
+            stroke_width=3,
+            bg_box=False,
         )
         return overlay_action.execute(frame, bbox)

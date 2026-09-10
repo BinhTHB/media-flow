@@ -6,6 +6,7 @@ it does not force a download and does not require the model in unit-test runs.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -15,8 +16,9 @@ from src.infrastructure.detection.config import load_detection_config
 from src.infrastructure.detection.paths import resolve_yolo_weights
 
 pytestmark = pytest.mark.skipif(
-    not (Path(__file__).resolve().parents[1] / "models" / "yolo" / "best.pt").is_file(),
-    reason="fine-tuned YOLO model not present at models/yolo/best.pt",
+    os.getenv("MEDIA_FLOW_RUN_YOLO_INTEGRATION") != "1"
+    or not (Path(__file__).resolve().parents[1] / "models" / "yolo" / "best.pt").is_file(),
+    reason="real YOLO integration tests are opt-in and require models/yolo/best.pt",
 )
 
 

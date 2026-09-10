@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "job-lifecycle-offline",
+      "fixture": "fixtures/job-lifecycle.json",
+      "expected": {"status": "SUCCESS", "secret_findings": 0}
+    }
+  ],
+  "thresholds": {
+    "max_job_duration_seconds": 5.0,
+    "max_secret_findings": 0
+  }
+}

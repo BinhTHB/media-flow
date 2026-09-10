@@ -2,6 +2,6 @@
 Audio Feature Ports
 """
 
-from src.core.contracts import ASRPort, TTSPort
+from src.core.contracts import AudioExtractionPort, ASRCorrectionPort, ASRPort, TTSPort
 
-__all__ = ["ASRPort", "TTSPort"]
+__all__ = ["AudioExtractionPort", "ASRPort", "ASRCorrectionPort", "TTSPort"]
