@@ -19,6 +19,7 @@ from src.core.contracts import ASRPort
 from src.core.models.speech_segment import SpeechSegment
 from src.infrastructure.gemini.client import GeminiClient
 from src.infrastructure.gemini.contracts import GeminiRequest
+from src.infrastructure.gemini.request_scheduler import RequestScheduler
 from src.infrastructure.gemini.structured_output import parse_json
 
 logger = logging.getLogger(__name__)
@@ -130,7 +131,7 @@ class GeminiAudioASRAdapter(ASRPort):
             "6. Return JSON only in this exact shape:\n"
             '{"detected_language":"xx","segments":[{"start":0.0,"end":1.2,"text":"...","speaker_id":null}]}'
         )
-        client = GeminiClient(api_key=self.api_key, model=self.model)
+        client = GeminiClient(api_key=self.api_key, model=self.model, scheduler=RequestScheduler())
         response = client.generate_content(
             GeminiRequest(
                 contents=[{

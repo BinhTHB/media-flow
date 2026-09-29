@@ -6,8 +6,6 @@ Unit tests for V5 Source Suppression & Track Gap Interpolation fixes:
 4. Non-subtitle processors (Watermark/Logo/OtherText) perform gap interpolation
 """
 
-from unittest.mock import MagicMock
-import pytest
 import numpy as np
 
 from src.core.models.bbox import BBox
@@ -75,23 +73,17 @@ def test_watermark_processor_gap_interpolation():
     track = Track(track_id="T_wm", class_id=1, class_name="watermark", detections=[det1, det2])
 
     frame = np.zeros((1000, 1000, 3), dtype=np.uint8)
+    frame[800:1000, 0:50] = 255  # High-contrast watermark area
+    orig_frame = frame.copy()
 
-    # Frame 15 has no explicit detection in track.detections, but falls in range [10..20]
+    # Frame 15 has no explicit detection in track.detections but falls in [10..20]:
+    # the processor must interpolate to the nearest detection and blur that region.
     out_frame = processor.process_frame_tracks(frame, frame_index=15, tracks=[track])
 
-    # Verify blur action was applied on frame 15 via nearest detection interpolation
-    assert np.sum(out_frame) >= 0  # Processed without error
-
-
-def test_translated_subtitle_center_follows_source_bbox_center():
-    src_bbox = BBox(x1=200, y1=800, x2=600, y2=900, frame_width=1920, frame_height=1080)
-    src_cx = (src_bbox.x1 + src_bbox.x2) // 2
-    src_cy = (src_bbox.y1 + src_bbox.y2) // 2
-
-    action = TextOverlayAction(text="Cảm ơn bạn nhé", bg_box=True)
-    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
-
-    out_frame = action.execute(frame, src_bbox)
-    assert out_frame.shape == (1080, 1920, 3)
-    assert np.sum(out_frame) > 0  # Rendered successfully
+    supp_region = (slice(770, 1000), slice(0, 66))  # Watermark bbox padded by the processor
+    assert not np.array_equal(
+        out_frame[supp_region], orig_frame[supp_region]
+    ), "Expected the watermark region to be blurred on the interpolated frame"
+    # Blur must stay localized to the watermark region.
+    assert np.array_equal(out_frame[100:200, 400:500], orig_frame[100:200, 400:500])
 

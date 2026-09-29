@@ -68,6 +68,7 @@ class GeminiOCRAdapter(OCRPort):
 
         from src.infrastructure.gemini.client import GeminiClient
         from src.infrastructure.gemini.contracts import GeminiRequest
+        from src.infrastructure.gemini.request_scheduler import RequestScheduler
         from src.infrastructure.gemini.structured_output import parse_json
 
         raw_keys = str(self.api_key or "")
@@ -80,7 +81,7 @@ class GeminiOCRAdapter(OCRPort):
         for attempt in range(max_attempts):
             key = keys[attempt % len(keys)]
             try:
-                client = GeminiClient(api_key=key)
+                client = GeminiClient(api_key=key, scheduler=RequestScheduler())
                 response = client.generate_content(
                     GeminiRequest(
                         contents=[{"parts": parts}],

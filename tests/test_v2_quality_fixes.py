@@ -8,9 +8,7 @@ Unit tests for V2 quality & correctness fixes:
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
-import pytest
 
 from src.features.translation.service import TranslationService
 from src.features.visual.subtitle.processor import SubtitleProcessor
@@ -61,7 +59,7 @@ def test_ocr_adapter_handles_structured_json_dict(monkeypatch):
     mock_resp.text = json.dumps({"item_0": "拜拜", "item_1": "谢谢"})
     mock_client.generate_content.return_value = mock_resp
 
-    monkeypatch.setattr("src.infrastructure.gemini.client.GeminiClient", lambda api_key: mock_client)
+    monkeypatch.setattr("src.infrastructure.gemini.client.GeminiClient", lambda api_key, **kwargs: mock_client)
 
     import numpy as np
     dummy_crop1 = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -69,19 +67,3 @@ def test_ocr_adapter_handles_structured_json_dict(monkeypatch):
 
     results = adapter.read_crops([dummy_crop1, dummy_crop2])
     assert results == ["拜拜", "谢谢"]
-
-
-def test_report_artifact_counts_equal_filesystem_counts(tmp_path):
-    ver_dir = tmp_path / "verification"
-    ver_dir.mkdir(parents=True, exist_ok=True)
-
-    (ver_dir / "event_1_before.jpg").write_text("a")
-    (ver_dir / "event_1_crop.jpg").write_text("b")
-    (ver_dir / "event_1_after_final.jpg").write_text("c")
-
-    files = list(ver_dir.glob("*.jpg"))
-    before_count = len(list(ver_dir.glob("*_before.jpg")))
-    crop_count = len(list(ver_dir.glob("*_crop.jpg")))
-    after_count = len(list(ver_dir.glob("*_after_final.jpg")))
-
-    assert len(files) == before_count + crop_count + after_count

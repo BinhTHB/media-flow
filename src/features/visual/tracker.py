@@ -73,7 +73,44 @@ class ClassAwareTracker:
             track_counter += len(class_tracks)
             tracks.extend(class_tracks)
 
+        # Post-process: merge broken static tracks for non-subtitle classes
+        tracks = self._merge_static_tracks(tracks)
         return tracks
+
+    def _merge_static_tracks(
+        self, tracks: List[Track], max_gap_frames: int = 150, iou_thresh: float = 0.50
+    ) -> List[Track]:
+        sub = [t for t in tracks if t.class_name == "subtitle"]
+        non_sub = [t for t in tracks if t.class_name != "subtitle"]
+        if not non_sub:
+            return tracks
+
+        sorted_tracks = sorted(non_sub, key=lambda t: t.start_frame)
+        merged: List[Track] = []
+
+        for t in sorted_tracks:
+            matched = False
+            t_rep_box = t.detections[len(t.detections) // 2].bbox
+            for m in merged:
+                m_rep_box = m.detections[len(m.detections) // 2].bbox
+                iou = _box_iou(t_rep_box, m_rep_box)
+                gap = t.start_frame - m.end_frame
+                if iou >= iou_thresh and 0 <= gap <= max_gap_frames:
+                    m.detections.extend(t.detections)
+                    m.detections.sort(key=lambda d: d.frame_index)
+                    matched = True
+                    break
+            if not matched:
+                merged.append(
+                    Track(
+                        track_id=t.track_id,
+                        class_id=t.class_id,
+                        class_name=t.class_name,
+                        detections=list(t.detections),
+                    )
+                )
+
+        return sub + merged
 
     def _group_frame_candidates(self, detections: List[Detection]) -> List[List[Detection]]:
         remaining = sorted(detections, key=lambda d: (d.bbox.y1, d.bbox.x1))

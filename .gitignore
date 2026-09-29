@@ -163,3 +163,37 @@ opencode.json
 
 # Recoverable local cleanup staging
 /trash/
+
+# Postman local collections
+postman/
+
+# One-off / local experiment scripts (see scripts/README.md)
+scripts/benchmark_*
+scripts/probe_*
+scripts/inspect_*
+scripts/review_*
+scripts/smoke_*
+scripts/debug_*
+scripts/analyze_*
+scripts/audit_*
+scripts/compare_*
+scripts/diagnose_*
+scripts/judge_*
+scripts/launch_*
+scripts/list_*
+scripts/make_*
+scripts/measure_*
+scripts/normalize_*
+scripts/ocr_*
+scripts/prepare_*
+scripts/promote_*
+scripts/scan_*
+scripts/set_*
+scripts/summarize_*
+scripts/sweep_*
+scripts/vision_*
+scripts/wait_*
+scripts/check_*
+scripts/run_real30_*
+scripts/run_targeted_*
+scripts/run_tests_*

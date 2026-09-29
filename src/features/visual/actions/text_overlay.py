@@ -92,12 +92,10 @@ class TextOverlayAction:
         except OSError:
             font = ImageFont.load_default()
 
-        # Wrap against the video safe area, not the width of a Chinese/English
-        # source row. Keep captions to at most two balanced lines in practice.
+        # Wrap against the video safe area, not the narrow width of a short Chinese source row.
+        # Keep captions naturally readable on 1 or at most 2 balanced lines.
         safe_w = int(fw * 0.74)
-        if self.anchor_to_bbox:
-            safe_w = min(fw - 36, max(target_w, int(fw * 0.28)))
-        approx_chars = max(28, min(46, int(safe_w / max(8.0, font_size * 0.52))))
+        approx_chars = max(34, min(52, int(safe_w / max(8.0, font_size * 0.52))))
         wrapped_text = _wrap_text(self.text, max_chars_per_line=approx_chars)
 
         pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")

@@ -118,15 +118,33 @@ eal_mini_benchmark\sample5.mp4 `
   --device auto
 ```
 
+### Preset model text generic (translate-subtitle-generic / translate-video-generic)
+
+Dùng model YOLO generic phát hiện **mọi văn bản** (1 lớp `text`, không phân biệt loại) kết hợp bước **phân loại tự động** dựa trên đặc tính track (vị trí, kích thước, độ ổn định, độ dài hiển thị) để gán về subtitle / watermark / logo / other_burn_in_text trước khi route xử lý.
+
+```powershell
+.venv\Scripts\python.exe scripts/run_e2e.py `
+  --input input\the_other_self_30s.mp4 `
+  --output outputs\e2e_translate_generic.mp4 `
+  --preset translate-subtitle-generic `
+  --device auto
+```
+
+Yêu cầu weights: tải `best.pt` từ `https://huggingface.co/RoyRud1902/yolo11n-text` đặt tại `models/yolo/text/best.pt` (hoặc `--yolo-weights` / `MEDIA_FLOW_YOLO_WEIGHTS`). Conf mặc định cho model generic là 0.20, imgsz 640.
+
+Lưu ý hiệu năng: model generic phát hiện **mọi text** trên khung (gấp nhiều lần model 4-class), nên OCR/dịch tốn gọi API hơn đáng kể — video dày text có thể mất 10–20 phút thay vì ~2 phút. Sửa classifier sẽ tự động vô hiệu cache detection (key chứa digest của `text_classifier.py`).
+
+Hạn chế đã biết (v1, phân loại thuần geometry + temporal): phụ đề lệch tâm (fansub theo speaker) và subtitle rất ngắn lệch tâm có thể bị gán `other_burn_in_text`; overlay tĩnh ngắn (station ID vài giây trong video dài) có thể không đủ ngưỡng static. Text căn giữa dạng dòng luôn được ưu tiên gán `subtitle`.
+
 ### Tham số E2E
 - `--input`, `-i`: Đường dẫn video đầu vào thực tế (bắt buộc).
 - `--output`, `-o`: Đường dẫn video đầu ra hoàn chỉnh (bắt buộc).
-- `--preset`: Preset chính sách có sẵn (`blur-all` mặc định, `translate-subtitle`, `preserve-all`).
+- `--preset`: Preset chính sách có sẵn (`blur-all` mặc định, `translate-subtitle`, `preserve-all`, `translate-video-generic`, `translate-subtitle-generic`).
 - `--policy`: Đường dẫn file cấu hình YAML policy tùy chỉnh.
 - `--device`: Thiết bị tính toán `auto`, `cuda` hoặc `cpu` (mặc định: `auto`).
 
 ### Yêu cầu & Model
-- **YOLO Weights**: `models/yolo/best.pt` (nạp 4 class: subtitle, watermark, logo, other_burn_in_text).
+- **YOLO Weights**: `models/yolo/best.pt` (nạp 4 class: subtitle, watermark, logo, other_burn_in_text). Preset `*-generic` dùng `models/yolo/text/best.pt` (1 lớp `text`, phân loại tự động).
 - **Đúng interpreter**: luôn chạy E2E bằng `.venv\Scripts\python.exe`. Lệnh `python` trên Windows có thể trỏ vào Miniconda và không nhìn thấy `ultralytics` trong `.venv`.
 
 ```powershell

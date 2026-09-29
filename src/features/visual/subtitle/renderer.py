@@ -15,7 +15,13 @@ from src.features.visual.actions.text_overlay import TextOverlayAction
 
 
 class SubtitleRenderer:
-    def render_event(self, frame: Any, event: SubtitleEvent, bbox: BBox) -> Any:
+    def render_event(
+        self,
+        frame: Any,
+        event: SubtitleEvent,
+        bbox: BBox,
+        anchor_to_bbox: bool = True,
+    ) -> Any:
         if not event.translated_text:
             return frame
 
@@ -23,5 +29,7 @@ class SubtitleRenderer:
             text=event.translated_text,
             stroke_width=3,
             bg_box=False,
+            anchor_to_bbox=anchor_to_bbox,
         )
         return overlay_action.execute(frame, bbox)
+

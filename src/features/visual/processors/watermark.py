@@ -22,23 +22,15 @@ def _get_suppression_bbox(bbox: BBox) -> BBox:
     fw = bbox.frame_width
     fh = bbox.frame_height
 
-    if x1 <= 50:
-        x1 = 0
-        x2 = max(x2 + 30, 160)
-        y1 = max(0, y1 - 20)
-        y2 = min(fh, y2 + 20)
-    elif x2 >= fw - 50:
-        x1 = min(x1 - 30, max(0, fw - 160))
-        x2 = fw
-        y1 = max(0, y1 - 20)
-        y2 = min(fh, y2 + 20)
-    else:
-        x1 = max(0, x1 - 20)
-        y1 = max(0, y1 - 20)
-        x2 = min(fw, x2 + 20)
-        y2 = min(fh, y2 + 20)
+    pad_x = max(16, int((x2 - x1) * 0.08))
+    pad_y = max(12, int((y2 - y1) * 0.15))
 
-    return BBox(x1=x1, y1=y1, x2=x2, y2=y2, frame_width=fw, frame_height=fh)
+    new_x1 = 0 if x1 <= 40 else max(0, x1 - pad_x)
+    new_x2 = fw if x2 >= fw - 40 else min(fw, x2 + pad_x)
+    new_y1 = 0 if y1 <= 30 else max(0, y1 - pad_y)
+    new_y2 = fh if y2 >= fh - 30 else min(fh, y2 + pad_y)
+
+    return BBox(x1=new_x1, y1=new_y1, x2=new_x2, y2=new_y2, frame_width=fw, frame_height=fh)
 
 
 class WatermarkProcessor:

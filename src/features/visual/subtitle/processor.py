@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from bisect import bisect_left
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from src.core.contracts import OCRPort
 from src.core.models.bbox import BBox
@@ -34,6 +35,9 @@ class SubtitleProcessor:
         boundary_refiner: Optional[SubtitleBoundaryRefiner] = None,
         renderer: Optional[SubtitleRenderer] = None,
         blur_action: Optional[BlurAction] = None,
+        translation_chunk_size: int = 8,
+        ocr_chunk_size: int = 16,
+        ocr_retry_rounds: int = 1,
     ):
         self.ocr_provider = ocr_provider
         self.translation_service = translation_service
@@ -41,6 +45,10 @@ class SubtitleProcessor:
         self.boundary_refiner = boundary_refiner or SubtitleBoundaryRefiner()
         self.renderer = renderer or SubtitleRenderer()
         self.blur_action = blur_action or BlurAction(strength=25.0, padding_px=4)
+        self.subtitle_layout: str = "in-place"
+        self.translation_chunk_size = max(1, int(translation_chunk_size))
+        self.ocr_chunk_size = max(1, int(ocr_chunk_size))
+        self.ocr_retry_rounds = max(0, int(ocr_retry_rounds))
 
     def process_tracks(
         self,
@@ -114,49 +122,14 @@ class SubtitleProcessor:
             cap.release()
 
             if all_crops:
-                try:
-                    texts = self.ocr_provider.read_crops(all_crops)
-                    event_candidates = {}
-                    for (ev, c_idx), text in zip(crop_metadata, texts):
-                        event_candidates.setdefault(ev.event_id, []).append(text.strip() if text else "")
-
-                    for event in all_events:
-                        if event.source_text:
-                            # Already confirmed by conservative gap-recovery OCR.
-                            continue
-                        cands = event_candidates.get(event.event_id, [])
-                        final_text = self._resolve_ocr_consensus(cands)
-                        final_text = self._select_bilingual_source_text(final_text)
-                        final_text = self._sanitize_caption_text(final_text)
-                        if final_text:
-                            event.source_text = final_text
-                        else:
-                            event.replacement_status = "OCR_EMPTY"
-
-                    all_events = self._merge_redundant_ocr_events(all_events)
-                except Exception as exc:
-                    logger.warning("OCR failed for subtitle events: %s", exc)
-                    for event in all_events:
-                        event.replacement_status = "OCR_FAILED"
+                self._ocr_event_crops(all_crops, crop_metadata, all_events)
+                all_events = self._merge_redundant_ocr_events(all_events)
 
         # 3. Translation Stage
         events_needing_translation = [e for e in all_events if e.source_text]
 
         if self.translation_service is not None and events_needing_translation:
-            texts_to_translate = [e.source_text for e in events_needing_translation]
-            try:
-                translated = self.translation_service.translate_texts(
-                    texts_to_translate, target_language=target_language
-                )
-                for e, trans in zip(events_needing_translation, translated):
-                    if trans and trans.strip():
-                        e.translated_text = trans.strip()
-                    else:
-                        e.replacement_status = "TRANSLATION_EMPTY"
-            except Exception as exc:
-                logger.warning("Translation failed for subtitle events: %s", exc)
-                for e in events_needing_translation:
-                    e.replacement_status = "TRANSLATION_FAILED"
+            self._translate_events(events_needing_translation, target_language)
 
         # 4. Fail-Safe Replacement Status Assignment
         for event in all_events:
@@ -179,6 +152,106 @@ class SubtitleProcessor:
                 )
 
         return all_events
+
+    def _ocr_event_crops(self, all_crops: List[Any], crop_metadata: List[Any], all_events: List[SubtitleEvent]) -> None:
+        """OCR event crops in bounded batches so one oversized provider call
+        cannot fail the whole batch. Failed batches get one bounded second
+        round; persistent failures keep the fail-safe status for just their
+        own events."""
+        chunk_size = max(1, int(self.ocr_chunk_size))
+        failed: List[tuple[List[Any], List[Any]]] = []
+        for start in range(0, len(all_crops), chunk_size):
+            crops = all_crops[start:start + chunk_size]
+            metadata = crop_metadata[start:start + chunk_size]
+            if self._ocr_batch(crops, metadata, all_events):
+                failed.append((crops, metadata))
+        for _round in range(max(0, int(self.ocr_retry_rounds))):
+            if not failed:
+                break
+            time.sleep(5.0)
+            still_failed: List[tuple[List[Any], List[Any]]] = []
+            for crops, metadata in failed:
+                if self._ocr_batch(crops, metadata, all_events):
+                    still_failed.append((crops, metadata))
+            failed = still_failed
+
+    def _ocr_batch(self, crops: List[Any], metadata: List[Any], all_events: List[SubtitleEvent]) -> bool:
+        """OCR one batch. Returns True when the batch failed and keeps its
+        fail-safe status."""
+        try:
+            texts = self.ocr_provider.read_crops(crops)
+        except Exception as exc:
+            logger.warning("OCR failed for %d crops: %s", len(crops), exc)
+            for ev, _c_idx in metadata:
+                if not ev.source_text:
+                    ev.replacement_status = "OCR_FAILED"
+            return True
+        event_candidates: Dict[str, List[str]] = {}
+        for (ev, _c_idx), text in zip(metadata, texts):
+            event_candidates.setdefault(ev.event_id, []).append(text.strip() if text else "")
+
+        touched = {ev.event_id for ev, _c_idx in metadata}
+        for event in all_events:
+            if event.event_id not in touched or event.source_text:
+                # Untouched events keep their status; gap-recovery-confirmed
+                # source text is never overwritten.
+                continue
+            cands = event_candidates.get(event.event_id, [])
+            final_text = self._resolve_ocr_consensus(cands)
+            final_text = self._select_bilingual_source_text(final_text)
+            final_text = self._sanitize_caption_text(final_text)
+            if final_text:
+                event.source_text = final_text
+                # Clear a stale failure status from a previous round; the
+                # fail-safe pass promotes translated events to READY.
+                event.replacement_status = "SKIPPED"
+            else:
+                event.replacement_status = "OCR_EMPTY"
+        return False
+
+    def _translate_events(self, events: List[SubtitleEvent], target_language: str) -> None:
+        """Translate events in bounded chunks so one failing provider call
+        cannot discard the whole batch; failed chunks keep the fail-safe
+        status and their source pixels are preserved. Failed chunks get one
+        bounded second round because transient outages often recover within
+        the same job but outlast the per-call retry window."""
+        chunk_size = max(1, int(self.translation_chunk_size))
+        failed_chunks: List[List[SubtitleEvent]] = []
+        for start in range(0, len(events), chunk_size):
+            chunk = events[start:start + chunk_size]
+            if self._translate_chunk(chunk, target_language):
+                failed_chunks.append(chunk)
+        if failed_chunks:
+            time.sleep(5.0)
+            for chunk in failed_chunks:
+                self._translate_chunk(chunk, target_language)
+
+    def _translate_chunk(self, chunk: List[SubtitleEvent], target_language: str) -> bool:
+        """Translate one chunk. Returns True when the chunk failed and keeps
+        its fail-safe status."""
+        try:
+            translated = self.translation_service.translate_texts(
+                [e.source_text for e in chunk], target_language=target_language
+            )
+        except Exception as exc:
+            logger.warning("Translation failed for %d subtitle events: %s", len(chunk), exc)
+            for event in chunk:
+                event.replacement_status = "TRANSLATION_FAILED"
+            return True
+        if len(translated) != len(chunk):
+            logger.warning(
+                "Translation returned %d results for %d subtitle events; unpaired events keep their fail-safe status.",
+                len(translated), len(chunk),
+            )
+        for event, trans in zip(chunk, translated):
+            if trans and trans.strip():
+                event.translated_text = trans.strip()
+                # Clear a stale failure status from a previous round; the
+                # fail-safe pass promotes translated events to READY.
+                event.replacement_status = "SKIPPED"
+            else:
+                event.replacement_status = "TRANSLATION_EMPTY"
+        return False
 
     def _recover_bottom_lane_gap_events(
         self,
@@ -628,8 +701,8 @@ class SubtitleProcessor:
             selected.append(max(group, key=score))
         return selected
 
-    def render_region_events(self, frame: Any, events: List[SubtitleEvent], region: BBox) -> Any:
-        """Draw a fully opaque local plate around an observed subtitle region."""
+    def render_region_events(self, frame: Any, events: List[SubtitleEvent], region: BBox, bg_box: bool = True) -> Any:
+        """Draw a local plate around an observed subtitle region."""
         from src.features.visual.actions.text_overlay import TextOverlayAction
         ready = [e for e in events if e.replacement_status == 'READY' and e.translated_text]
         if not ready:
@@ -637,7 +710,7 @@ class SubtitleProcessor:
         # Source suppression and caption backing are drawn together, so text
         # wrapping cannot expose source pixels or exceed its own backing.
         return TextOverlayAction(text=ready[0].translated_text, anchor_to_bbox=True,
-                                 bg_box=True, bg_color=(16, 12, 10, 255)).execute(frame, region)
+                                 bg_box=bg_box, bg_color=(16, 12, 10, 255)).execute(frame, region)
 
     @staticmethod
     def suppress_source_subtitles(frame: Any, detections: List[Any]) -> Any:
@@ -815,10 +888,20 @@ class SubtitleProcessor:
             frame_height=left.frame_height,
         )
 
-    def render_frame_events(self, frame: Any, frame_index: int, events: List[SubtitleEvent]) -> Any:
+    def render_frame_events(
+        self,
+        frame: Any,
+        frame_index: int,
+        events: List[SubtitleEvent],
+        anchor_to_bbox: Optional[bool] = None,
+    ) -> Any:
+        if anchor_to_bbox is None:
+            anchor_to_bbox = getattr(self, "subtitle_layout", "in-place") in {"in-place", "temporal"}
         for event in events:
             # FAIL-SAFE: ONLY render Vietnamese overlay when replacement status is READY!
             if event.replacement_status == "READY" and event.overlay_applied:
                 bbox = self.get_event_bbox(event, frame_index)
-                frame = self.renderer.render_event(frame, event, bbox)
+                frame = self.renderer.render_event(
+                    frame, event, bbox, anchor_to_bbox=anchor_to_bbox
+                )
         return frame

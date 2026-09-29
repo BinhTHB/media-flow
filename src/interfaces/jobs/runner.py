@@ -37,6 +37,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ProgressCallback = Callable[["JobEvent"], None]
 JobProfile = Literal["quality", "balanced", "fast"]
 
+#: Presets that run the generic single-class text model and re-label its
+#: detections into canonical classes before tracking/routing.
+GENERIC_PRESETS = {"translate-video-generic", "translate-subtitle-generic"}
+GENERIC_TEXT_WEIGHTS_REL = Path("models") / "yolo" / "text" / "best.pt"
+GENERIC_TEXT_WEIGHTS_URL = "https://huggingface.co/RoyRud1902/yolo11n-text"
+#: The generic scene-text model is tuned for conf≈0.25; a slightly lower
+#: default keeps small caption strokes while still suppressing UI noise.
+GENERIC_TEXT_DEFAULT_CONF = 0.20
+BURN_IN_WEIGHTS_DEFAULT = str(PROJECT_ROOT / "models" / "yolo" / "best.pt")
+
+
+def _base_preset(preset: str) -> str:
+    """Map a generic preset onto its canonical burn-in preset semantics."""
+    return preset.removesuffix("-generic")
+
 
 @dataclass(frozen=True)
 class JobEvent:
@@ -78,7 +93,14 @@ class JobOptions:
     yolo_subtitle_rescue_max_gap_seconds: float = 3.0
     yolo_subtitle_rescue_min_support_ratio: float = 0.25
     subtitle_layout: str = "temporal"
+    hide_source_subtitle: bool = True
     timeout_seconds: float = 0.0
+    segments: list[dict[str, Any]] | None = None
+    speaker_voices: dict[str, str] | None = None
+    blur_extra: bool = False
+    speaker_mode: str = "single"
+    preserve_ambience: bool = True
+    mix_original_volume: float = 0.20
 
 
 class JobError(RuntimeError):
@@ -159,6 +181,12 @@ class JobRunner:
             emit(JobEvent("progress", "processing", 40, "Processing media"))
             result = use_case.execute(request)
             checkpoint()
+            if result.output_video_path and Path(result.output_video_path).is_file():
+                try:
+                    from src.infrastructure.video.ffmpeg import ensure_web_compatible_video
+                    ensure_web_compatible_video(result.output_video_path)
+                except Exception:
+                    pass
             emit(JobEvent("progress", "finalizing", 92, "Finalizing output", {"detections": dict(result.detections_summary)}))
             details = {"result": result.to_dict(), "caches": self._cache_stats(caches)}
             self._job_store.save_result(request.job_id, result.to_dict())
@@ -199,7 +227,11 @@ class JobRunner:
                 self._job_store.release(claimed_job_id)
 
     def prepare(self, options: JobOptions) -> tuple[JobOptions, ProcessingRequest]:
-        if options.preset not in {"blur-all", "translate-subtitle", "preserve-all", "dub-audio", "translate-video"}:
+        supported_presets = {
+            "blur-all", "translate-subtitle", "preserve-all", "dub-audio",
+            "translate-video", "blur-and-dub",
+        } | GENERIC_PRESETS
+        if options.preset not in supported_presets:
             raise ValidationError(f"Unsupported preset: {options.preset}")
         if options.profile not in {"quality", "balanced", "fast"}:
             raise ValidationError(f"Unsupported profile: {options.profile}")
@@ -217,20 +249,42 @@ class JobRunner:
         options.asr_provider = config.resolve("speech", options.asr_provider)
         options.translation_provider = config.resolve("translation", options.translation_provider)
         options.tts_provider = config.resolve("tts", options.tts_provider)
+        if (
+            options.preset in GENERIC_PRESETS
+            and Path(options.yolo_weights).resolve() == Path(BURN_IN_WEIGHTS_DEFAULT).resolve()
+        ):
+            options.yolo_weights = str(PROJECT_ROOT / GENERIC_TEXT_WEIGHTS_REL)
         effective_device = self._preflight(options)
         options.device = effective_device
         options.input_path = str(input_path)
         options.output_path = str(output_path)
-        needs_dubbing = options.preset in {"dub-audio", "translate-video"}
+        base = _base_preset(options.preset)
+        needs_dubbing = base in {"dub-audio", "translate-video", "blur-and-dub"}
+        parsed_segments = None
+        if options.segments:
+            from src.core.models.speech_segment import SpeechSegment
+            parsed_segments = [
+                SpeechSegment.from_dict(s) if isinstance(s, dict) else s
+                for s in options.segments
+            ]
+
         audio = AudioRequest(
             enabled=needs_dubbing,
             source_language=options.source_language,
             target_language=options.target_language,
             dubbing_enabled=needs_dubbing,
             voice=options.voice,
+            segments=parsed_segments,
+            speaker_voices=dict(options.speaker_voices or {}),
+            preserve_ambience=bool(options.preserve_ambience),
+            mix_original_volume=float(options.mix_original_volume),
         )
         visual = self._visual_request(options)
-        visual.subtitle_layout = options.subtitle_layout
+        normalized_layout = "temporal" if options.subtitle_layout in {"in-place", "temporal"} else "bottom"
+        visual.subtitle_layout = normalized_layout
+        visual.hide_source_subtitle = options.hide_source_subtitle
+        if options.segments and base in {"translate-subtitle", "translate-video"}:
+            visual.segments = options.segments
         request = ProcessingRequest(
             job_id=options.job_id or f"job_v2_{int(time.time())}",
             input_video=options.input_path,
@@ -243,14 +297,22 @@ class JobRunner:
         return options, request
 
     def _preflight(self, options: JobOptions) -> str:
-        needs_visual = options.preset != "dub-audio"
+        base = _base_preset(options.preset)
+        needs_visual = base != "dub-audio"
         effective_device = "cpu"
         if needs_visual:
             torch = self._require_dependency("torch", "torch")
             self._require_dependency("cv2", "opencv-python")
             self._require_dependency("ultralytics", "ultralytics")
             if not Path(options.yolo_weights).is_file():
-                raise ConfigurationError(f"YOLO weights not found: {options.yolo_weights}")
+                message = f"YOLO weights not found: {options.yolo_weights}"
+                if options.preset in GENERIC_PRESETS:
+                    message += (
+                        f". Download best.pt from {GENERIC_TEXT_WEIGHTS_URL} and place it at "
+                        "models/yolo/text/best.pt, or pass --yolo-weights / set "
+                        "MEDIA_FLOW_YOLO_WEIGHTS."
+                    )
+                raise ConfigurationError(message)
             if options.device in {"auto", "cuda"}:
                 cuda_ok = bool(torch.cuda.is_available())
                 if options.device == "cuda" and not cuda_ok:
@@ -259,7 +321,18 @@ class JobRunner:
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
             raise ConfigurationError("FFmpeg and FFprobe must be available in PATH.")
 
-        needs_translation = options.preset in {"translate-subtitle", "dub-audio", "translate-video"}
+        has_pretranslated_segments = bool(
+            options.segments and all(
+                (s.get("target_text") or s.get("translated_text"))
+                if isinstance(s, dict)
+                else getattr(s, "translated_text", None)
+                for s in options.segments
+            )
+        )
+        needs_translation = (
+            base in {"translate-subtitle", "dub-audio", "translate-video", "blur-and-dub"}
+            and not has_pretranslated_segments
+        )
         has_gemini = bool(os.getenv("GEMINI_API_KEY"))
         has_openrouter = has_openrouter_keys()
         if needs_translation and options.translation_provider == "auto" and not (has_openrouter or has_gemini):
@@ -268,16 +341,17 @@ class JobRunner:
             raise ConfigurationError("OPENROUTER_API_KEY(S) is required for translation provider openrouter.")
         if options.translation_provider == "gemini" and not has_gemini:
             raise ConfigurationError("GEMINI_API_KEY is required for translation provider gemini.")
-        if options.preset in {"translate-subtitle", "translate-video"} and not has_gemini:
+        if base in {"translate-subtitle", "translate-video"} and not options.segments and not has_gemini:
             raise ConfigurationError("GEMINI_API_KEY is required for visual subtitle OCR.")
 
-        if options.preset in {"dub-audio", "translate-video"}:
-            if options.asr_provider == "auto" and not (os.getenv("GROQ_API_KEY") or has_gemini):
-                raise ConfigurationError("ASR requires GROQ_API_KEY or GEMINI_API_KEY.")
-            if options.asr_provider == "groq" and not os.getenv("GROQ_API_KEY"):
-                raise ConfigurationError("GROQ_API_KEY is required for ASR provider groq.")
-            if options.asr_provider == "gemini" and not has_gemini:
-                raise ConfigurationError("GEMINI_API_KEY is required for ASR provider gemini.")
+        if base in {"dub-audio", "translate-video", "blur-and-dub"}:
+            if not options.segments:
+                if options.asr_provider == "auto" and not (os.getenv("GROQ_API_KEY") or has_gemini):
+                    raise ConfigurationError("ASR requires GROQ_API_KEY or GEMINI_API_KEY.")
+                if options.asr_provider == "groq" and not os.getenv("GROQ_API_KEY"):
+                    raise ConfigurationError("GROQ_API_KEY is required for ASR provider groq.")
+                if options.asr_provider == "gemini" and not has_gemini:
+                    raise ConfigurationError("GEMINI_API_KEY is required for ASR provider gemini.")
             if options.tts_provider in {"auto", "edge"}:
                 self._require_dependency("edge_tts", "edge-tts")
             if options.tts_provider == "elevenlabs" and not has_elevenlabs_keys():
@@ -299,18 +373,26 @@ class JobRunner:
 
     @staticmethod
     def _visual_request(options: JobOptions) -> VisualRequest:
-        common = {"target_language": options.target_language}
-        if options.preset in {"translate-subtitle", "translate-video"}:
+        base = _base_preset(options.preset)
+        common = {
+            "target_language": options.target_language,
+            "subtitle_layout": options.subtitle_layout,
+            "hide_source_subtitle": options.hide_source_subtitle,
+        }
+        if options.segments and base in {"translate-subtitle", "translate-video"}:
+            common["segments"] = options.segments
+        if base in {"translate-subtitle", "translate-video"}:
+            blur_action = "blur" if options.blur_extra else "preserve"
             return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="translate_replace",
-                                 logo_enabled=True, logo_action="preserve", watermark_enabled=True,
-                                 watermark_action="preserve", other_text_enabled=True,
-                                 other_text_action="preserve", **common)
-        if options.preset == "preserve-all":
+                                 logo_enabled=True, logo_action=blur_action, watermark_enabled=True,
+                                 watermark_action=blur_action, other_text_enabled=True,
+                                 other_text_action=blur_action, **common)
+        if base == "preserve-all":
             return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="preserve",
                                  logo_enabled=True, logo_action="preserve", watermark_enabled=True,
                                  watermark_action="preserve", other_text_enabled=True,
                                  other_text_action="preserve", **common)
-        if options.preset == "dub-audio":
+        if base == "dub-audio":
             return VisualRequest(enabled=False, **common)
         return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="blur",
                              logo_enabled=True, logo_action="blur", watermark_enabled=True,
@@ -320,18 +402,49 @@ class JobRunner:
     @staticmethod
     def _compose(options: JobOptions, request: ProcessingRequest) -> tuple[ProcessVideoUseCase, dict[str, Any]]:
         video_util = FFmpegVideoAdapter()
-        needs_visual_translation = options.preset in {"translate-subtitle", "translate-video"}
-        needs_audio_translation = options.preset in {"dub-audio", "translate-video"}
+        base = _base_preset(options.preset)
+        is_generic = options.preset in GENERIC_PRESETS
+        needs_visual_translation = base in {"translate-subtitle", "translate-video"}
+        needs_audio_translation = base in {"dub-audio", "translate-video", "blur-and-dub"}
         visual_translation = build_translation_service("subtitle", options.translation_provider) if needs_visual_translation else None
         audio_translation = build_translation_service("spoken", options.translation_provider) if needs_audio_translation else None
         detector_config = {
-            "weights_path": options.yolo_weights, "conf": options.yolo_conf, "iou": options.yolo_iou,
-            "imgsz": options.yolo_imgsz, "device": options.device,
-            "subtitle_rescue_conf": options.yolo_subtitle_rescue_conf,
+            "weights_path": options.yolo_weights,
+            # The generic scene-text model needs its own operating point; the
+            # 4-class burn-in model keeps its low default for the rescue gate.
+            "conf": (
+                GENERIC_TEXT_DEFAULT_CONF
+                if is_generic and float(options.yolo_conf) == 0.05
+                else options.yolo_conf
+            ),
+            "iou": options.yolo_iou,
+            # The generic text model is trained and recommended at 640px;
+            # matching it speeds detection up sharply on dense frames.
+            "imgsz": (
+                640
+                if is_generic and int(options.yolo_imgsz) == 1024
+                else options.yolo_imgsz
+            ),
+            "device": options.device,
+            # Class-gated weak-subtitle rescue never applies to the generic
+            # single-class model; disable it explicitly.
+            "subtitle_rescue_conf": None if is_generic else options.yolo_subtitle_rescue_conf,
             "subtitle_rescue_max_gap_seconds": options.yolo_subtitle_rescue_max_gap_seconds,
             "subtitle_rescue_min_support_ratio": options.yolo_subtitle_rescue_min_support_ratio,
         }
         detector = YoloDetectorAdapter(**detector_config) if request.visual.enabled else None
+        if is_generic and detector is not None:
+            from src.features.visual.text_classifier import TextClassifyingDetector
+
+            detector = TextClassifyingDetector(detector)
+        if is_generic and request.visual.enabled:
+            # Classifier edits change detector output semantics; include the
+            # classifier source digest so the detection cache invalidates.
+            from src.infrastructure.stage_cache import file_digest
+
+            detector_config["classifier_sha256"] = file_digest(
+                PROJECT_ROOT / "src" / "features" / "visual" / "text_classifier.py"
+            )
         ocr_provider = None
         if request.visual.enabled and request.visual.subtitle_mode == "translate_replace":
             from src.infrastructure.ocr.gemini_ocr import GeminiOCRAdapter

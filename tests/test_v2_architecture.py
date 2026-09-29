@@ -2,15 +2,12 @@
 Unit and Integration Tests for V2 Feature-First Modular Clean Architecture
 """
 
-import os
 import pytest
-from pathlib import Path
 
 from src.core.models.bbox import BBox
 from src.core.models.detection import Detection
 from src.core.models.track import Track
 from src.core.models.subtitle_event import SubtitleEvent
-from src.core.models.speech_segment import SpeechSegment
 from src.features.audio.pipeline import AudioPipeline, AudioRequest
 from src.features.visual.pipeline import VisualPipeline, VisualRequest
 from src.features.visual.subtitle.event_segmenter import SubtitleEventSegmenter

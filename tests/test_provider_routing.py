@@ -169,6 +169,32 @@ def test_translation_validator_flags_cross_id_numbers_tokens_and_finance_jargon(
     assert FallbackTranslationAdapter._suspicious_indices(source, translated) == [0, 1, 2, 3, 4, 5]
 
 
+def test_validator_accepts_proper_token_shared_across_source_lines():
+    # Real regression: two "Douyin account: Spongecake" captions next to a
+    # "@抖音: Spongecake" line were permanently rejected because the proper
+    # token registered by the CJK+Latin line looked "leaked" into the
+    # pure-Latin lines that legitimately contain the same name.
+    source = [
+        "Douyin account: Spongecake",
+        "@抖音: Spongecake",
+        "Douyin account: Spongecake",
+    ]
+    translated = [
+        "Tài khoản Douyin: Spongecake",
+        "@Douyin: Spongecake",
+        "Tài khoản Douyin: Spongecake",
+    ]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == []
+
+
+def test_validator_still_flags_token_migration_into_unrelated_line():
+    source = ["Bloomberg终端上", "今天天气很好"]
+    translated = ["Thị trường hôm nay rất đẹp", "Bloomberg terminal đã báo cáo"]
+
+    assert 1 in FallbackTranslationAdapter._suspicious_indices(source, translated)
+
+
 def test_fish_tts_rotates_key_and_writes_audio(monkeypatch, tmp_path):
     adapter = FishAudioTTSAdapter(api_keys=["fish-a", "fish-b"])
     calls = []

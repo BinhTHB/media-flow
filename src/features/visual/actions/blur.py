@@ -29,10 +29,13 @@ class BlurAction:
         if x2 <= x1 or y2 <= y1:
             return frame
 
-        ksize = int(round(self.strength))
+        fh = bbox.frame_height or frame.shape[0]
+        # Adaptive blur strength: ensure text strokes are completely dissolved
+        base_strength = max(float(self.strength), fh * 0.040)
+        ksize = int(round(base_strength))
         if ksize % 2 == 0:
             ksize += 1
-        ksize = max(3, ksize)
+        ksize = max(15, ksize)
 
         roi = frame[y1:y2, x1:x2]
         if roi.size > 0:

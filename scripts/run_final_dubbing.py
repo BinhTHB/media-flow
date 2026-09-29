@@ -11,7 +11,11 @@ import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from opencc import OpenCC
+try:
+    from opencc import OpenCC
+    _ZH_T2S = OpenCC("t2s")
+except Exception:
+    _ZH_T2S = None
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -21,12 +25,9 @@ from src.infrastructure.elevenlabs_dubbing import ElevenLabsDubbingV2Adapter
 from src.infrastructure.video.ffmpeg import extract_audio, mux_audio_video
 
 
-_ZH_T2S = OpenCC("t2s")
-
-
 def _canonical_zh(text: str) -> str:
     value = text or ""
-    if re.search(r"[\u3400-\u9fff]", value):
+    if _ZH_T2S is not None and re.search(r"[\u3400-\u9fff]", value):
         return _ZH_T2S.convert(value)
     return value
 

@@ -347,6 +347,10 @@ class _UrllibTransport:
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             raise GeminiNetworkError(f"Gemini request failed: {reason}") from exc
+        except OSError as exc:
+            # Read/connect timeouts surface as TimeoutError (an OSError), which
+            # URLError does not wrap; without this they bypass the retry loop.
+            raise GeminiNetworkError(f"Gemini request failed: {exc}") from exc
         try:
             return json.loads(raw_bytes.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:

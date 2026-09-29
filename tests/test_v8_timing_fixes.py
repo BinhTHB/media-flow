@@ -9,9 +9,7 @@ Unit tests for V8 Subtitle Timing & Event Segmentation:
 7. Gemini OCR/translation call count remains event-level/batched
 """
 
-from unittest.mock import MagicMock
 import numpy as np
-import pytest
 
 from src.core.models.bbox import BBox
 from src.core.models.detection import Detection

@@ -18,6 +18,10 @@ class AudioRequest:
     target_language: str = "vi"
     dubbing_enabled: bool = False
     voice: str = "vi-VN-HoaiMyNeural"
+    segments: Optional[List[SpeechSegment]] = None
+    speaker_voices: Dict[str, str] = field(default_factory=dict)
+    preserve_ambience: bool = True
+    mix_original_volume: float = 0.20
 
 
 @dataclass

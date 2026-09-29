@@ -1,250 +1,842 @@
-/* MediaFlow AI Studio shell. Provider actions stay honest until adapters are configured. */
+/* ==========================================================================
+   MediaFlow CLI Studio - GUI CLI Runner Logic
+   Tập trung 100% vào việc thực thi CLI pipeline và hiển thị logs thời gian thực.
+   ========================================================================== */
 (function () {
   "use strict";
 
-  const definitions = {
-    tts: {
-      kicker: "TEXT TO SPEECH",
-      title: "Tạo voice từ script",
-      description: "Nhập text, chọn voice profile và kiểm tra contract trước khi nối provider thật.",
-      input: "Text + voice profile",
-      processing: "TTS adapter (chưa cấu hình)",
-      output: "MP3/WAV artifact",
-    },
-    subtitle: {
-      kicker: "SUBTITLE WORKSPACE",
-      title: "Đọc và dịch subtitle",
-      description: "Nạp SRT/VTT, giữ timestamp và chuẩn bị bản dịch cho timeline video.",
-      input: "SRT/VTT + ngôn ngữ đích",
-      processing: "Subtitle parser + translator",
-      output: "SRT/VTT đã đồng bộ",
-    },
-    stt: {
-      kicker: "SPEECH TO TEXT",
-      title: "Transcript theo timestamp",
-      description: "Chuẩn bị transcript có speaker và mốc thời gian để ghép vào pipeline.",
-      input: "Audio/video + ngôn ngữ",
-      processing: "ASR + diarization (chưa cấu hình)",
-      output: "Transcript JSON/SRT",
-    },
-    clone: {
-      kicker: "VOICE CLONE",
-      title: "Quản lý voice profile",
-      description: "Tạo profile từ sample giọng nói; file chỉ dùng trong project local.",
-      input: "Voice sample + profile name",
-      processing: "Voice clone adapter (chưa cấu hình)",
-      output: "Voice profile",
-    },
-    dubbing: {
-      kicker: "VIDEO DUBBING",
-      title: "Dịch và lồng tiếng video",
-      description: "Mở workspace timeline để quản lý transcript, nhân vật, voice và fit thời lượng.",
-      input: "Video + speaker map",
-      processing: "ASR → translate → TTS → compose",
-      output: "Video MP4 đã mux audio",
-    },
-  };
-
+  // Application State
   const state = {
-    tool: new URLSearchParams(window.location.search).get("tool") || "tts",
+    theme: document.documentElement.getAttribute("data-theme") || "dark",
+    activeTool: "video",
+    files: [],
+    selectedFile: null,
+    selectedPreset: "translate-video",
+    activeJobId: null,
+    pollTimer: null,
     capabilities: null,
   };
 
+  // DOM Elements cache
   const el = {
-    runtime: document.getElementById("runtimeState"),
-    runtimeTitle: document.getElementById("runtimeTitle"),
+    // Theme & Navigation
+    themeToggle: document.getElementById("themeToggle"),
+    runtimeState: document.getElementById("runtimeState"),
     runtimeDetail: document.getElementById("runtimeDetail"),
-    toolKicker: document.getElementById("toolKicker"),
-    toolTitle: document.getElementById("toolTitle"),
-    toolDescription: document.getElementById("toolDescription"),
-    inputContract: document.getElementById("inputContract"),
-    processingContract: document.getElementById("processingContract"),
-    outputContract: document.getElementById("outputContract"),
-    toolForm: document.getElementById("toolForm"),
-    toolMessage: document.getElementById("toolMessage"),
-    capabilityList: document.getElementById("capabilityList"),
-    toolStatus: document.getElementById("toolStatus"),
+    navTabs: document.querySelectorAll("[data-nav-tool]"),
+    videoSection: document.getElementById("videoSection"),
+    ttsSection: document.getElementById("ttsSection"),
+
+    // Step 1: Input Video
+    selectedVideoBanner: document.getElementById("selectedVideoBanner"),
+    currentMediaPath: document.getElementById("currentMediaPath"),
+    currentMediaMeta: document.getElementById("currentMediaMeta"),
+    videoStatusBadge: document.getElementById("videoStatusBadge"),
+    sourceVideoPlayer: document.getElementById("sourceVideoPlayer"),
+    videoPreviewPlaceholder: document.getElementById("videoPreviewPlaceholder"),
+    dropZone: document.getElementById("dropZone"),
+    fileInput: document.getElementById("fileInput"),
+    uploadProgress: document.getElementById("uploadProgress"),
+    sourceList: document.getElementById("sourceList"),
+    refreshFiles: document.getElementById("refreshFiles"),
+    clearFilesBtn: document.getElementById("clearFilesBtn"),
+
+    // Step 2: Preset
+    presetCards: document.querySelectorAll(".preset-option-card"),
+
+    // Step 3: CLI Parameters
+    sourceLanguageSelect: document.getElementById("sourceLanguageSelect"),
+    targetLanguageSelect: document.getElementById("targetLanguageSelect"),
+    voiceSelect: document.getElementById("voiceSelect"),
+    previewVoiceBtn: document.getElementById("previewVoiceBtn"),
+    subtitleLayoutSelect: document.getElementById("subtitleLayoutSelect"),
+    deviceSelect: document.getElementById("deviceSelect"),
+    profileSelect: document.getElementById("profileSelect"),
+    blurExtraCheck: document.getElementById("blurExtraCheck"),
+    hideSourceSubCheck: document.getElementById("hideSourceSubCheck"),
+    overwriteCheck: document.getElementById("overwriteCheck"),
+
+    // Step 4: Run & CLI Preview
+    cliCommandPreview: document.getElementById("cliCommandPreview"),
+    runJobBtn: document.getElementById("runJobBtn"),
+    runButtonText: document.getElementById("runButtonText"),
+    videoFormMessage: document.getElementById("videoFormMessage"),
+
+    // Step 5: Monitoring & Terminal Logs
+    jobMonitoringSection: document.getElementById("jobMonitoringSection"),
+    jobStageTitle: document.getElementById("jobStageTitle"),
+    jobStatusText: document.getElementById("jobStatusText"),
+    jobProgressPercent: document.getElementById("jobProgressPercent"),
+    progressFill: document.getElementById("progressFill"),
+    jobMetrics: document.getElementById("jobMetrics"),
+    metricSubtitle: document.getElementById("metricSubtitle"),
+    metricWatermark: document.getElementById("metricWatermark"),
+    metricLogo: document.getElementById("metricLogo"),
+    metricOther: document.getElementById("metricOther"),
+    jobLogsBox: document.getElementById("jobLogsBox"),
+    jobLogsArea: document.getElementById("jobLogsArea"),
+
+    // Step 6: Result Card
+    jobResultSection: document.getElementById("jobResultSection"),
+    resultFilePath: document.getElementById("resultFilePath"),
+    resultFileSize: document.getElementById("resultFileSize"),
+    resultDownloadBtn: document.getElementById("resultDownloadBtn"),
+    resultViewBtn: document.getElementById("resultViewBtn"),
+
+    // Tab 2: TTS
+    ttsScript: document.getElementById("ttsScript"),
+    ttsVoiceSelect: document.getElementById("ttsVoiceSelect"),
+    charCount: document.getElementById("charCount"),
+    playTtsBtn: document.getElementById("playTtsBtn"),
+    audioPlayerWrapper: document.getElementById("audioPlayerWrapper"),
+    ttsAudioPlayer: document.getElementById("ttsAudioPlayer"),
+    ttsMessage: document.getElementById("ttsMessage"),
   };
 
+  // Utility helpers
   function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, function (char) {
-      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[char];
+    return String(value || "").replace(/[&<>"']/g, function (char) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[char];
     });
+  }
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 1 ? 1 : 0) + " " + units[i];
   }
 
   async function api(path, options) {
     const response = await fetch(path, options);
     let payload = {};
-    try { payload = await response.json(); } catch (_) {}
+    try {
+      payload = await response.json();
+    } catch (_) {}
     if (!response.ok) {
-      throw new Error(payload.error || "Yêu cầu thất bại (" + response.status + ").");
+      throw new Error(payload.error || `Yêu cầu thất bại (${response.status})`);
     }
     return payload;
   }
 
-  function setMessage(message, isError) {
-    el.toolMessage.textContent = message || "";
-    el.toolMessage.classList.toggle("is-error", Boolean(isError));
+  // Theme Management
+  function initTheme() {
+    const savedTheme = localStorage.getItem("mediaflow_theme");
+    const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initialTheme = savedTheme || (prefersDark ? "dark" : "light");
+    setTheme(initialTheme);
+
+    if (el.themeToggle) {
+      el.themeToggle.addEventListener("click", function () {
+        const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+        const nextTheme = currentTheme === "dark" ? "light" : "dark";
+        setTheme(nextTheme);
+      });
+    }
   }
 
+  function setTheme(theme) {
+    state.theme = theme;
+    document.documentElement.setAttribute("data-theme", theme);
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+      document.documentElement.classList.remove("light");
+    } else {
+      document.documentElement.classList.add("light");
+      document.documentElement.classList.remove("dark");
+    }
+    try {
+      localStorage.setItem("mediaflow_theme", theme);
+    } catch (_) {}
+  }
+
+  // Navigation Tab Switching
+  function initTabs() {
+    el.navTabs.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const tool = btn.getAttribute("data-nav-tool");
+        if (tool) switchTool(tool);
+      });
+    });
+  }
+
+  function switchTool(tool) {
+    state.activeTool = tool;
+    el.navTabs.forEach(function (tab) {
+      const match = tab.getAttribute("data-nav-tool") === tool;
+      tab.classList.toggle("is-active", match);
+    });
+
+    if (tool === "video") {
+      if (el.videoSection) {
+        el.videoSection.classList.add("is-active");
+        el.videoSection.removeAttribute("hidden");
+      }
+      if (el.ttsSection) {
+        el.ttsSection.classList.remove("is-active");
+        el.ttsSection.setAttribute("hidden", "");
+      }
+    } else if (tool === "tts") {
+      if (el.ttsSection) {
+        el.ttsSection.classList.add("is-active");
+        el.ttsSection.removeAttribute("hidden");
+      }
+      if (el.videoSection) {
+        el.videoSection.classList.remove("is-active");
+        el.videoSection.setAttribute("hidden", "");
+      }
+    }
+  }
+
+  // Runtime State
   function setRuntime(online, detail) {
-    el.runtime.classList.toggle("is-online", online);
-    el.runtime.classList.toggle("is-offline", !online);
-    el.runtime.lastChild.textContent = online ? " Runtime sẵn sàng" : " Mất kết nối";
-    el.runtimeTitle.textContent = online ? "Local runtime" : "Runtime unavailable";
-    el.runtimeDetail.textContent = detail || (online ? "API local đang hoạt động." : "Khởi động server để dùng workspace.");
+    if (!el.runtimeState) return;
+    el.runtimeState.classList.toggle("is-online", online);
+    el.runtimeState.classList.toggle("is-offline", !online);
+    if (el.runtimeDetail) {
+      el.runtimeDetail.textContent = detail || (online ? "Local CLI Backend" : "Server Offline");
+    }
   }
 
-  function capabilityStatus(tool) {
-    const providers = (state.capabilities && state.capabilities.providers) || {};
-    const mapping = {
-      tts: ["tts"],
-      subtitle: ["translation", "composer"],
-      stt: ["asr", "diarization"],
-      clone: ["tts"],
-      dubbing: ["asr", "translation", "tts", "composer"],
-    };
-    const keys = mapping[tool] || ["tts"];
-    const available = keys.filter(function (key) { return providers[key] && providers[key].available; }).length;
-    return {available: available, total: keys.length, providers: providers, keys: keys};
+  // Update CLI Command Preview Box
+  function updateCliCommandPreview() {
+    if (!el.cliCommandPreview) return;
+
+    const inputPath = state.selectedFile ? state.selectedFile.path : "<chọn-video-đầu-vào>";
+    const preset = state.selectedPreset || "translate-video";
+    const basePreset = preset.replace(/-generic$/, "");
+    const srcLang = el.sourceLanguageSelect ? el.sourceLanguageSelect.value : "vi";
+    const tgtLang = el.targetLanguageSelect ? el.targetLanguageSelect.value : "vi";
+    const voiceId = el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    const subLayout = el.subtitleLayoutSelect ? el.subtitleLayoutSelect.value : "in-place";
+    const device = el.deviceSelect ? el.deviceSelect.value : "auto";
+    const profile = el.profileSelect ? el.profileSelect.value : "balanced";
+    const blurExtra = el.blurExtraCheck && el.blurExtraCheck.checked;
+    const hideSourceSub = el.hideSourceSubCheck && el.hideSourceSubCheck.checked;
+    const overwrite = el.overwriteCheck && el.overwriteCheck.checked;
+
+    const parts = [
+      "python -m src.interfaces.cli",
+      `--input "${inputPath}"`,
+      `--preset ${preset}`,
+    ];
+
+    if (basePreset === "translate-video" || basePreset === "translate-subtitle") {
+      parts.push(`--source-language ${srcLang}`);
+      parts.push(`--target-language ${tgtLang}`);
+      parts.push(`--subtitle-layout ${subLayout}`);
+    }
+
+    if (basePreset === "translate-video" || basePreset === "dub-audio") {
+      parts.push(`--voice-id ${voiceId}`);
+    }
+
+    if (device !== "auto") parts.push(`--device ${device}`);
+    if (profile !== "balanced") parts.push(`--profile ${profile}`);
+    if (blurExtra) parts.push("--blur-extra");
+    if (hideSourceSub) parts.push("--hide-source-subtitle");
+    if (overwrite) parts.push("--overwrite");
+
+    el.cliCommandPreview.textContent = parts.join(" ");
   }
 
-  function renderCapabilities() {
-    const providers = (state.capabilities && state.capabilities.providers) || {};
-    const labels = {
-      asr: "ASR",
-      diarization: "Speaker diarization",
-      translation: "Translation",
-      tts: "TTS",
-      composer: "AudioComposer",
-    };
-    const keys = ["asr", "diarization", "translation", "tts", "composer"];
-    if (!state.capabilities) {
-      el.capabilityList.innerHTML = '<div class="empty-state">Đang tải capability…</div>';
+  // Video Management & File List
+  async function loadFileList() {
+    if (!el.sourceList) return;
+    el.sourceList.innerHTML = '<div class="empty-state">Đang tải danh sách video dự án…</div>';
+    try {
+      const res = await api("/api/files");
+      state.files = Array.isArray(res) ? res : (Array.isArray(res.files) ? res.files : []);
+      renderFileList();
+    } catch (err) {
+      el.sourceList.innerHTML = `<div class="empty-state" style="color:var(--red);">Lỗi: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderFileList() {
+    if (!el.sourceList) return;
+    if (!state.files.length) {
+      el.sourceList.innerHTML = '<div class="empty-state">Chưa có video nào. Kéo thả file video vào ô trên để tải lên!</div>';
       return;
     }
-    el.capabilityList.innerHTML = keys.map(function (key) {
-      const provider = providers[key] || {};
-      const ready = Boolean(provider.available);
-      const status = ready ? "READY" : "BLOCKED";
-      return '<div class="capability-item"><span><strong>' + labels[key] +
-        '</strong><small>' + escapeHtml(provider.reason || "Chưa có thông tin.") +
-        '</small></span><b class="' + (ready ? "ready" : "") + '">' + status + "</b></div>";
+
+    el.sourceList.innerHTML = state.files.map(function (file) {
+      const isSelected = state.selectedFile && state.selectedFile.path === file.path;
+      const isSample = file.path.startsWith("test_videos/");
+      const isOutput = file.path.startsWith("outputs/");
+      const isRemovable = !isSample;
+
+      let badgeClass = "";
+      let badgeText = "GỐC";
+      if (isSample) {
+        badgeClass = "sample";
+        badgeText = "MẪU";
+      } else if (isOutput) {
+        badgeClass = "output";
+        badgeText = "KẾT QUẢ";
+      }
+
+      return `
+        <div class="source-item ${isSelected ? "is-selected" : ""}" data-path="${escapeHtml(file.path)}">
+          <div class="source-meta">
+            <span class="source-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+            <span class="source-details">${escapeHtml(file.source || "local")} · ${formatBytes(file.size)}</span>
+          </div>
+          <div class="source-actions">
+            <span class="source-badge ${badgeClass}">[${badgeText}]</span>
+            ${isRemovable ? `<button class="source-item-delete" type="button" data-delete="${escapeHtml(file.path)}" title="Xóa file này">✕</button>` : ""}
+          </div>
+        </div>
+      `;
     }).join("");
-  }
 
-  function renderToolStatus() {
-    const result = capabilityStatus(state.tool);
-    const ready = result.available === result.total && result.total > 0;
-    el.toolStatus.textContent = ready ? "READY" : "PARTIAL";
-    el.toolStatus.classList.toggle("is-ready", ready);
-    el.toolStatus.classList.toggle("is-blocked", !ready);
-  }
-
-  function inputMarkup(kind) {
-    if (kind === "tts") {
-      return '<h3>Quick TTS preview</h3>' +
-        '<label class="form-label"><span>SCRIPT</span><textarea id="ttsText" placeholder="Nhập câu thoại để thử contract…">Cuối cùng chúng ta cũng gặp nhau.</textarea></label>' +
-        '<div class="form-row"><label class="form-label"><span>VOICE</span><select id="ttsVoice"><option>vi-VN-HoaiMyNeural</option><option>vi-VN-NamMinhNeural</option></select></label>' +
-        '<label class="form-label"><span>FORMAT</span><select id="ttsFormat"><option>MP3</option><option>WAV</option></select></label></div>' +
-        '<div class="form-actions"><button class="primary-button tool-action" type="button">Tạo preview</button><button class="secondary-button" type="button" data-clear>Clear</button></div>';
-    }
-    if (kind === "subtitle") {
-      return '<h3>Subtitle input</h3>' +
-        '<label class="file-drop"><input type="file" accept=".srt,.vtt,text/vtt,application/x-subrip"><strong>Chọn SRT hoặc VTT</strong><small data-file-name>Kéo thả file subtitle vào đây</small></label>' +
-        '<div class="form-row"><label class="form-label"><span>SOURCE</span><select><option>Auto detect</option><option>中文</option><option>English</option><option>Tiếng Việt</option></select></label>' +
-        '<label class="form-label"><span>TARGET</span><select><option>Tiếng Việt</option><option>English</option><option>中文</option></select></label></div>' +
-        '<div class="form-actions"><button class="primary-button tool-action" type="button">Phân tích subtitle</button></div>';
-    }
-    if (kind === "stt") {
-      return '<h3>Transcript input</h3>' +
-        '<label class="file-drop"><input type="file" accept="audio/*,video/*"><strong>Chọn audio hoặc video</strong><small data-file-name>Hỗ trợ file trong project hoặc upload local</small></label>' +
-        '<div class="form-row"><label class="form-label"><span>LANGUAGE</span><select><option>Auto detect</option><option>中文</option><option>English</option><option>Tiếng Việt</option></select></label>' +
-        '<label class="form-label"><span>OUTPUT</span><select><option>SRT + JSON</option><option>TXT</option></select></label></div>' +
-        '<div class="form-actions"><button class="primary-button tool-action" type="button">Tạo transcript</button></div>';
-    }
-    if (kind === "clone") {
-      return '<h3>Voice profile</h3>' +
-        '<label class="form-label"><span>PROFILE NAME</span><input type="text" placeholder="Ví dụ: Narrator nữ 01"></label>' +
-        '<label class="file-drop"><input type="file" accept="audio/*"><strong>Chọn voice sample</strong><small data-file-name>Khuyến nghị sample sạch, 10–30 giây</small></label>' +
-        '<div class="form-actions"><button class="primary-button tool-action" type="button">Tạo profile</button></div>';
-    }
-    return '<h3>Video Dubbing Workspace</h3><p class="empty-state">Mọi control chính nằm trên timeline: source video, subtitle, speaker map, voice assignment và fit policy.</p>' +
-      '<div class="form-actions"><a class="primary-button" href="/dubbing.html">Mở workspace <span>→</span></a></div>';
-  }
-
-  function bindFormActions() {
-    el.toolForm.querySelectorAll(".file-drop input").forEach(function (input) {
-      input.addEventListener("change", function () {
-        const file = input.files && input.files[0];
-        const label = input.closest(".file-drop").querySelector("[data-file-name]");
-        if (label) label.textContent = file ? file.name + " · " + Math.round(file.size / 1024) + " KB" : "Chưa chọn file";
-      });
-    });
-    el.toolForm.querySelectorAll("[data-clear]").forEach(function (button) {
-      button.addEventListener("click", function () {
-        const text = el.toolForm.querySelector("textarea");
-        if (text) text.value = "";
-        setMessage("", false);
-      });
-    });
-    el.toolForm.querySelectorAll(".tool-action").forEach(function (button) {
-      button.addEventListener("click", function () {
-        const result = capabilityStatus(state.tool);
-        const ready = result.available === result.total && result.total > 0;
-        if (ready) {
-          setMessage("Provider đã sẵn sàng; bước tiếp theo là nối job runner vào contract này.", false);
-        } else {
-          setMessage("UI đã sẵn sàng, nhưng provider thật chưa được cấu hình trong local runtime.", true);
+    el.sourceList.querySelectorAll(".source-item").forEach(function (item) {
+      item.addEventListener("click", function () {
+        const path = item.getAttribute("data-path");
+        const found = state.files.find(function (f) { return f.path === path; });
+        if (found) {
+          selectVideo(found);
         }
       });
     });
-  }
 
-  function renderTool(tool) {
-    if (!definitions[tool]) tool = "tts";
-    state.tool = tool;
-    const definition = definitions[tool];
-    el.toolKicker.textContent = definition.kicker;
-    el.toolTitle.textContent = definition.title;
-    el.toolDescription.textContent = definition.description;
-    el.inputContract.textContent = definition.input;
-    el.processingContract.textContent = definition.processing;
-    el.outputContract.textContent = definition.output;
-    el.toolForm.innerHTML = inputMarkup(tool);
-    document.querySelectorAll("[data-tool-link]").forEach(function (link) {
-      const linkTool = link.dataset.toolLink;
-      link.classList.toggle("is-active", linkTool === tool);
+    el.sourceList.querySelectorAll("[data-delete]").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        const p = btn.getAttribute("data-delete");
+        deleteFile(p);
+      });
     });
-    bindFormActions();
-    renderToolStatus();
-  }
 
-  async function loadCapabilities() {
-    try {
-      state.capabilities = await api("/api/dubbing/capabilities");
-      renderCapabilities();
-      renderToolStatus();
-      const providers = state.capabilities.providers || {};
-      const available = Object.keys(providers).filter(function (key) { return providers[key].available; }).length;
-      setRuntime(true, available + "/" + Object.keys(providers).length + " local providers available.");
-    } catch (error) {
-      setRuntime(false, error.message);
-      renderCapabilities();
-      renderToolStatus();
+    // Nếu chưa chọn video nào và có danh sách, tự động chọn file đầu tiên
+    if (!state.selectedFile && state.files.length > 0) {
+      selectVideo(state.files[0]);
     }
   }
 
+  function selectVideo(file) {
+    state.selectedFile = file;
+
+    // Highlight trong danh sách
+    if (el.sourceList) {
+      el.sourceList.querySelectorAll(".source-item").forEach(function (item) {
+        const match = item.getAttribute("data-path") === file.path;
+        item.classList.toggle("is-selected", match);
+      });
+    }
+
+    // Cập nhật banner video đã chọn
+    if (el.currentMediaPath) {
+      el.currentMediaPath.textContent = file.name;
+    }
+    if (el.currentMediaMeta) {
+      el.currentMediaMeta.textContent = `${file.path} · ${formatBytes(file.size)}`;
+    }
+    if (el.videoStatusBadge) {
+      el.videoStatusBadge.textContent = "SẴN SÀNG";
+      el.videoStatusBadge.className = "banner-badge";
+    }
+
+    // Nạp và hiển thị trình phát video preview
+    if (el.sourceVideoPlayer) {
+      el.sourceVideoPlayer.src = "/api/media?path=" + encodeURIComponent(file.path);
+      el.sourceVideoPlayer.removeAttribute("hidden");
+      el.sourceVideoPlayer.load();
+    }
+    if (el.videoPreviewPlaceholder) {
+      el.videoPreviewPlaceholder.setAttribute("hidden", "");
+    }
+
+    // Kích hoạt nút chạy pipeline
+    if (el.runJobBtn) {
+      el.runJobBtn.removeAttribute("disabled");
+    }
+
+    // Cập nhật câu lệnh CLI tương đương
+    updateCliCommandPreview();
+  }
+
+  function resetSelectedVideo() {
+    state.selectedFile = null;
+    if (el.currentMediaPath) el.currentMediaPath.textContent = "Chưa chọn video";
+    if (el.currentMediaMeta) el.currentMediaMeta.textContent = "Vui lòng bấm chọn một file từ danh sách bên dưới";
+    if (el.videoStatusBadge) {
+      el.videoStatusBadge.textContent = "CHỜ VIDEO";
+      el.videoStatusBadge.className = "banner-badge";
+    }
+    if (el.sourceVideoPlayer) {
+      el.sourceVideoPlayer.pause();
+      el.sourceVideoPlayer.removeAttribute("src");
+      el.sourceVideoPlayer.setAttribute("hidden", "");
+    }
+    if (el.videoPreviewPlaceholder) {
+      el.videoPreviewPlaceholder.removeAttribute("hidden");
+    }
+    if (el.runJobBtn) el.runJobBtn.setAttribute("disabled", "");
+    updateCliCommandPreview();
+  }
+
+  async function deleteFile(path) {
+    if (!path) return;
+    const name = path.split("/").pop();
+    if (!confirm(`Xóa file "${name}" khỏi lưu trữ dự án?`)) return;
+    try {
+      await api("/api/files?path=" + encodeURIComponent(path), { method: "DELETE" });
+      if (state.selectedFile && state.selectedFile.path === path) {
+        resetSelectedVideo();
+      }
+      await loadFileList();
+    } catch (err) {
+      alert("Lỗi khi xóa file: " + err.message);
+    }
+  }
+
+  async function clearAllFiles() {
+    if (!confirm("Bạn có chắc chắn muốn dọn dẹp toàn bộ file tải lên và kết quả cũ trong dự án?")) return;
+    try {
+      const res = await api("/api/files", { method: "DELETE" });
+      resetSelectedVideo();
+      await loadFileList();
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = `Đã dọn dẹp ${res.deleted_count || 0} file khỏi dự án.`;
+        el.videoFormMessage.className = "yup-msg form-message is-success";
+      }
+    } catch (err) {
+      alert("Lỗi khi dọn dẹp: " + err.message);
+    }
+  }
+
+  // Upload Management
+  function initUpload() {
+    if (!el.dropZone || !el.fileInput) return;
+
+    el.fileInput.addEventListener("change", function () {
+      if (el.fileInput.files && el.fileInput.files[0]) {
+        uploadFile(el.fileInput.files[0]);
+      }
+    });
+
+    el.dropZone.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        el.fileInput.click();
+      }
+    });
+
+    el.dropZone.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      el.dropZone.classList.add("is-dragover");
+    });
+
+    el.dropZone.addEventListener("dragleave", function () {
+      el.dropZone.classList.remove("is-dragover");
+    });
+
+    el.dropZone.addEventListener("drop", function (e) {
+      e.preventDefault();
+      el.dropZone.classList.remove("is-dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        uploadFile(e.dataTransfer.files[0]);
+      }
+    });
+  }
+
+  async function uploadFile(file) {
+    if (!file) return;
+    const progressSpan = el.uploadProgress;
+    const progressFill = progressSpan ? progressSpan.querySelector("i") : null;
+
+    if (progressSpan) progressSpan.removeAttribute("hidden");
+    if (progressFill) progressFill.style.width = "15%";
+
+    try {
+      const response = await fetch("/api/uploads", {
+        method: "POST",
+        headers: {
+          "X-Filename": encodeURIComponent(file.name),
+          "Content-Type": file.type || "application/octet-stream",
+        },
+        body: file,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(function () { return {}; });
+        throw new Error(errorData.error || `Tải file thất bại (${response.status})`);
+      }
+
+      if (progressFill) progressFill.style.width = "100%";
+      const result = await response.json();
+      await loadFileList();
+
+      const uploaded = state.files.find(function (f) { return f.name === result.name || f.path === result.path; }) || result;
+      selectVideo(uploaded);
+
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = `Tải lên thành công: ${result.name}`;
+        el.videoFormMessage.className = "yup-msg form-message is-success";
+      }
+    } catch (err) {
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = `Lỗi tải lên: ${err.message}`;
+        el.videoFormMessage.className = "yup-msg form-message is-error";
+      }
+    } finally {
+      setTimeout(function () {
+        if (progressSpan) progressSpan.setAttribute("hidden", "");
+        if (progressFill) progressFill.style.width = "0%";
+      }, 1000);
+    }
+  }
+
+  // Preset Selection
+  function initPresets() {
+    el.presetCards.forEach(function (card) {
+      card.addEventListener("click", function () {
+        const preset = card.getAttribute("data-preset");
+        if (!preset) return;
+
+        state.selectedPreset = preset;
+
+        // Cập nhật class is-active
+        el.presetCards.forEach(function (c) {
+          c.classList.toggle("is-active", c.getAttribute("data-preset") === preset);
+        });
+
+        // Cập nhật câu lệnh CLI
+        updateCliCommandPreview();
+      });
+    });
+  }
+
+  // CLI Parameters Listeners
+  function initCliParams() {
+    const inputs = [
+      el.sourceLanguageSelect,
+      el.targetLanguageSelect,
+      el.voiceSelect,
+      el.subtitleLayoutSelect,
+      el.deviceSelect,
+      el.profileSelect,
+      el.blurExtraCheck,
+      el.hideSourceSubCheck,
+      el.overwriteCheck,
+    ];
+
+    inputs.forEach(function (input) {
+      if (input) {
+        input.addEventListener("change", updateCliCommandPreview);
+      }
+    });
+
+    // Voice quick test button in Step 3
+    if (el.previewVoiceBtn && el.voiceSelect) {
+      let previewAudio = null;
+      el.previewVoiceBtn.addEventListener("click", async function () {
+        const voiceId = el.voiceSelect.value;
+        const origText = el.previewVoiceBtn.textContent;
+        el.previewVoiceBtn.textContent = "⏳ Đang tạo...";
+        el.previewVoiceBtn.setAttribute("disabled", "");
+
+        try {
+          const res = await fetch("/api/dubbing/voice-preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              voice_id: voiceId,
+              text: "Xin chào! Đây là giọng đọc thử nghiệm của hệ thống MediaFlow.",
+            }),
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(function () { return {}; });
+            throw new Error(errData.error || `Mã lỗi ${res.status}`);
+          }
+
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          if (previewAudio) previewAudio.pause();
+          previewAudio = new Audio(url);
+          previewAudio.play();
+          el.previewVoiceBtn.textContent = "🔊 Đang phát...";
+          previewAudio.onended = function () {
+            el.previewVoiceBtn.textContent = origText;
+            el.previewVoiceBtn.removeAttribute("disabled");
+          };
+        } catch (err) {
+          alert(`Lỗi nghe thử giọng: ${err.message}`);
+          el.previewVoiceBtn.textContent = origText;
+          el.previewVoiceBtn.removeAttribute("disabled");
+        }
+      });
+    }
+  }
+
+  // Job Execution & Realtime Logs
+  function initJobRunner() {
+    if (!el.runJobBtn) return;
+
+    el.runJobBtn.addEventListener("click", async function () {
+      if (!state.selectedFile) {
+        alert("Vui lòng chọn video trước khi bắt đầu.");
+        return;
+      }
+
+      const resolvedPreset = state.selectedPreset || "translate-video";
+      const srcName = state.selectedFile.name || "video.mp4";
+      const stem = srcName.replace(/\.[^.]+$/, "");
+
+      const payload = {
+        input_path: state.selectedFile.path,
+        output_name: `${stem}-${resolvedPreset}.mp4`,
+        preset: resolvedPreset,
+        presets: [resolvedPreset],
+        source_language: el.sourceLanguageSelect ? el.sourceLanguageSelect.value : "vi",
+        target_language: el.targetLanguageSelect ? el.targetLanguageSelect.value : "vi",
+        voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+        subtitle_layout: el.subtitleLayoutSelect ? el.subtitleLayoutSelect.value : "in-place",
+        blur_extra: el.blurExtraCheck ? el.blurExtraCheck.checked : true,
+        hide_source_subtitle: el.hideSourceSubCheck ? el.hideSourceSubCheck.checked : true,
+        device: el.deviceSelect ? el.deviceSelect.value : "auto",
+        profile: el.profileSelect ? el.profileSelect.value : "balanced",
+        overwrite: el.overwriteCheck ? el.overwriteCheck.checked : true,
+      };
+
+      // Cập nhật trạng thái UI
+      el.runJobBtn.setAttribute("disabled", "");
+      if (el.runButtonText) el.runButtonText.textContent = "⏳ ĐANG CHẠY PIPELINE...";
+      if (el.videoStatusBadge) {
+        el.videoStatusBadge.textContent = "ĐANG XỬ LÝ";
+        el.videoStatusBadge.className = "banner-badge running";
+      }
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = "Đang khởi động tiến trình backend CLI...";
+        el.videoFormMessage.className = "yup-msg form-message";
+      }
+
+      // Hiện khung monitoring & terminal logs, ẩn khung kết quả cũ
+      if (el.jobMonitoringSection) el.jobMonitoringSection.removeAttribute("hidden");
+      if (el.jobResultSection) el.jobResultSection.setAttribute("hidden", "");
+
+      // Cuộn êm đến khung monitoring
+      if (el.jobMonitoringSection) {
+        el.jobMonitoringSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      if (el.jobLogsArea) el.jobLogsArea.textContent = "Đang khởi tạo tiến trình CLI...\n";
+      if (el.progressFill) el.progressFill.style.width = "0%";
+      if (el.jobProgressPercent) el.jobProgressPercent.textContent = "0%";
+      if (el.jobStatusText) el.jobStatusText.textContent = "RUNNING";
+
+      try {
+        const job = await api("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        state.activeJobId = job.id;
+        startJobPolling(job.id);
+      } catch (err) {
+        el.runJobBtn.removeAttribute("disabled");
+        if (el.runButtonText) el.runButtonText.textContent = "⚡ BẮT ĐẦU CHẠY PIPELINE (RUN CLI)";
+        if (el.videoStatusBadge) {
+          el.videoStatusBadge.textContent = "LỖI";
+          el.videoStatusBadge.className = "banner-badge error";
+        }
+        if (el.videoFormMessage) {
+          el.videoFormMessage.textContent = `Không thể tạo job: ${err.message}`;
+          el.videoFormMessage.className = "yup-msg form-message is-error";
+        }
+      }
+    });
+  }
+
+  function startJobPolling(jobId) {
+    if (state.pollTimer) clearInterval(state.pollTimer);
+
+    state.pollTimer = setInterval(async function () {
+      try {
+        const job = await api(`/api/jobs/${jobId}`);
+        updateJobUI(job);
+
+        if (job.status === "succeeded" || job.status === "failed") {
+          clearInterval(state.pollTimer);
+          state.pollTimer = null;
+
+          el.runJobBtn.removeAttribute("disabled");
+          if (el.runButtonText) el.runButtonText.textContent = "⚡ BẮT ĐẦU CHẠY PIPELINE (RUN CLI)";
+
+          if (job.status === "succeeded") {
+            if (el.videoStatusBadge) {
+              el.videoStatusBadge.textContent = "HOÀN THÀNH";
+              el.videoStatusBadge.className = "banner-badge success";
+            }
+            if (el.jobStatusText) el.jobStatusText.textContent = "COMPLETED";
+            if (el.videoFormMessage) {
+              el.videoFormMessage.textContent = "Pipeline CLI đã hoàn tất thành công!";
+              el.videoFormMessage.className = "yup-msg form-message is-success";
+            }
+
+            // Hiển thị Card kết quả
+            if (el.jobResultSection) {
+              el.jobResultSection.removeAttribute("hidden");
+              if (el.resultFilePath) {
+                el.resultFilePath.textContent = `Tệp kết quả: ${job.output_relative || job.output_path || "outputs/output.mp4"}`;
+              }
+              if (el.resultFileSize) {
+                el.resultFileSize.textContent = `Dung lượng: ${formatBytes(job.output_size || 0)}`;
+              }
+              const mediaUrl = `/api/media?path=${encodeURIComponent(job.output_relative || job.output_name)}`;
+              if (el.resultDownloadBtn) {
+                el.resultDownloadBtn.href = mediaUrl;
+                el.resultDownloadBtn.download = job.output_name || "output.mp4";
+              }
+              if (el.resultViewBtn) {
+                el.resultViewBtn.href = mediaUrl;
+              }
+            }
+
+            // Tải lại danh sách file để thấy video kết quả mới trong dự án
+            await loadFileList();
+          } else {
+            if (el.videoStatusBadge) {
+              el.videoStatusBadge.textContent = "THẤT BẠI";
+              el.videoStatusBadge.className = "banner-badge error";
+            }
+            if (el.jobStatusText) el.jobStatusText.textContent = "FAILED";
+            if (el.videoFormMessage) {
+              el.videoFormMessage.textContent = `Thực thi thất bại: ${job.message || "Lỗi không xác định"}`;
+              el.videoFormMessage.className = "yup-msg form-message is-error";
+            }
+          }
+        }
+      } catch (err) {
+        // Polling retry
+      }
+    }, 800);
+  }
+
+  function updateJobUI(job) {
+    const progress = Math.min(100, Math.max(0, job.progress || 0));
+    if (el.progressFill) el.progressFill.style.width = `${progress}%`;
+    if (el.jobProgressPercent) el.jobProgressPercent.textContent = `${Math.round(progress)}%`;
+    if (el.jobStageTitle) el.jobStageTitle.textContent = job.message || "Đang xử lý…";
+
+    if (job.detections) {
+      if (el.metricSubtitle) el.metricSubtitle.textContent = job.detections.subtitle || 0;
+      if (el.metricWatermark) el.metricWatermark.textContent = job.detections.watermark || 0;
+      if (el.metricLogo) el.metricLogo.textContent = job.detections.logo || 0;
+      if (el.metricOther) el.metricOther.textContent = job.detections.other_text || job.detections.other || 0;
+    }
+
+    if (job.logs && Array.isArray(job.logs) && el.jobLogsArea) {
+      el.jobLogsArea.textContent = job.logs.join("\n");
+      el.jobLogsArea.scrollTop = el.jobLogsArea.scrollHeight;
+    }
+  }
+
+  // Real TTS Voice Preview Tab
+  function initTTS() {
+    if (el.ttsScript && el.charCount) {
+      const updateCount = function () {
+        const len = el.ttsScript.value.length;
+        el.charCount.textContent = `${len} / 300 ký tự`;
+      };
+      el.ttsScript.addEventListener("input", updateCount);
+      updateCount();
+    }
+
+    if (!el.playTtsBtn) return;
+
+    el.playTtsBtn.addEventListener("click", async function () {
+      const text = el.ttsScript ? el.ttsScript.value.trim() : "";
+      const voiceId = el.ttsVoiceSelect ? el.ttsVoiceSelect.value : "";
+
+      if (!text) {
+        if (el.ttsMessage) {
+          el.ttsMessage.textContent = "Vui lòng nhập văn bản muốn thử giọng.";
+          el.ttsMessage.className = "yup-msg is-error";
+        }
+        return;
+      }
+
+      el.playTtsBtn.setAttribute("disabled", "");
+      if (el.ttsMessage) {
+        el.ttsMessage.textContent = "Đang tổng hợp giọng nói từ provider AI...";
+        el.ttsMessage.className = "yup-msg";
+      }
+
+      try {
+        const response = await fetch("/api/dubbing/voice-preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voice_id: voiceId, text: text }),
+        });
+
+        if (!response.ok) {
+          let errDetail = `Mã lỗi ${response.status}`;
+          try {
+            const errJson = await response.json();
+            errDetail = errJson.error || errDetail;
+          } catch (_) {}
+          throw new Error(errDetail);
+        }
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+
+        if (el.ttsAudioPlayer) {
+          el.ttsAudioPlayer.src = audioUrl;
+          if (el.audioPlayerWrapper) el.audioPlayerWrapper.removeAttribute("hidden");
+          await el.ttsAudioPlayer.play();
+        }
+
+        if (el.ttsMessage) {
+          el.ttsMessage.textContent = "Đã tạo preview thành công!";
+          el.ttsMessage.className = "yup-msg form-message is-success";
+        }
+      } catch (err) {
+        if (el.ttsMessage) {
+          el.ttsMessage.textContent = `Lỗi thử giọng: ${err.message}`;
+          el.ttsMessage.className = "yup-msg form-message is-error";
+        }
+      } finally {
+        el.playTtsBtn.removeAttribute("disabled");
+      }
+    });
+  }
+
+  // Application Initialization
   async function init() {
-    renderTool(state.tool);
+    initTheme();
+    initTabs();
+    initUpload();
+    initPresets();
+    initCliParams();
+    initJobRunner();
+    initTTS();
+
+    if (el.refreshFiles) {
+      el.refreshFiles.addEventListener("click", loadFileList);
+    }
+    if (el.clearFilesBtn) {
+      el.clearFilesBtn.addEventListener("click", clearAllFiles);
+    }
+
+    // Health check
     try {
       await api("/api/health");
-      setRuntime(true, "API local đang hoạt động.");
+      setRuntime(true, "Local CLI Backend");
     } catch (_) {
-      setRuntime(false);
+      setRuntime(false, "Server Offline");
     }
-    await loadCapabilities();
+
+    // Load video files and update preview
+    await loadFileList();
+    updateCliCommandPreview();
   }
 
-  init().catch(function (error) { setMessage(error.message, true); });
-}());
+  init().catch(function (err) {
+    console.error("Lỗi khởi tạo Studio:", err);
+  });
+})();

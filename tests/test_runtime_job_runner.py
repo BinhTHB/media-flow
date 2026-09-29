@@ -6,8 +6,11 @@ from pathlib import Path
 import pytest
 
 import scripts.run_e2e as cli
+from src.application.request import ProcessingRequest
 from src.application.result import ProcessingResult
-from src.core.errors import ValidationError
+from src.core.errors import ConfigurationError, ValidationError
+from src.features.audio.models import AudioRequest
+from src.features.visual.pipeline import VisualRequest
 from src.interfaces.jobs.runner import JobError, JobOptions, JobRunner
 from src.interfaces.web.server import build_job_options
 
@@ -118,3 +121,67 @@ def test_cli_and_web_resolve_same_runner_options(tmp_path) -> None:
     assert (resolved.input_path, resolved.output_path, resolved.preset, resolved.profile) == (
         web.input_path, web.output_path, web.preset, web.profile,
     )
+
+
+def test_runner_prepares_generic_preset(tmp_path, monkeypatch) -> None:
+    options = _options(tmp_path)
+    options.preset = "translate-subtitle-generic"
+    monkeypatch.setattr(JobRunner, "_preflight", lambda self, value: "cpu")
+    runner = JobRunner()
+
+    normalized, request = runner.prepare(options)
+
+    # The default burn-in weights are swapped for the generic text model.
+    assert Path(normalized.yolo_weights) == Path(normalized.yolo_weights).resolve()
+    assert Path(normalized.yolo_weights).as_posix().endswith("models/yolo/text/best.pt")
+    # Visual semantics match the base preset (translate-subtitle).
+    assert request.visual.enabled is True
+    assert request.visual.subtitle_mode == "translate_replace"
+    assert request.audio.enabled is False
+
+
+def test_generic_preset_missing_weights_names_huggingface(tmp_path, monkeypatch) -> None:
+    options = _options(tmp_path)
+    options.preset = "translate-subtitle-generic"
+    options.yolo_weights = str(tmp_path / "missing.pt")
+    monkeypatch.setattr(JobRunner, "_require_dependency", lambda self, mod, pkg: object())
+    monkeypatch.setattr("src.interfaces.jobs.runner.shutil.which", lambda name: name)
+
+    with pytest.raises(ConfigurationError, match="huggingface.co/RoyRud1902/yolo11n-text"):
+        JobRunner().prepare(options)
+
+
+def test_compose_wraps_generic_detector(monkeypatch, tmp_path) -> None:
+    import src.interfaces.jobs.runner as runner_mod
+    from src.features.visual.text_classifier import TextClassifyingDetector
+
+    captured: dict = {}
+
+    class _StubDetector:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(runner_mod, "YoloDetectorAdapter", _StubDetector)
+    monkeypatch.setattr(runner_mod, "build_translation_service", lambda *args, **kwargs: object())
+
+    options = _options(tmp_path)
+    options.preset = "translate-subtitle-generic"
+    generic_weights = str(tmp_path / "text-best.pt")
+    options.yolo_weights = generic_weights
+    request = ProcessingRequest(
+        job_id="generic-compose",
+        input_video=options.input_path,
+        output_video=options.output_path,
+        audio=AudioRequest(enabled=False),
+        visual=VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="translate_replace"),
+        device="cpu",
+        overwrite=True,
+    )
+
+    use_case, _ = runner_mod.JobRunner._compose(options, request)
+
+    # The generic operating point: predictor-level conf, rescue disabled.
+    assert captured["conf"] == 0.20
+    assert captured["subtitle_rescue_conf"] is None
+    assert captured["weights_path"] == generic_weights
+    assert isinstance(use_case.visual_pipeline.detector, TextClassifyingDetector)

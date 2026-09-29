@@ -1,0 +1,156 @@
+"""Unit tests for the generic-text detection classifier.
+
+The generic YOLO model emits a single class "text"; the classifier must
+re-label detections into the canonical burn-in classes using per-track
+geometry and temporal properties so standard class routing keeps working.
+"""
+
+from typing import List
+
+from src.core.models.bbox import BBox
+from src.core.models.detection import Detection
+from src.features.visual.text_classifier import (
+    TextClassifyingDetector,
+    classify_generic_text_detections,
+)
+
+FW, FH = 1920, 1080
+FPS = 30.0
+
+
+def _det(frame_index: int, x1: float, y1: float, x2: float, y2: float, class_name: str = "text") -> Detection:
+    return Detection(
+        class_id=0,
+        class_name=class_name,
+        confidence=0.9,
+        bbox=BBox(x1=x1, y1=y1, x2=x2, y2=y2, frame_width=FW, frame_height=FH),
+        frame_index=frame_index,
+        timestamp_seconds=frame_index / FPS,
+    )
+
+
+def _run(detections: List[Detection]) -> List[str]:
+    return [d.class_name for d in classify_generic_text_detections(detections)]
+
+
+def _contiguous(frames: range, box) -> List[Detection]:
+    return [_det(i, *box) for i in frames]
+
+
+def test_bottom_caption_four_seconds_in_ten_second_video_is_subtitle():
+    # 10s video = 300 frames; a rock-stable 4s bottom caption spans 120 frames,
+    # above the static frame threshold. Geometry-first ordering must classify
+    # it as subtitle, never logo.
+    detections = _contiguous(range(0, 120), (660, 940, 1260, 1020))
+    assert set(_run(detections)) == {"subtitle"}
+
+
+def test_short_bottom_caption_is_subtitle():
+    detections = _contiguous(range(0, 30), (660, 940, 1260, 1020))
+    assert set(_run(detections)) == {"subtitle"}
+
+
+def test_static_small_corner_box_is_watermark():
+    # Top-right account handle: small, static, hugging the corner.
+    detections = _contiguous(range(0, 200), (1500, 30, 1880, 75))
+    assert set(_run(detections)) == {"watermark"}
+
+
+def test_bottom_right_corner_watermark_is_not_subtitle():
+    # Centered is mandatory for subtitle; a small bottom-right overlay must
+    # not be swallowed by the bottom-band signal.
+    detections = _contiguous(range(0, 200), (1400, 980, 1900, 1030))
+    assert set(_run(detections)) == {"watermark"}
+
+
+def test_real_world_top_corner_handle_is_watermark_not_subtitle():
+    # Real regression from the 30s dubbing video: the Douyin handle
+    # (bbox ~[1297, 25, 1877, 74], cx≈0.826, full-video span, conf 0.87) was
+    # classified subtitle because the wide center window (0.15-0.85) admitted
+    # it and it is line-like. The line-like path must demand strict centering.
+    detections = _contiguous(range(0, 300), (1297, 25, 1877, 74))
+    assert set(_run(detections)) == {"watermark"}
+
+
+def test_strictly_centered_top_caption_is_subtitle():
+    # A genuinely centered top-of-frame caption still qualifies via the
+    # line-like path even though it never enters the bottom band.
+    detections = _contiguous(range(0, 40), (760, 60, 1160, 110))
+    assert set(_run(detections)) == {"subtitle"}
+
+
+def test_static_large_center_box_is_logo():
+    detections = _contiguous(range(0, 200), (660, 380, 1260, 700))
+    assert set(_run(detections)) == {"logo"}
+
+
+def test_transient_offcenter_text_is_other_burn_in_text():
+    # Off-center transient text fails the mandatory centered signal, so it can
+    # never be promoted to subtitle. (A centered line-like caption in the
+    # middle of the frame IS subtitle-shaped by design: top-centered captions
+    # exist, and geometry alone cannot tell them apart — accepted v1 tradeoff.)
+    detections = _contiguous(range(0, 20), (20, 400, 500, 470))
+    assert set(_run(detections)) == {"other_burn_in_text"}
+
+
+def test_out_and_back_track_is_not_static():
+    # The box leaves its position mid-track and returns: endpoint IoU stays
+    # high but center jitter disqualifies the static classes.
+    detections = []
+    for i in range(0, 60):
+        detections.append(_det(i, 660, 940, 1260, 1020))
+    for i in range(60, 120):
+        detections.append(_det(i, 100, 200, 700, 280))
+    for i in range(120, 180):
+        detections.append(_det(i, 660, 940, 1260, 1020))
+    names = set(_run(detections))
+    assert "logo" not in names
+    assert "watermark" not in names
+
+
+def test_mixed_tracks_get_independent_labels():
+    detections = [
+        *_contiguous(range(0, 200), (1500, 30, 1880, 75)),   # corner watermark
+        *_contiguous(range(0, 30), (660, 940, 1260, 1020)),  # bottom caption
+        *_contiguous(range(0, 15), (20, 400, 500, 470)),     # transient off-center text
+    ]
+    counts: dict[str, int] = {}
+    for name in _run(detections):
+        counts[name] = counts.get(name, 0) + 1
+    assert counts == {"watermark": 200, "subtitle": 30, "other_burn_in_text": 15}
+
+
+def test_wrapper_relabels_both_class_id_and_class_name():
+    class _GenericStub:
+        def detect_video(self, video_path: str, stride: int = 1) -> List[Detection]:
+            return _contiguous(range(0, 40), (660, 940, 1260, 1020))
+
+    relabeled = TextClassifyingDetector(_GenericStub()).detect_video("unused.mp4")
+
+    assert relabeled
+    assert {d.class_name for d in relabeled} == {"subtitle"}
+    assert {d.class_id for d in relabeled} == {0}
+    # Geometry, confidence, and frame metadata are preserved.
+    first = relabeled[0]
+    assert (first.bbox.x1, first.bbox.y1, first.bbox.x2, first.bbox.y2) == (660, 940, 1260, 1020)
+    assert first.confidence == 0.9
+    assert first.frame_index == 0
+
+
+def test_non_generic_detections_pass_through_untouched():
+    detections = [_det(0, 660, 940, 1260, 1020, class_name="subtitle")]
+    result = classify_generic_text_detections(detections)
+    assert result is not detections
+    assert len(result) == 1
+    assert result[0].class_name == "subtitle"
+    assert result[0].class_id == 0
+
+
+def test_missing_timestamps_still_classify():
+    # Frame-based thresholds must not depend on trustworthy timestamps.
+    detections = []
+    for i in range(0, 30):
+        det = _det(i, 660, 940, 1260, 1020)
+        det.timestamp_seconds = 0.0
+        detections.append(det)
+    assert set(_run(detections)) == {"subtitle"}

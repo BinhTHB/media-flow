@@ -27,8 +27,66 @@ def extract_audio(video_path: str, output_audio_path: str) -> str:
         "-ac", "1",
         str(out_p),
     ]
-    subprocess.run(cmd, capture_output=True, text=True, check=True)
+    subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     return str(out_p)
+
+
+def is_web_compatible_video(video_path: str | Path) -> bool:
+    """Check if the video stream uses a codec and pixel format supported by HTML5 video."""
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,pix_fmt",
+            "-of", "json",
+            str(video_path),
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+        data = json.loads(res.stdout)
+        streams = data.get("streams", [])
+        if not streams:
+            return False
+        codec = streams[0].get("codec_name", "").lower()
+        pix_fmt = streams[0].get("pix_fmt", "").lower()
+        return codec in {"h264", "avc1"} and pix_fmt in {"yuv420p", "yuvj420p"}
+    except Exception:
+        return False
+
+
+def ensure_web_compatible_video(video_path: str | Path) -> str:
+    """Ensure the video file is web-playable in HTML5 browsers (H.264 / yuv420p).
+
+    If the video is already web-safe or transcoding fails, leaves it untouched.
+    """
+    path = Path(video_path).resolve()
+    if not path.is_file():
+        return str(path)
+    if is_web_compatible_video(path):
+        return str(path)
+
+    tmp_out = path.with_name(f"{path.stem}_webcompat.mp4")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i", str(path),
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "20",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        str(tmp_out),
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
+        if tmp_out.is_file() and tmp_out.stat().st_size > 0:
+            tmp_out.replace(path)
+    except Exception:
+        if tmp_out.exists():
+            tmp_out.unlink(missing_ok=True)
+    return str(path)
 
 
 def mux_audio_video(video_no_audio_path: str, audio_source_path: str, output_path: str) -> str:
@@ -36,10 +94,7 @@ def mux_audio_video(video_no_audio_path: str, audio_source_path: str, output_pat
     out_p.parent.mkdir(parents=True, exist_ok=True)
     audio_path = Path(audio_source_path)
 
-    # Dubbed timelines are canonical WAV/PCM. Some FFmpeg builds allow PCM inside
-    # MP4, but browser/player support is inconsistent, so encode WAV/PCM to AAC
-    # proactively instead of waiting for stream-copy to fail.
-    force_aac = audio_path.suffix.lower() in {".wav", ".pcm"}
+    force_aac = audio_path.suffix.lower() in {".wav", ".pcm", ".flac", ".ogg"}
     if force_aac:
         cmd = [
             "ffmpeg",
@@ -68,15 +123,17 @@ def mux_audio_video(video_no_audio_path: str, audio_source_path: str, output_pat
         ]
 
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     except subprocess.CalledProcessError:
-        # Keep the video stream untouched and encode audio to universally supported AAC.
         cmd_fallback = [
             "ffmpeg",
             "-y",
             "-i", str(video_no_audio_path),
             "-i", str(audio_source_path),
-            "-c:v", "copy",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "22",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
             "-map", "0:v:0",
@@ -84,24 +141,7 @@ def mux_audio_video(video_no_audio_path: str, audio_source_path: str, output_pat
             "-shortest",
             str(out_p),
         ]
-        try:
-            subprocess.run(cmd_fallback, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError:
-            cmd_reencode = [
-                "ffmpeg",
-                "-y",
-                "-i", str(video_no_audio_path),
-                "-i", str(audio_source_path),
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-map", "0:v:0",
-                "-map", "1:a:0?",
-                "-shortest",
-                str(out_p),
-            ]
-            subprocess.run(cmd_reencode, capture_output=True, text=True, check=True)
+        subprocess.run(cmd_fallback, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
 
     return str(out_p)
 
@@ -115,7 +155,7 @@ def probe_video(video_path: str) -> Dict[str, Any]:
         "-of", "json",
         str(video_path),
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
     data = json.loads(res.stdout)
 
     v_stream = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), {})

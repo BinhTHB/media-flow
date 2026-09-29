@@ -147,6 +147,10 @@ class FallbackTranslationAdapter(TranslationPort):
             leaked_token = any(
                 token in current_lower
                 and token not in source_protected_tokens[idx]
+                # A token that also occurs in this line's own source is a shared
+                # entity (e.g. an account name repeated across captions), not a
+                # neighbor leak.
+                and token not in str(source[idx]).lower()
                 and idx not in owners
                 for token, owners in protected_token_owners.items()
             )

@@ -3,28 +3,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="MediaFlow local video dubbing studio MVP">
+  <meta name="description" content="MediaFlow local video dubbing studio">
   <title>MediaFlow · Dubbing Studio</title>
   <link rel="stylesheet" href="/dubbing.css">
+  <script>
+    (function () {
+      const saved = localStorage.getItem("mediaflow_theme");
+      const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const theme = saved || (prefersDark ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="MediaFlow Studio">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 40 40"><path d="M8 9h9l5 6h10v16H8z"/><path d="m18 19 8 5-8 5z"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+          <path d="M2 17l10 5 10-5"></path>
+          <path d="M2 12l10 5 10-5"></path>
+        </svg>
       </span>
-      <span><strong>MediaFlow</strong><small>DUBBING MVP</small></span>
+      <span><strong>MediaFlow</strong><small>DUBBING STUDIO</small></span>
     </a>
     <div class="project-heading">
       <span>Local project</span>
       <strong id="projectName">Chưa chọn video</strong>
     </div>
     <div class="top-actions">
-      <span class="runtime" id="runtimeState"><i></i>Đang kết nối…</span>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Đổi giao diện Sáng / Tối" title="Chuyển chế độ Sáng / Tối">
+        <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+        <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+      </button>
       <a class="ghost-button" href="/studio.html">AI Studio</a>
-      <button class="publish-button" id="exportButton" type="button" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
-        Xuất bản Dubbing
+      <button class="publish-button" id="exportButton" type="button" aria-label="Bắt đầu xử lý video theo backend CLI pipeline" disabled>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <span>⚡ Bắt đầu xử lý (Run Pipeline)</span>
       </button>
     </div>
   </header>
@@ -32,71 +47,150 @@
   <main class="studio-grid">
     <aside class="left-column">
       <section class="panel upload-panel">
-        <div class="section-title"><span>TẢI LÊN VIDEO</span><button class="icon-button" id="refreshFiles" title="Làm mới danh sách" type="button">↻</button></div>
-        <label class="drop-zone" for="fileInput">
-          <input id="fileInput" type="file" accept="video/*" hidden>
+        <div class="section-title">
+          <span>TẢI LÊN VIDEO</span>
+          <button class="icon-button" id="refreshFiles" title="Làm mới danh sách" aria-label="Làm mới danh sách video" type="button">↻</button>
+        </div>
+        <label class="drop-zone" id="dropZone" for="fileInput" tabindex="0" role="button" aria-label="Kéo thả hoặc bấm để chọn video tải lên">
+          <input id="fileInput" type="file" accept="video/*" aria-label="Chọn file video tải lên" hidden>
           <span class="upload-icon" aria-hidden="true">⇧</span>
           <strong>Kéo và thả video vào đây</strong>
-          <small>hoặc bấm để chọn file trong dự án</small>
-          <span class="upload-actions"><b>Từ máy tính</b><b>Từ URL</b></span>
+          <small>hoặc bấm để chọn file (MP4, MOV, MKV, AVI, WEBM · tối đa 4 GB)</small>
         </label>
+        <div class="source-list-header">
+          <span>HOẶC CHỌN TỪ PROJECT:</span>
+          <button class="ghost-button-sm" id="clearFilesBtn" type="button" aria-label="Xóa tất cả file tải lên và kết quả cũ" title="Xóa tất cả file tải lên và kết quả cũ">Xóa lịch sử</button>
+        </div>
         <div class="source-list" id="sourceList" aria-live="polite">
           <div class="empty-state">Đang tải danh sách video…</div>
         </div>
       </section>
 
-      <section class="panel speakers-panel">
-        <div class="section-title">
-          <span>NHÂN VẬT <em id="speakerCount">0</em></span>
-          <button class="icon-button" id="addSpeaker" title="Thêm nhân vật" type="button">+</button>
-        </div>
-        <p class="helper" id="speakerHint">Chạy phân tích để nhận diện và giữ voice theo nhân vật.</p>
-        <div class="speaker-list" id="speakerList">
-          <div class="empty-state">Chưa có dữ liệu speaker.</div>
-        </div>
-      </section>
-
       <section class="panel language-panel">
-        <label class="select-field"><span>NGÔN NGỮ GỐC</span>
-          <select id="sourceLanguage">
-            <option value="auto">Tự nhận diện</option>
-            <option value="zh">中文 · Tiếng Trung</option>
-            <option value="en">English · Tiếng Anh</option>
-            <option value="ja">日本語 · Tiếng Nhật</option>
-            <option value="ko">한국어 · Tiếng Hàn</option>
-            <option value="vi">Tiếng Việt</option>
-          </select>
-        </label>
-        <label class="select-field"><span>NGÔN NGỮ DỊCH</span>
-          <select id="targetLanguage">
-            <option value="vi">Tiếng Việt</option>
-            <option value="en">English</option>
-            <option value="zh">中文</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
-          </select>
-        </label>
-        <label class="check-row"><input id="preserveAmbience" type="checkbox" disabled><span class="checkmark"></span><span>Giữ nhạc nền/ambience · cần source separation (chưa bật)</span></label>
-        <label class="select-field"><span>KHỚP THỜI LƯỢNG</span>
-          <select id="fitPolicy">
-            <option value="fit">Tự co giãn voice vào timestamp</option>
-          </select>
-        </label>
-        <button class="primary-button" id="planButton" type="button" disabled>
-          <span>Phân tích &amp; tạo kế hoạch</span><span>→</span>
-        </button>
+        <div class="preset-selector-container">
+          <span class="preset-label">PRESET XỬ LÝ (BACKEND CLI PIPELINE):</span>
+          <div class="preset-options" id="presetGrid" role="group" aria-label="Preset xử lý video theo backend CLI">
+            <button class="preset-btn is-active" type="button" data-preset="translate-video" title="Dịch toàn diện: Dịch phụ đề đè đúng vị trí + Lồng tiếng AI tiếng Việt">
+              <span class="preset-check">✓</span>
+              <div class="preset-btn-content">
+                <strong>Dịch toàn diện (translate-video)</strong>
+                <small>Dịch phụ đề + Lồng tiếng</small>
+              </div>
+            </button>
+            <button class="preset-btn" type="button" data-preset="translate-subtitle" title="Dịch phụ đề: Nhận diện OCR, dịch và đè phụ đề vào video">
+              <span class="preset-check">✓</span>
+              <div class="preset-btn-content">
+                <strong>Dịch phụ đề (translate-subtitle)</strong>
+                <small>OCR &amp; đè sub trên hình</small>
+              </div>
+            </button>
+            <button class="preset-btn" type="button" data-preset="dub-audio" title="Lồng tiếng: Nhận diện giọng nói ASR, dịch và tạo giọng đọc AI tiếng Việt">
+              <span class="preset-check">✓</span>
+              <div class="preset-btn-content">
+                <strong>Lồng tiếng (dub-audio)</strong>
+                <small>Thuyết minh AI tiếng Việt</small>
+              </div>
+            </button>
+            <button class="preset-btn" type="button" data-preset="blur-all" title="Làm mờ toàn bộ phụ đề, watermark, logo, text rác">
+              <span class="preset-check">✓</span>
+              <div class="preset-btn-content">
+                <strong>Làm mờ toàn bộ (blur-all)</strong>
+                <small>Xóa sub, watermark &amp; logo</small>
+              </div>
+            </button>
+            <button class="preset-btn" type="button" data-preset="preserve-all" title="Giữ nguyên media gốc, không can thiệp">
+              <span class="preset-check">✓</span>
+              <div class="preset-btn-content">
+                <strong>Giữ nguyên (preserve-all)</strong>
+                <small>Không can thiệp media</small>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tùy chọn Bổ trợ chuẩn CLI -->
+        <div class="subtitle-options-panel" id="subtitleOptionsPanel">
+          <div class="sub-option-group" id="blurExtraOptionGroup">
+            <span class="sub-option-label">LÀM MỜ BỔ SUNG:</span>
+            <div class="sub-toggle-row">
+              <label class="toggle-checkbox" title="Làm mờ cả watermark và logo kênh trong lúc dịch video / phụ đề">
+                <input type="checkbox" id="checkBlurExtra" checked>
+                <span class="toggle-switch"></span>
+                <span class="toggle-text">Làm mờ Watermark &amp; Logo</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="sub-option-group" id="layoutOptionGroup">
+            <span class="sub-option-label">VỊ TRÍ PHỤ ĐỀ DỊCH:</span>
+            <div class="sub-option-buttons" id="layoutButtonGroup" role="group" aria-label="Lựa chọn vị trí phụ đề dịch">
+              <button class="sub-opt-btn is-active" type="button" data-layout="temporal" title="Nhận diện bounding box của sub gốc và chèn sub dịch đè đúng vị trí đó (In-place chuẩn CLI)">
+                <span class="opt-indicator">●</span> <span class="opt-text">Đúng box sub gốc</span>
+              </button>
+              <button class="sub-opt-btn" type="button" data-layout="bottom" title="Đặt phụ đề dịch đơn giản canh giữa ở đáy video chuẩn cinema">
+                <span class="opt-indicator">○</span> <span class="opt-text">Đáy video</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="sub-option-group" id="hideSourceSubGroup">
+            <span class="sub-option-label">XỬ LÝ PHỤ ĐỀ GỐC:</span>
+            <div class="sub-toggle-row">
+              <label class="toggle-checkbox" title="Xóa/làm mờ phụ đề gốc để chỉ hiển thị phụ đề dịch (không hiển thị sub gốc)">
+                <input type="checkbox" id="checkHideSourceSub" checked>
+                <span class="toggle-switch"></span>
+                <span class="toggle-text">Ẩn/Xóa sub gốc (Chỉ hiện sub dịch)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="language-row">
+          <label class="select-field"><span>NGÔN NGỮ GỐC</span>
+            <select id="sourceLanguage" aria-label="Ngôn ngữ gốc của video">
+              <option value="auto">Tự nhận diện</option>
+              <option value="zh">中文 · Tiếng Trung</option>
+              <option value="en">English · Tiếng Anh</option>
+              <option value="ja">日本語 · Tiếng Nhật</option>
+              <option value="ko">한국어 · Tiếng Hàn</option>
+              <option value="vi">Tiếng Việt</option>
+            </select>
+          </label>
+          <label class="select-field"><span>NGÔN NGỮ DỊCH</span>
+            <select id="targetLanguage" aria-label="Ngôn ngữ dịch mong muốn">
+              <option value="vi" selected>Tiếng Việt</option>
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+              <option value="ja">日本語</option>
+              <option value="ko">한국어</option>
+            </select>
+          </label>
+          <label class="select-field"><span>PHÂN VAI THOẠI</span>
+            <select id="speakerMode" aria-label="Chế độ phân vai nhân vật">
+              <option value="single" selected>1 Giọng đọc chung (Single speaker)</option>
+              <option value="script">Theo phân vai kịch bản (Multi-speaker)</option>
+            </select>
+          </label>
+        </div>
+        <select id="fitPolicy" hidden>
+          <option value="fit" selected>Tự co giãn voice vào timestamp</option>
+        </select>
+        <div class="render-action-wrapper">
+          <button class="primary-button render-button" id="sideExportButton" type="button" aria-label="Bắt đầu xử lý video theo pipeline backend CLI" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span id="sideExportText">⚡ Bắt đầu xử lý (Run Pipeline)</span>
+          </button>
+          <button class="secondary-button plan-optional-btn" id="planButton" type="button" aria-label="Xem trước kịch bản thoại trước khi render" disabled>
+            <span>🔍 Xem trước kịch bản thoại (Tùy chọn)</span>
+          </button>
+          <span class="render-hint">Chạy trực tiếp 100% pipeline backend CLI: tự động tách tiếng, dịch thoại, dịch sub &amp; làm mờ</span>
+        </div>
         <p class="form-message" id="formMessage" role="status" aria-live="polite"></p>
       </section>
     </aside>
 
     <section class="center-column">
-      <div class="canvas-header">
-        <div><span class="overline">AI DUBBING STUDIO</span><h1>Video workspace</h1></div>
-        <div class="capability-badge" id="capabilityBadge">Kiểm tra provider…</div>
-      </div>
-
       <div class="video-shell" id="videoShell">
-        <video id="videoPlayer" controls playsinline></video>
+        <video id="videoPlayer" controls playsinline preload="auto"></video>
         <div class="video-empty" id="videoEmpty">
           <span class="empty-play" aria-hidden="true">▶</span>
           <strong>Chọn video để bắt đầu</strong>
@@ -111,109 +205,103 @@
         <div class="timeline-toolbar">
           <div class="timecode"><strong id="currentTime">00:00</strong><span>/ <span id="totalTime">00:00</span></span></div>
           <div class="transport">
-            <button type="button" data-seek="-5" title="Lùi 5 giây">◀◀</button>
-            <button type="button" id="playToggle" title="Phát / dừng">▶</button>
-            <button type="button" data-seek="5" title="Tiến 5 giây">▶▶</button>
+            <button type="button" data-seek="-5" title="Lùi 5 giây" aria-label="Tua lùi 5 giây">◀◀</button>
+            <button type="button" id="playToggle" title="Phát / dừng" aria-label="Phát hoặc dừng video">▶</button>
+            <button type="button" data-seek="5" title="Tiến 5 giây" aria-label="Tua tiến 5 giây">▶▶</button>
           </div>
-          <span class="timeline-note">Timeline preview · <span id="timelineState">chưa phân tích</span></span>
+
+          <!-- Segment Interactive Toolbar -->
+          <div class="segment-toolbar" id="segmentToolbar" hidden>
+            <span class="seg-badge" id="segBadge">S01</span>
+            <span class="seg-time-range" id="segTimeRange">00:00 → 00:00</span>
+            <div class="seg-trim-actions">
+              <button type="button" class="btn-trim" id="btnTrimStartMinus" title="Lùi mốc bắt đầu (-0.2s)" aria-label="Lùi mốc bắt đầu 0.2 giây">[ -0.2s</button>
+              <button type="button" class="btn-trim" id="btnTrimStartPlus" title="Tiến mốc bắt đầu (+0.2s)" aria-label="Tiến mốc bắt đầu 0.2 giây">[ +0.2s</button>
+              <button type="button" class="btn-trim is-primary" id="btnPlaySegOnly" title="Phát riêng phân đoạn này" aria-label="Phát riêng phân đoạn hiện tại">▶ Đoạn này</button>
+              <button type="button" class="btn-trim" id="btnTrimEndMinus" title="Lùi mốc kết thúc (-0.2s)" aria-label="Lùi mốc kết thúc 0.2 giây">-0.2s ]</button>
+              <button type="button" class="btn-trim" id="btnTrimEndPlus" title="Tiến mốc kết thúc (+0.2s)" aria-label="Tiến mốc kết thúc 0.2 giây">+0.2s ]</button>
+            </div>
+          </div>
+
+          <span class="timeline-note">Timeline · <span id="timelineState">chưa phân tích</span></span>
         </div>
         <div class="timeline-ruler"><span>00:00</span><span>00:10</span><span>00:20</span><span>00:30</span><span>00:40</span></div>
         <div class="tracks" id="tracks">
-          <div class="track-row"><span class="track-label">▣ Video</span><div class="track-lane thumbnails"><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="track-row"><span class="track-label">▣ Video</span><div class="track-lane video-clip-lane"><div class="video-clip-placeholder"><i>Chưa chọn video</i></div></div></div>
           <div class="track-row"><span class="track-label">▤ Phụ đề gốc</span><div class="track-lane subtitle-track"><i>Chưa có transcript</i></div></div>
           <div class="track-row"><span class="track-label">◈ Bản dịch</span><div class="track-lane translation-track"><i>Chưa có bản dịch</i></div></div>
-          <div class="track-row speaker-track-row"><span class="track-label speaker-purple">◉ Speaker 01</span><div class="track-lane waveform purple"><i></i><i></i><i></i><i></i><i></i></div></div>
-          <div class="track-row speaker-track-row"><span class="track-label speaker-blue">◉ Speaker 02</span><div class="track-lane waveform blue"><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="track-row speaker-track-row"><span class="track-label speaker-purple">◉ Speaker 01</span><div class="track-lane waveform purple"><i>Chưa có câu thoại</i></div></div>
         </div>
         <div class="playhead" id="playhead" aria-hidden="true"><i></i></div>
       </section>
-
-      <div class="pipeline-note" id="pipelineNote">
-        <span class="note-icon">i</span>
-        <span>Đây là bản xem thử UX. Audio thật chỉ chạy khi ASR, TTS và AudioComposer được cấu hình.</span>
-      </div>
     </section>
 
     <aside class="right-column">
       <section class="panel script-panel">
         <div class="tab-bar" role="tablist">
-          <button class="tab is-active" type="button" data-tab="script" role="tab">Kịch bản</button>
+          <button class="tab is-active" type="button" data-tab="script" role="tab">Kịch bản thoại</button>
           <button class="tab" type="button" data-tab="characters" role="tab">Nhân vật</button>
+          <button class="add-seg-btn" id="btnAddSegment" type="button" title="Thêm câu thoại tại vị trí con trỏ video" aria-label="Thêm câu thoại mới">+ Thêm câu</button>
         </div>
         <div id="scriptTab" class="tab-content">
-          <div class="script-card source-card">
-            <div class="card-heading"><span>● <b>GỐC</b></span><button class="play-line" data-time="0" type="button">▶</button></div>
-            <strong>Chưa có transcript</strong>
-            <small>Chạy phân tích để nạp lời thoại theo timestamp.</small>
-          </div>
-          <div class="swap-icon" aria-hidden="true">⇅</div>
-          <div class="script-card target-card">
-            <div class="card-heading"><span>● <b>DỊCH</b></span><button class="play-line" data-time="0" type="button">▶</button></div>
-            <strong>Bản dịch sẽ hiển thị tại đây</strong>
-            <small>Giữ từng đoạn riêng để kiểm tra trước khi lồng tiếng.</small>
+          <div class="script-list" id="scriptList">
+            <div class="empty-state">Chưa có transcript. Hãy chọn video và bấm "Phân tích &amp; tạo kế hoạch" để tải kịch bản thoại thật.</div>
           </div>
         </div>
         <div id="charactersTab" class="tab-content" hidden>
-          <div class="character-empty">Mỗi speaker sẽ có voice, volume và trạng thái đồng bộ riêng.</div>
+          <div class="characters-list" id="charactersList">
+            <div class="empty-state">Chưa có nhân vật. Hệ thống sẽ tự động nhận diện người nói theo kịch bản thoại.</div>
+          </div>
         </div>
       </section>
 
       <section class="panel voice-panel">
-        <div class="section-title"><span>GÁN GIỌNG CHO NHÂN VẬT</span><span class="mini-status">MVP</span></div>
-        <label class="select-field"><span>SPEAKER ĐANG CHỌN</span>
-          <select id="voiceSpeaker"><option value="S01">Speaker 01</option></select>
-        </label>
-        <label class="select-field"><span>VOICE</span>
-          <select id="voiceSelect">
-            <optgroup label="ElevenLabs v3 · Free API · language=vi">
-              <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL" selected>ElevenLabs · Sarah · Nữ · shortlist #1</option>
-              <option value="elevenlabs:nPczCjzI2devNBz1zQrb">ElevenLabs · Brian · Nam · shortlist #2</option>
-              <option value="elevenlabs:pNInz6obpgDQGcFmaJgB">ElevenLabs · Adam · Nam</option>
-              <option value="elevenlabs:env">ElevenLabs · Voice ID trong .env</option>
-            </optgroup>
-            <optgroup label="Fish S2.1 Pro Free · experimental / quota thấp">
-              <option value="fish:28902432d87243f08638ba59a1569781">Fish · Nam trẻ tự nhiên</option>
-              <option value="fish:99dc73af301a419b8043e4fc401bd305">Fish · Nam kể chuyện</option>
-              <option value="fish:c5660c5f4f7b4b74be5f248a75d7fee6">Fish · Nữ GenZ · voice cũ</option>
-              <option value="fish:e246b97671944988a54d53c43b74c64a">Fish · Nam trầm, bình tĩnh</option>
-              <option value="fish:6ff0bb19af754d7684f9f4a74392e466">Fish · Nam news-anchor</option>
-            </optgroup>
-            <optgroup label="Gemini 3.1 Flash Live · experimental (không verbatim-safe)">
-              <option value="gemini-live:">Gemini Live · default voice</option>
-              <option value="gemini-live:Sulafat">Gemini Live · Sulafat · Ấm</option>
-              <option value="gemini-live:Achird">Gemini Live · Achird · Thân thiện</option>
-              <option value="gemini-live:Leda">Gemini Live · Leda · Trẻ trung</option>
-            </optgroup>
-            <optgroup label="Edge · emergency fallback rõ chữ">
-              <option value="vi-VN-HoaiMyNeural">Hoài My · Nữ · Việt Nam</option>
-              <option value="vi-VN-NamMinhNeural">Nam Minh · Nam · Việt Nam</option>
-            </optgroup>
-          </select>
-        </label>
-        <button class="secondary-button" id="previewVoice" type="button">▶ Nghe thử giọng</button>
-        <label class="switch-row"><span>Đồng bộ khẩu hình</span><input id="lipSync" type="checkbox" checked><i></i></label>
+        <div class="section-title"><span>GÁN GIỌNG AI</span><span class="mini-status" id="speakerCount">Auto</span></div>
+        <div class="voice-row">
+          <label class="select-field"><span>NHÂN VẬT</span>
+            <select id="voiceSpeaker"><option value="S01">Speaker 01</option></select>
+          </label>
+          <label class="select-field"><span>GIỌNG ĐỌC AI</span>
+            <select id="voiceSelect">
+              <optgroup label="ElevenLabs v3 · Tiếng Việt tự nhiên">
+                <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL" selected>ElevenLabs · Sarah (Nữ)</option>
+                <option value="elevenlabs:nPczCjzI2devNBz1zQrb">ElevenLabs · Brian (Nam)</option>
+                <option value="elevenlabs:pNInz6obpgDQGcFmaJgB">ElevenLabs · Adam (Nam)</option>
+                <option value="elevenlabs:env">ElevenLabs · .env config</option>
+              </optgroup>
+              <optgroup label="Edge-TTS · Miễn phí, rõ chữ">
+                <option value="vi-VN-HoaiMyNeural">Hoài My · Nữ (Edge)</option>
+                <option value="vi-VN-NamMinhNeural">Nam Minh · Nam (Edge)</option>
+              </optgroup>
+              <optgroup label="Fish Audio S2.1 Pro">
+                <option value="fish:28902432d87243f08638ba59a1569781">Fish · Nam trẻ tự nhiên</option>
+                <option value="fish:99dc73af301a419b8043e4fc401bd305">Fish · Nam kể chuyện</option>
+                <option value="fish:c5660c5f4f7b4b74be5f248a75d7fee6">Fish · Nữ GenZ</option>
+              </optgroup>
+              <optgroup label="Gemini 3.1 Flash Live">
+                <option value="gemini-live:Sulafat">Sulafat · Ấm (Gemini)</option>
+                <option value="gemini-live:Achird">Achird · Thân thiện (Gemini)</option>
+                <option value="gemini-live:Leda">Leda · Trẻ trung (Gemini)</option>
+              </optgroup>
+            </select>
+          </label>
+        </div>
+        <button class="secondary-button" id="previewVoice" type="button" aria-label="Nghe thử giọng đọc AI đã chọn">▶ Nghe thử giọng</button>
       </section>
 
       <section class="panel stages-panel">
-        <div class="section-title"><span>PIPELINE</span><span class="mini-status" id="planStatus">IDLE</span></div>
+        <div class="section-title"><span>PIPELINE TIẾN ĐỘ</span><span class="mini-status" id="planStatus">IDLE</span></div>
         <ol class="stage-list" id="stageList">
-          <li class="is-ready"><i>1</i><span>Nạp và kiểm tra media</span><b>READY</b></li>
-          <li><i>2</i><span>Nhận diện lời thoại</span><b>WAIT</b></li>
-          <li><i>3</i><span>Dịch theo từng đoạn</span><b>WAIT</b></li>
-          <li><i>4</i><span>Tạo voice</span><b>WAIT</b></li>
+          <li class="is-ready"><i>1</i><span>Nạp media</span><b>READY</b></li>
+          <li><i>2</i><span>Nhận diện thoại</span><b>WAIT</b></li>
+          <li><i>3</i><span>Dịch thuật</span><b>WAIT</b></li>
+          <li><i>4</i><span>Tạo voice AI</span><b>WAIT</b></li>
           <li><i>5</i><span>Ghép timeline</span><b>WAIT</b></li>
-          <li><i>6</i><span>Mux và kiểm tra</span><b>WAIT</b></li>
+          <li><i>6</i><span>Mux video</span><b>WAIT</b></li>
         </ol>
       </section>
     </aside>
   </main>
-
-  <footer class="feature-strip">
-    <div><b>◎</b><span><strong>Multi-language</strong><small>ASR + dịch theo segment</small></span></div>
-    <div><b>♙</b><span><strong>Speaker mapping</strong><small>Giữ voice xuyên suốt</small></span></div>
-    <div><b>∿</b><span><strong>Timeline fit</strong><small>Khớp lời thoại vào slot</small></span></div>
-    <div><b>☁</b><span><strong>Local-first</strong><small>Không upload ra ngoài</small></span></div>
-  </footer>
 
   <script src="/dubbing.js" defer></script>
 </body>

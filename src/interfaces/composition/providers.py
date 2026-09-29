@@ -24,17 +24,20 @@ def build_translation_service(purpose: str, provider_choice: str) -> Translation
     from src.infrastructure.translation.openrouter_translation import OpenRouterTranslationAdapter
     from src.infrastructure.translation.router import FallbackTranslationAdapter
 
+    if provider_choice in {"mock", "auto"}:
+        provider_choice = "auto"
+
     providers = []
     if purpose == "subtitle" and provider_choice == "auto":
         if os.getenv("GEMINI_API_KEY"):
-            providers.append(("gemini", GeminiTranslationAdapter(model="gemini-3.5-flash", purpose=purpose)))
+            providers.append(("gemini", GeminiTranslationAdapter(model="gemini-3.5-flash-lite", purpose=purpose)))
         if has_openrouter_keys():
             providers.append(("openrouter", OpenRouterTranslationAdapter(purpose=purpose)))
     else:
         if provider_choice in {"auto", "openrouter"} and has_openrouter_keys():
             providers.append(("openrouter", OpenRouterTranslationAdapter(purpose=purpose)))
         if provider_choice in {"auto", "gemini"} and os.getenv("GEMINI_API_KEY"):
-            providers.append(("gemini", GeminiTranslationAdapter(model="gemini-3.5-flash", purpose=purpose)))
+            providers.append(("gemini", GeminiTranslationAdapter(model="gemini-3.5-flash-lite", purpose=purpose)))
     if provider_choice == "openrouter" and not has_openrouter_keys():
         raise RuntimeError("OPENROUTER_API_KEY(S) is required for translation provider openrouter.")
     if provider_choice == "gemini" and not os.getenv("GEMINI_API_KEY"):
@@ -48,6 +51,9 @@ def build_asr_provider(provider_choice: str):
     from src.infrastructure.speech.gemini_audio import GeminiAudioASRAdapter
     from src.infrastructure.speech.groq_whisper import GroqWhisperASRAdapter
     from src.infrastructure.speech.router import FallbackASRAdapter
+
+    if provider_choice == "mock":
+        provider_choice = "auto"
 
     if provider_choice == "groq":
         return GroqWhisperASRAdapter(model="whisper-large-v3")
@@ -101,6 +107,9 @@ def build_tts_provider(provider_choice: str):
     from src.infrastructure.tts.gemini_flash_live import GeminiFlashLiveTTSAdapter
     from src.infrastructure.tts.openrouter_tts import OpenRouterTTSAdapter
     from src.infrastructure.tts.router import FallbackTTSAdapter
+
+    if provider_choice == "mock":
+        provider_choice = "auto"
 
     if provider_choice == "elevenlabs":
         if not has_elevenlabs_keys():

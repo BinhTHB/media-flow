@@ -11,13 +11,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
-#: Canonical class-id -> class-name mapping for the fine-tuned burn-in model.
-EXPECTED_CLASS_NAMES: Dict[int, str] = {
-    0: "subtitle",
-    1: "watermark",
-    2: "logo",
-    3: "other_burn_in_text",
-}
+from src.core.models.detection import CANONICAL_CLASS_NAMES
+
+#: Canonical class-id -> class-name mapping, aliased from the core model so
+#: there is exactly one source of truth for burn-in class semantics.
+EXPECTED_CLASS_NAMES: Dict[int, str] = dict(CANONICAL_CLASS_NAMES)
 
 
 class ClassMappingError(ValueError):

@@ -21,6 +21,7 @@ class SpeechSegment:
     speaker_id: Optional[str] = None
     translated_text: str = ""
     spoken_text: str = ""
+    bbox: Optional[Dict[str, Any]] = None
 
     def __post_init__(self):
         self.start_time = float(self.start_time)
@@ -59,7 +60,7 @@ class SpeechSegment:
         )
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        data = {
             "segment_id": self.segment_id,
             "start_time": round(self.start_time, 4),
             "end_time": round(self.end_time, 4),
@@ -69,16 +70,27 @@ class SpeechSegment:
             "translated_text": self.translated_text,
             "spoken_text": self.spoken_text,
         }
+        if self.bbox is not None:
+            data["bbox"] = self.bbox
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SpeechSegment":
+        seg_id = str(data.get("segment_id") or data.get("id") or "seg_unknown")
+        start = max(0.0, float(data.get("start_time", data.get("start", 0.0))))
+        raw_end = float(data.get("end_time", data.get("end", start + 0.5)))
+        end = max(start + 0.1, raw_end)
+        source = str(data.get("source_text", ""))
+        trans = str(data.get("translated_text") or data.get("target_text") or "")
+        spoken = str(data.get("spoken_text") or trans or source)
         return cls(
-            segment_id=str(data["segment_id"]),
-            start_time=float(data["start_time"]),
-            end_time=float(data["end_time"]),
-            source_text=str(data.get("source_text", "")),
+            segment_id=seg_id,
+            start_time=start,
+            end_time=end,
+            source_text=source,
             source_language=str(data.get("source_language", "auto")),
-            speaker_id=data.get("speaker_id"),
-            translated_text=str(data.get("translated_text", "")),
-            spoken_text=str(data.get("spoken_text", "")),
+            speaker_id=data.get("speaker_id") or data.get("speaker"),
+            translated_text=trans,
+            spoken_text=spoken,
+            bbox=data.get("bbox"),
         )

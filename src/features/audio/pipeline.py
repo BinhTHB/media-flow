@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 import wave
 from pathlib import Path
@@ -78,45 +77,62 @@ class AudioPipeline:
             extracted_audio_path = input_path
         timings["audio_extraction"] = round(time.monotonic() - t0, 3)
 
-        # 2. ASR Transcription
-        if self.asr_provider is None:
-            raise RuntimeError("ASR provider is not configured for enabled AudioPipeline.")
+        # 2. ASR Transcription (nếu chưa có segments từ người dùng)
+        if request.segments is not None:
+            speech_segments = list(request.segments)
+            timings["asr"] = 0.0
+        else:
+            if self.asr_provider is None:
+                raise RuntimeError("ASR provider is not configured for enabled AudioPipeline.")
 
-        t0 = time.monotonic()
-        speech_segments = self.asr_provider.transcribe(
-            audio_path=extracted_audio_path, language=request.source_language
-        )
-        timings["asr"] = round(time.monotonic() - t0, 3)
-
-        # 2b. Contextual ASR correction (fail-open, timestamps untouched)
-        if self.asr_corrector is not None and speech_segments:
             t0 = time.monotonic()
-            raw_snapshot = [segment.source_text for segment in speech_segments]
-            try:
-                speech_segments = self.asr_corrector.correct_segments(
-                    speech_segments,
-                    language=request.source_language,
-                    audio_path=extracted_audio_path,
-                )
-            except Exception as exc:
-                warnings.append(f"ASR correction failed open: {exc}")
-                for segment, original in zip(speech_segments, raw_snapshot):
-                    segment.source_text = original
-            timings["asr_correction"] = round(time.monotonic() - t0, 3)
+            speech_segments = self.asr_provider.transcribe(
+                audio_path=extracted_audio_path, language=request.source_language
+            )
+            timings["asr"] = round(time.monotonic() - t0, 3)
 
-        # 3. Shared Translation
+            # 2b. Contextual ASR correction (fail-open, timestamps untouched)
+            if self.asr_corrector is not None and speech_segments:
+                t0 = time.monotonic()
+                raw_snapshot = [segment.source_text for segment in speech_segments]
+                try:
+                    speech_segments = self.asr_corrector.correct_segments(
+                        speech_segments,
+                        language=request.source_language,
+                        audio_path=extracted_audio_path,
+                    )
+                except Exception as exc:
+                    warnings.append(f"ASR correction failed open: {exc}")
+                    for segment, original in zip(speech_segments, raw_snapshot):
+                        segment.source_text = original
+                timings["asr_correction"] = round(time.monotonic() - t0, 3)
+
+        # 3. Shared Translation (chỉ dịch các segment chưa có bản dịch của người dùng)
         if self.translation_service is not None and speech_segments:
             t0 = time.monotonic()
-            raw_texts = [s.source_text for s in speech_segments]
-            translated_texts = self.translation_service.translate_texts(
-                raw_texts,
-                target_language=request.target_language,
-                source_language=request.source_language,
-            )
-            for seg, trans in zip(speech_segments, translated_texts):
-                seg.translated_text = trans
-                seg.spoken_text = trans
+            needed_indices = [
+                idx for idx, s in enumerate(speech_segments)
+                if not (s.spoken_text or s.translated_text).strip()
+            ]
+            if needed_indices:
+                raw_texts = [speech_segments[idx].source_text for idx in needed_indices]
+                translated_texts = self.translation_service.translate_texts(
+                    raw_texts,
+                    target_language=request.target_language,
+                    source_language=request.source_language,
+                )
+                for idx, trans in zip(needed_indices, translated_texts):
+                    speech_segments[idx].translated_text = trans
+                    speech_segments[idx].spoken_text = trans
+            else:
+                for seg in speech_segments:
+                    if not seg.spoken_text and seg.translated_text:
+                        seg.spoken_text = seg.translated_text
             timings["translation"] = round(time.monotonic() - t0, 3)
+        elif speech_segments:
+            for seg in speech_segments:
+                if not seg.spoken_text and seg.translated_text:
+                    seg.spoken_text = seg.translated_text
 
         # 4. Dubbing / TTS
         dubbed_audio_path = None
@@ -140,10 +156,16 @@ class AudioPipeline:
                     trimmed_path = tts_dir / f"trimmed_{seg.segment_id}.wav"
                     target_duration = max(0.08, seg.end_time - seg.start_time)
                     rewrite_count = 0
+
+                    # Hỗ trợ giọng đọc riêng theo từng Speaker nếu có
+                    seg_voice = request.voice
+                    if seg.speaker_id and request.speaker_voices and seg.speaker_id in request.speaker_voices:
+                        seg_voice = request.speaker_voices[seg.speaker_id]
+
                     try:
                         while True:
                             raw_clip = self.tts_provider.synthesize(
-                                text=text_to_speak, output_path=clip_path, voice=request.voice
+                                text=text_to_speak, output_path=clip_path, voice=seg_voice
                             )
                             out_clip = str(
                                 self.composer.trim_tts_silence(Path(raw_clip), trimmed_path)
@@ -174,10 +196,11 @@ class AudioPipeline:
                             seg.spoken_text = rewritten
                             rewrite_count += 1
 
-                        provider_name = getattr(
-                            self.tts_provider,
-                            "last_provider_name",
-                            type(self.tts_provider).__name__,
+                        raw_provider = getattr(self.tts_provider, "last_provider_name", None)
+                        provider_name = (
+                            str(raw_provider)
+                            if isinstance(raw_provider, str)
+                            else type(self.tts_provider).__name__
                         )
                         tts_clips.append(
                             TTSClip(
@@ -204,11 +227,13 @@ class AudioPipeline:
                     dubbed_audio_path = str(audio_dir / "dubbed_timeline.wav")
                     source_duration = self._audio_duration(extracted_audio_path)
                     last_speech_end = speech_segments[-1].end_time if speech_segments else 0.0
+                    mix_volume = float(request.mix_original_volume) if request.preserve_ambience else 0.0
                     dubbed_audio_path = self.composer.compose_dubbed_timeline(
                         tts_clips=tts_clips,
                         total_duration=max(source_duration, last_speech_end),
                         output_audio_path=dubbed_audio_path,
                         original_audio_path=extracted_audio_path,
+                        mix_original_volume=mix_volume,
                     )
                     timings["audio_composition"] = round(time.monotonic() - t0, 3)
                 elif speech_segments:

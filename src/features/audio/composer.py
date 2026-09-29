@@ -162,7 +162,7 @@ class AudioComposer:
             "ffprobe", "-v", "error", "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1", str(path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         try:
             return float(result.stdout.strip())
         except ValueError as exc:
@@ -171,7 +171,7 @@ class AudioComposer:
     @staticmethod
     def _run(cmd: list[str], action: str) -> None:
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True)
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or str(exc)).strip()
             raise RuntimeError(f"FFmpeg failed to {action}: {detail[-1200:]}") from exc
