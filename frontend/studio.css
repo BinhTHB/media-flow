@@ -21,6 +21,8 @@ html.light,
   --btn-primary-text: #ffffff;
   --badge-bg: #f1f3f5;
   --badge-text: #09090b;
+  --danger: #d92d20;
+  --danger-hover: #b42318;
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
   --radius-sm: 6px;
@@ -44,6 +46,8 @@ html.dark,
   --btn-primary-text: #09090b;
   --badge-bg: #1c1c20;
   --badge-text: #f4f4f5;
+  --danger: #ff6369;
+  --danger-hover: #ff8a8e;
   --shadow: 0 8px 30px rgba(0, 0, 0, 0.65);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --radius-sm: 6px;
@@ -920,6 +924,7 @@ body {
 .run-button-row {
   display: flex;
   justify-content: stretch;
+  gap: 10px;
 }
 
 .run-pipeline-btn {
@@ -950,6 +955,27 @@ body {
   opacity: 0.45;
   cursor: not-allowed;
   transform: none;
+}
+
+/* Cancel is a secondary, destructive action next to the primary run button. */
+#cancelJobBtn {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 132px;
+  background-color: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+  box-shadow: none;
+}
+
+#cancelJobBtn:hover:not(:disabled) {
+  background-color: var(--danger);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+#cancelJobBtn[hidden] {
+  display: none;
 }
 
 .yup-msg {

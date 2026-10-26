@@ -126,6 +126,7 @@ def test_create_job_aligns_with_cli_pipeline_defaults(monkeypatch: pytest.Monkey
     dummy_video.write_bytes(b"dummy")
     monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
     monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server, "OUTPUT_ROOT", tmp_path / "outputs")
     monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
 
     payload = {
@@ -157,6 +158,7 @@ def test_create_job_resolves_legacy_generic_preset(monkeypatch: pytest.MonkeyPat
     dummy_video.write_bytes(b"dummy")
     monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
     monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server, "OUTPUT_ROOT", tmp_path / "outputs")
     monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
 
     job = create_job({
@@ -179,6 +181,7 @@ def test_create_job_accepts_flow_preset_with_feature_fields(monkeypatch: pytest.
     dummy_video.write_bytes(b"dummy")
     monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
     monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server, "OUTPUT_ROOT", tmp_path / "outputs")
     monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
 
     job = create_job({
@@ -295,6 +298,15 @@ def test_local_server_delete_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
             test_input_file.unlink(missing_ok=True)
         if protected_file and protected_file.exists():
             protected_file.unlink(missing_ok=True)
+        # Do not leave empty scratch dirs behind in the real working tree.
+        for scratch in (
+            PROJECT_ROOT / "input" / "uploads",
+            PROJECT_ROOT / "test_videos",
+        ):
+            try:
+                scratch.rmdir()
+            except OSError:
+                pass
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
@@ -307,6 +319,7 @@ def _make_registered_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dic
     dummy_video.write_bytes(b"dummy")
     monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
     monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server, "OUTPUT_ROOT", tmp_path / "outputs")
     monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
     job = web_server.create_job({"input_path": str(dummy_video), "overwrite": True})
     return job
@@ -376,3 +389,152 @@ def test_job_log_handler_ignores_unknown_job(monkeypatch: pytest.MonkeyPatch, tm
         "Visual: harmless", None, None,
     )
     handler.emit(record)  # Must not raise.
+
+
+# --------------------------------------------------------------------------
+# Durable job history, cancellation, cleanup
+# --------------------------------------------------------------------------
+
+def _isolated_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Point the module-level store at a throwaway directory."""
+    import src.interfaces.web.server as web_server
+    from src.interfaces.jobs.store import JobStore
+
+    store = JobStore(tmp_path / "jobs")
+    monkeypatch.setattr(web_server, "JOB_STORE", store)
+    return web_server, store
+
+
+def test_list_jobs_survives_process_restart(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A job written by JobRunner is listed even with no in-memory state.
+
+    This is the regression the web UI used to have: jobs lived only in the
+    ``_JOBS`` dict, so every restart erased the history.
+    """
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    output = tmp_path / "out.mp4"
+    output.write_bytes(b"video-bytes")
+    store.save_state("job_persisted", {
+        "id": "job_persisted",
+        "status": "SUCCESS",
+        "progress": 100,
+        "stage": "completed",
+        "created_at": 100.0,
+        "updated_at": 200.0,
+        "request": {"input_video": str(tmp_path / "in.mp4"), "output_video": str(output)},
+        "metrics": {"duration_seconds": 3.5, "detections": {"subtitle": 4}},
+    })
+    monkeypatch.setattr(web_server, "_JOBS", {})
+
+    jobs = web_server.list_jobs()
+
+    assert [job["id"] for job in jobs] == ["job_persisted"]
+    assert jobs[0]["status"] == "succeeded"
+    assert jobs[0]["output_size"] == len(b"video-bytes")
+    assert jobs[0]["detections"] == {"subtitle": 4}
+    assert jobs[0]["persisted"] is True
+
+
+def test_list_jobs_prefers_live_state_over_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Live progress and logs win over the coarser persisted snapshot."""
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    store.save_state("job_live", {"id": "job_live", "status": "RUNNING", "progress": 40, "created_at": 1.0})
+    monkeypatch.setattr(web_server, "_JOBS", {
+        "job_live": {"id": "job_live", "status": "running", "progress": 65, "logs": ["live line"], "created_at": 1.0},
+    })
+
+    jobs = web_server.list_jobs()
+
+    assert len(jobs) == 1
+    assert jobs[0]["progress"] == 65
+    assert jobs[0]["logs"] == ["live line"]
+
+
+def test_list_jobs_orders_newest_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    store.save_state("old", {"id": "old", "status": "SUCCESS", "created_at": 1.0, "updated_at": 1.0})
+    store.save_state("new", {"id": "new", "status": "SUCCESS", "created_at": 2.0, "updated_at": 2.0})
+    monkeypatch.setattr(web_server, "_JOBS", {})
+
+    assert [job["id"] for job in web_server.list_jobs()] == ["new", "old"]
+
+
+def test_get_job_falls_back_to_store_and_raises_when_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    store.save_state("job_x", {"id": "job_x", "status": "PARTIAL", "created_at": 1.0})
+    monkeypatch.setattr(web_server, "_JOBS", {})
+
+    assert web_server.get_job("job_x")["status"] == "succeeded"  # PARTIAL is still a usable output
+    with pytest.raises(web_server.RequestError):
+        web_server.get_job("nope")
+
+
+def test_cancel_job_writes_marker_for_running_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    store.save_state("job_run", {"id": "job_run", "status": "RUNNING", "created_at": 1.0})
+    monkeypatch.setattr(web_server, "_JOBS", {
+        "job_run": {"id": "job_run", "status": "running", "progress": 40, "created_at": 1.0},
+    })
+
+    response = web_server.cancel_job("job_run")
+
+    assert response["cancelled"] is True
+    assert store.cancel_requested("job_run") is True
+    assert web_server._JOBS["job_run"]["cancel_requested"] is True
+
+
+def test_cancel_job_is_noop_for_finished_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(web_server, "_JOBS", {
+        "job_done": {"id": "job_done", "status": "succeeded", "progress": 100, "created_at": 1.0},
+    })
+
+    response = web_server.cancel_job("job_done")
+
+    assert response["cancelled"] is False
+    assert store.cancel_requested("job_done") is False
+
+
+def test_cancel_job_rejects_traversal_id(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    web_server, _store = _isolated_store(monkeypatch, tmp_path)
+    monkeypatch.setattr(web_server, "_JOBS", {})
+
+    with pytest.raises(web_server.RequestError):
+        web_server.cancel_job("../../etc/passwd")
+
+
+def test_delete_job_endpoint_requests_cancellation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """DELETE /api/jobs/<id> is the cancel route the UI calls."""
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    store.save_state("job_http", {"id": "job_http", "status": "RUNNING", "created_at": 1.0})
+    monkeypatch.setattr(web_server, "_JOBS", {
+        "job_http": {"id": "job_http", "status": "running", "progress": 10, "created_at": 1.0},
+    })
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), MediaFlowHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        from urllib.request import Request
+
+        request = Request(f"{base_url}/api/jobs/job_http", method="DELETE")
+        with urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert payload["cancelled"] is True
+    assert store.cancel_requested("job_http") is True
+
+
+def test_jobs_dir_env_override_is_honoured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from src.interfaces.jobs.runner import default_jobs_dir
+
+    monkeypatch.setenv("MEDIA_FLOW_JOBS_DIR", str(tmp_path / "custom"))
+    assert default_jobs_dir() == tmp_path / "custom"
+
+    monkeypatch.delenv("MEDIA_FLOW_JOBS_DIR", raising=False)
+    assert default_jobs_dir().name == "jobs"

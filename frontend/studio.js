@@ -62,6 +62,8 @@
     cliCommandPreview: document.getElementById("cliCommandPreview"),
     runJobBtn: document.getElementById("runJobBtn"),
     runButtonText: document.getElementById("runButtonText"),
+    cancelJobBtn: document.getElementById("cancelJobBtn"),
+    cancelButtonText: document.getElementById("cancelButtonText"),
     videoFormMessage: document.getElementById("videoFormMessage"),
 
     // Step 5: Monitoring & Terminal Logs
@@ -591,8 +593,43 @@
   }
 
   // Job Execution & Realtime Logs
+  function setCancelVisible(visible) {
+    if (!el.cancelJobBtn) return;
+    if (visible) {
+      el.cancelJobBtn.removeAttribute("hidden");
+      el.cancelJobBtn.removeAttribute("disabled");
+      if (el.cancelButtonText) el.cancelButtonText.textContent = "✕ HỦY JOB";
+    } else {
+      el.cancelJobBtn.setAttribute("hidden", "");
+    }
+  }
+
+  async function requestCancel() {
+    if (!state.activeJobId) return;
+    if (el.cancelJobBtn) el.cancelJobBtn.setAttribute("disabled", "");
+    if (el.cancelButtonText) el.cancelButtonText.textContent = "ĐANG HỦY…";
+    try {
+      await api(`/api/jobs/${encodeURIComponent(state.activeJobId)}`, { method: "DELETE" });
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = "Đã gửi yêu cầu hủy; job sẽ dừng ở checkpoint kế tiếp.";
+        el.videoFormMessage.className = "yup-msg form-message";
+      }
+    } catch (err) {
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = `Không hủy được job: ${err.message}`;
+        el.videoFormMessage.className = "yup-msg form-message is-error";
+      }
+      if (el.cancelJobBtn) el.cancelJobBtn.removeAttribute("disabled");
+      if (el.cancelButtonText) el.cancelButtonText.textContent = "✕ HỦY JOB";
+    }
+  }
+
   function initJobRunner() {
     if (!el.runJobBtn) return;
+
+    if (el.cancelJobBtn) {
+      el.cancelJobBtn.addEventListener("click", requestCancel);
+    }
 
     el.runJobBtn.addEventListener("click", async function () {
       if (!state.selectedFile) {
@@ -629,6 +666,7 @@
 
       // Cập nhật trạng thái UI
       el.runJobBtn.setAttribute("disabled", "");
+      setCancelVisible(true);
       if (el.runButtonText) el.runButtonText.textContent = "⏳ ĐANG CHẠY PIPELINE...";
       if (el.videoStatusBadge) {
         el.videoStatusBadge.textContent = "ĐANG XỬ LÝ";
@@ -664,6 +702,7 @@
         startJobPolling(job.id);
       } catch (err) {
         el.runJobBtn.removeAttribute("disabled");
+        setCancelVisible(false);
         if (el.runButtonText) el.runButtonText.textContent = "⚡ BẮT ĐẦU CHẠY PIPELINE (RUN CLI)";
         if (el.videoStatusBadge) {
           el.videoStatusBadge.textContent = "LỖI";
@@ -688,6 +727,7 @@
         if (job.status === "succeeded" || job.status === "failed") {
           clearInterval(state.pollTimer);
           state.pollTimer = null;
+          setCancelVisible(false);
 
           el.runJobBtn.removeAttribute("disabled");
           if (el.runButtonText) el.runButtonText.textContent = "⚡ BẮT ĐẦU CHẠY PIPELINE (RUN CLI)";

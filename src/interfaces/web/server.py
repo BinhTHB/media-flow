@@ -29,8 +29,10 @@ from src.interfaces.jobs.runner import (
     JobEvent,
     JobOptions,
     JobRunner,
+    default_jobs_dir,
     resolve_preset,
 )
+from src.interfaces.jobs.store import JobStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -98,6 +100,15 @@ MAX_JSON_BYTES = 1024 * 1024
 
 _JOBS: dict[str, dict[str, Any]] = {}
 _JOBS_LOCK = threading.Lock()
+
+#: Durable job state lives here; JobRunner writes the same directory, so the web
+#: UI can list jobs that finished before the current process started.
+JOB_STORE = JobStore(default_jobs_dir())
+
+#: Job statuses that no longer change. Mirrors JobStore's terminal set.
+_TERMINAL_STATUSES = {"SUCCESS", "PARTIAL", "FAILED", "BLOCKED"}
+#: Web-level statuses that mean the background thread is done.
+_TERMINAL_WEB_STATUSES = {"succeeded", "failed"}
 
 
 class RequestError(Exception):
@@ -528,6 +539,117 @@ def _update_job(job_id: str, **updates: Any) -> None:
     with _JOBS_LOCK:
         if job_id in _JOBS:
             _JOBS[job_id].update(updates)
+
+
+#: Map the durable runner status onto the web UI vocabulary. The store keeps
+#: the pipeline's own SUCCESS/PARTIAL/FAILED/BLOCKED vocabulary; the UI only
+#: distinguishes "still running" from "done, look at the result".
+_STORE_STATUS_TO_WEB = {
+    "SUCCESS": "succeeded",
+    "PARTIAL": "succeeded",
+    "FAILED": "failed",
+    "BLOCKED": "failed",
+    "RUNNING": "running",
+}
+
+
+def _web_job_from_store(state: dict[str, Any]) -> dict[str, Any]:
+    """Project a durable ``JobStore`` state document onto the web job shape.
+
+    The store is written by ``JobRunner`` for both CLI and web jobs, so this is
+    what lets the UI list work that finished before this process started.
+    """
+    request = state.get("request") or {}
+    output_path = str(request.get("output_video") or "")
+    input_path = str(request.get("input_video") or "")
+    metrics = state.get("metrics") or {}
+    output_size = None
+    if output_path:
+        try:
+            candidate = Path(output_path)
+            if candidate.is_file():
+                output_size = candidate.stat().st_size
+        except OSError:
+            output_size = None
+    return {
+        "id": str(state.get("id", "")),
+        "status": _STORE_STATUS_TO_WEB.get(str(state.get("status", "")), "failed"),
+        "progress": int(state.get("progress") or 0),
+        "message": str(state.get("message") or state.get("stage") or ""),
+        "stage": str(state.get("stage") or ""),
+        "input_path": input_path,
+        "input_relative": relative_project_path(Path(input_path)) if input_path else "",
+        "output_path": output_path,
+        "output_relative": relative_project_path(Path(output_path)) if output_path else "",
+        "output_name": Path(output_path).name if output_path else "",
+        "output_size": output_size,
+        "detections": metrics.get("detections", {}),
+        "created_at": state.get("created_at"),
+        "updated_at": state.get("updated_at"),
+        "duration_seconds": metrics.get("duration_seconds"),
+        "error": state.get("error"),
+        "events": state.get("events", []),
+        "logs": [],
+        "persisted": True,
+    }
+
+
+def list_jobs(limit: int = 30) -> list[dict[str, Any]]:
+    """Live in-memory jobs merged with durable history, newest first.
+
+    In-memory entries win: they carry live log lines and progress that the
+    store only receives on stage boundaries.
+    """
+    with _JOBS_LOCK:
+        live = {job_id: dict(job) for job_id, job in _JOBS.items()}
+    merged = dict(live)
+    for state in JOB_STORE.list():
+        job_id = str(state.get("id", ""))
+        if not job_id or job_id in merged:
+            continue
+        merged[job_id] = _web_job_from_store(state)
+
+    def _sort_key(item: dict[str, Any]) -> float:
+        for field in ("updated_at", "created_at"):
+            value = item.get(field)
+            if isinstance(value, (int, float)):
+                return float(value)
+        return 0.0
+
+    jobs = sorted(merged.values(), key=_sort_key, reverse=True)
+    return jobs[:limit]
+
+
+def get_job(job_id: str) -> dict[str, Any]:
+    """Return one job from memory, falling back to durable history."""
+    with _JOBS_LOCK:
+        job = dict(_JOBS.get(job_id, {}))
+    if job:
+        return job
+    try:
+        state = JOB_STORE.get(job_id)
+    except ValueError as exc:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Job id không hợp lệ.") from exc
+    if not state:
+        raise RequestError(HTTPStatus.NOT_FOUND, "Không tìm thấy job.")
+    return _web_job_from_store(state)
+
+
+def cancel_job(job_id: str) -> dict[str, Any]:
+    """Request cooperative cancellation of a running job.
+
+    The runner checks this marker between stages and aborts; a job that has
+    already finished is reported as such rather than silently "cancelled".
+    """
+    job = get_job(job_id)
+    if job.get("status") in _TERMINAL_WEB_STATUSES:
+        return {"cancelled": False, "status": job.get("status"), "message": "Job đã kết thúc."}
+    try:
+        JOB_STORE.request_cancel(job_id)
+    except ValueError as exc:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Job id không hợp lệ.") from exc
+    _update_job(job_id, message="Đã yêu cầu hủy job.", cancel_requested=True)
+    return {"cancelled": True, "status": job.get("status"), "message": "Đã gửi yêu cầu hủy."}
 
 
 def _handle_job_event(job_id: str, event: JobEvent) -> None:
@@ -975,19 +1097,12 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
                 return
 
             if path == "/api/jobs":
-                with _JOBS_LOCK:
-                    jobs = [dict(job) for job in _JOBS.values()]
-                jobs.sort(key=lambda item: item["created_at"], reverse=True)
-                self._send_json({"jobs": jobs[:30]})
+                self._send_json({"jobs": list_jobs(limit=30)})
                 return
 
             if path.startswith("/api/jobs/"):
                 job_id = path.split("/")[3] if len(path.split("/")) > 3 else ""
-                with _JOBS_LOCK:
-                    job = dict(_JOBS.get(job_id, {}))
-                if not job:
-                    raise RequestError(HTTPStatus.NOT_FOUND, "Không tìm thấy job.")
-                self._send_json(job)
+                self._send_json(get_job(job_id))
                 return
 
             if path == "/api/media":
@@ -1048,6 +1163,13 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
         try:
+            if parsed.path.startswith("/api/jobs/"):
+                job_id = parsed.path.split("/")[3] if len(parsed.path.split("/")) > 3 else ""
+                if not job_id:
+                    raise RequestError(HTTPStatus.BAD_REQUEST, "Thiếu job id.")
+                self._send_json(cancel_job(job_id), HTTPStatus.ACCEPTED)
+                return
+
             if parsed.path == "/api/files":
                 raw_path = parse_qs(parsed.query).get("path", [""])[0]
                 if raw_path:
@@ -1169,12 +1291,30 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the local MediaFlow web interface.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--keep-jobs",
+        type=int,
+        default=100,
+        help="Keep at most this many finished job workspaces (default: 100, 0 disables cleanup)",
+    )
     args = parser.parse_args()
 
     if not FRONTEND_ROOT.is_dir():
         raise SystemExit(f"Frontend directory not found: {FRONTEND_ROOT}")
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # Job workspaces accumulate one folder per run; without this the directory
+    # only ever grows. Only terminal, unclaimed jobs are removed.
+    if args.keep_jobs > 0:
+        try:
+            removed = JOB_STORE.cleanup(max_jobs=args.keep_jobs)
+        except OSError as exc:
+            print(f"MediaFlow web: job cleanup skipped ({exc})")
+        else:
+            if removed:
+                print(f"MediaFlow web: removed {len(removed)} old job workspace(s)")
+
     server = ThreadingHTTPServer((args.host, args.port), MediaFlowHandler)
     server.daemon_threads = True
     print(f"MediaFlow web: http://{args.host}:{args.port}")

@@ -410,7 +410,7 @@ def test_build_dubbing_plan_attaches_yolo_bboxes(monkeypatch, tmp_path):
             },
         },
     )
-    dummy_video = server.PROJECT_ROOT / "outputs" / "test_sample_dummy.mp4"
+    dummy_video = tmp_path / "test_sample_dummy.mp4"
     dummy_video.parent.mkdir(parents=True, exist_ok=True)
     dummy_video.write_bytes(b"dummy")
     try:

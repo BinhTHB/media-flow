@@ -37,6 +37,21 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ProgressCallback = Callable[["JobEvent"], None]
 JobProfile = Literal["quality", "balanced", "fast"]
 
+#: Override the durable job workspace root (tests, alternate deployments).
+JOBS_DIR_ENV = "MEDIA_FLOW_JOBS_DIR"
+
+
+def default_jobs_dir() -> Path:
+    """Resolve the durable job workspace root.
+
+    ``MEDIA_FLOW_JOBS_DIR`` wins so tests and alternate deployments can keep
+    job state out of the project tree.
+    """
+    override = os.environ.get(JOBS_DIR_ENV, "").strip()
+    if override:
+        return Path(override)
+    return PROJECT_ROOT / "outputs" / "jobs"
+
 #: Pipeline presets select the DETECTION FLOW only. Everything a job does
 #: (translate/blur/preserve subtitles, dub audio, handle extra text) is
 #: expressed by the explicit feature fields on JobOptions.
@@ -190,7 +205,7 @@ class JobRunner:
         cancel_requested: Callable[[], bool] | None = None,
     ) -> None:
         self._use_case_factory = use_case_factory or self._compose
-        self._job_store = job_store or JobStore(PROJECT_ROOT / "outputs" / "jobs")
+        self._job_store = job_store or JobStore(default_jobs_dir())
         self._cancel_requested = cancel_requested or (lambda: False)
 
     def run(self, options: JobOptions, on_event: ProgressCallback | None = None) -> ProcessingResult:
