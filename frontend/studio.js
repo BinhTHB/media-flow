@@ -11,7 +11,7 @@
     activeTool: "video",
     files: [],
     selectedFile: null,
-    selectedPreset: "translate-video",
+    selectedPreset: "yolo-4class",
     activeJobId: null,
     pollTimer: null,
     capabilities: null,
@@ -43,6 +43,9 @@
 
     // Step 2: Preset
     presetCards: document.querySelectorAll(".preset-option-card"),
+    subtitleActionSelect: document.getElementById("subtitleActionSelect"),
+    dubAudioCheck: document.getElementById("dubAudioCheck"),
+    extraTextActionSelect: document.getElementById("extraTextActionSelect"),
 
     // Step 3: CLI Parameters
     sourceLanguageSelect: document.getElementById("sourceLanguageSelect"),
@@ -52,7 +55,6 @@
     subtitleLayoutSelect: document.getElementById("subtitleLayoutSelect"),
     deviceSelect: document.getElementById("deviceSelect"),
     profileSelect: document.getElementById("profileSelect"),
-    blurExtraCheck: document.getElementById("blurExtraCheck"),
     hideSourceSubCheck: document.getElementById("hideSourceSubCheck"),
     overwriteCheck: document.getElementById("overwriteCheck"),
 
@@ -203,15 +205,16 @@
     if (!el.cliCommandPreview) return;
 
     const inputPath = state.selectedFile ? state.selectedFile.path : "<chọn-video-đầu-vào>";
-    const preset = state.selectedPreset || "translate-video";
-    const basePreset = preset.replace(/-generic$/, "");
+    const preset = state.selectedPreset || "yolo-4class";
     const srcLang = el.sourceLanguageSelect ? el.sourceLanguageSelect.value : "vi";
     const tgtLang = el.targetLanguageSelect ? el.targetLanguageSelect.value : "vi";
     const voiceId = el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL";
     const subLayout = el.subtitleLayoutSelect ? el.subtitleLayoutSelect.value : "in-place";
     const device = el.deviceSelect ? el.deviceSelect.value : "auto";
     const profile = el.profileSelect ? el.profileSelect.value : "balanced";
-    const blurExtra = el.blurExtraCheck && el.blurExtraCheck.checked;
+    const subAction = el.subtitleActionSelect ? el.subtitleActionSelect.value : "translate";
+    const dubAudio = el.dubAudioCheck ? el.dubAudioCheck.checked : false;
+    const extraAction = el.extraTextActionSelect ? el.extraTextActionSelect.value : "preserve";
     const hideSourceSub = el.hideSourceSubCheck && el.hideSourceSubCheck.checked;
     const overwrite = el.overwriteCheck && el.overwriteCheck.checked;
 
@@ -219,25 +222,39 @@
       "python -m src.interfaces.cli",
       `--input "${inputPath}"`,
       `--preset ${preset}`,
+      `--subtitle-action ${subAction}`,
     ];
 
-    if (basePreset === "translate-video" || basePreset === "translate-subtitle") {
+    if (dubAudio) parts.push("--dub-audio");
+    parts.push(`--extra-text-action ${extraAction}`);
+
+    if (subAction === "translate" || dubAudio) {
       parts.push(`--source-language ${srcLang}`);
       parts.push(`--target-language ${tgtLang}`);
+    }
+    if (subAction === "translate") {
       parts.push(`--subtitle-layout ${subLayout}`);
     }
-
-    if (basePreset === "translate-video" || basePreset === "dub-audio") {
+    if (dubAudio) {
       parts.push(`--voice-id ${voiceId}`);
     }
 
     if (device !== "auto") parts.push(`--device ${device}`);
     if (profile !== "balanced") parts.push(`--profile ${profile}`);
-    if (blurExtra) parts.push("--blur-extra");
-    if (hideSourceSub) parts.push("--hide-source-subtitle");
+    if (subAction === "translate" && hideSourceSub) parts.push("--hide-source-subtitle");
     if (overwrite) parts.push("--overwrite");
 
+    syncFlagVisibility(subAction);
+
     el.cliCommandPreview.textContent = parts.join(" ");
+  }
+
+  // "Ẩn sub gốc" chỉ có ý nghĩa khi bước 2b đang dịch phụ đề
+  function syncFlagVisibility(subAction) {
+    const flagLabel = document.getElementById("hideSourceSubFlag");
+    if (flagLabel) {
+      flagLabel.hidden = subAction !== "translate";
+    }
   }
 
   // Video Management & File List
@@ -517,9 +534,11 @@
       el.subtitleLayoutSelect,
       el.deviceSelect,
       el.profileSelect,
-      el.blurExtraCheck,
       el.hideSourceSubCheck,
       el.overwriteCheck,
+      el.subtitleActionSelect,
+      el.dubAudioCheck,
+      el.extraTextActionSelect,
     ];
 
     inputs.forEach(function (input) {
@@ -581,20 +600,27 @@
         return;
       }
 
-      const resolvedPreset = state.selectedPreset || "translate-video";
+      const resolvedPreset = state.selectedPreset || "yolo-4class";
+      const subAction = el.subtitleActionSelect ? el.subtitleActionSelect.value : "translate";
+      const dubAudio = el.dubAudioCheck ? el.dubAudioCheck.checked : false;
+      const extraAction = el.extraTextActionSelect ? el.extraTextActionSelect.value : "preserve";
       const srcName = state.selectedFile.name || "video.mp4";
       const stem = srcName.replace(/\.[^.]+$/, "");
+      const outputPreset = dubAudio && subAction === "translate"
+        ? `${resolvedPreset}-translate-dub`
+        : `${resolvedPreset}-${subAction}${dubAudio ? "-dub" : ""}`;
 
       const payload = {
         input_path: state.selectedFile.path,
-        output_name: `${stem}-${resolvedPreset}.mp4`,
+        output_name: `${stem}-${outputPreset}.mp4`,
         preset: resolvedPreset,
-        presets: [resolvedPreset],
+        subtitle_action: subAction,
+        dub_audio: dubAudio,
+        extra_text_action: extraAction,
         source_language: el.sourceLanguageSelect ? el.sourceLanguageSelect.value : "vi",
         target_language: el.targetLanguageSelect ? el.targetLanguageSelect.value : "vi",
         voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
         subtitle_layout: el.subtitleLayoutSelect ? el.subtitleLayoutSelect.value : "in-place",
-        blur_extra: el.blurExtraCheck ? el.blurExtraCheck.checked : true,
         hide_source_subtitle: el.hideSourceSubCheck ? el.hideSourceSubCheck.checked : true,
         device: el.deviceSelect ? el.deviceSelect.value : "auto",
         profile: el.profileSelect ? el.profileSelect.value : "balanced",

@@ -21,6 +21,7 @@ def wire_visual_caches(root, cache_dir, detector, ocr, translation, detector_con
                         "src/infrastructure/translation/openrouter_translation.py",
                         "src/infrastructure/translation/router.py",
                         "src/infrastructure/gemini/client.py"],
+        "scene": ["src/infrastructure/video/scene_boundaries.py"],
     }
     caches = {}
     for stage, paths in sources.items():
@@ -33,7 +34,7 @@ def wire_visual_caches(root, cache_dir, detector, ocr, translation, detector_con
             identity["ultralytics"] = importlib.metadata.version("ultralytics")
         elif stage == "ocr":
             identity["model"] = getattr(ocr, "model", None)
-        else:
+        elif stage == "translation":
             identity["route"] = route
             identity["openrouter_models"] = os.getenv("OPENROUTER_TRANSLATION_MODELS", "")
             identity["gemini_available"] = bool(os.getenv("GEMINI_API_KEY"))

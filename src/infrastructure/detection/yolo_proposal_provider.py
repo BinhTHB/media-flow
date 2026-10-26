@@ -7,16 +7,14 @@ Preserves class_id and class_name across all detections.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import cv2
 from ultralytics import YOLO
 
-from src.application.dto.proposal_bundle import DecodedFrame, ProposalBundle
+from src.application.dto.proposal_bundle import ProposalBundle
 from src.infrastructure.detection.paths import resolve_yolo_weights
 from src.infrastructure.detection.schemas import class_name
 
@@ -100,15 +98,17 @@ class YoloTextProposalProvider:
             stream=True,
             device=self._device,
             verbose=False,
+            # A post-filter alone still pays full decode+inference for every
+            # frame; vid_stride makes stride actually skip un-sampled frames.
+            vid_stride=stride if stride > 1 else 1,
         )
 
         frame_counts: Dict[int, int] = {}
 
-        for fi, r in enumerate(results):
+        for i, r in enumerate(results):
+            fi = i * stride if stride > 1 else i
             if fi >= total_frames:
                 break
-            if fi % stride != 0:
-                continue
 
             H, W = r.orig_shape
             ts = fi / video_fps

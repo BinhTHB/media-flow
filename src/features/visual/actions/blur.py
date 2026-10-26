@@ -6,7 +6,7 @@ Applies Gaussian pixel blur over a frame region.
 
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any, Optional
 
 from src.core.models.bbox import BBox
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-from pathlib import Path
 import pytest
 from src.application.process_video import ProcessVideoUseCase
 from src.application.request import ProcessingRequest

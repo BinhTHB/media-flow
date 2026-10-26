@@ -76,6 +76,7 @@ class AudioPipeline:
         else:
             extracted_audio_path = input_path
         timings["audio_extraction"] = round(time.monotonic() - t0, 3)
+        logger.info("Audio: audio track extracted (%.1fs)", timings["audio_extraction"])
 
         # 2. ASR Transcription (nếu chưa có segments từ người dùng)
         if request.segments is not None:
@@ -86,10 +87,15 @@ class AudioPipeline:
                 raise RuntimeError("ASR provider is not configured for enabled AudioPipeline.")
 
             t0 = time.monotonic()
+            logger.info("Audio: running ASR transcription (language=%s)...", request.source_language)
             speech_segments = self.asr_provider.transcribe(
                 audio_path=extracted_audio_path, language=request.source_language
             )
             timings["asr"] = round(time.monotonic() - t0, 3)
+            logger.info(
+                "Audio: ASR done — %d speech segments (%.1fs)",
+                len(speech_segments), timings["asr"],
+            )
 
             # 2b. Contextual ASR correction (fail-open, timestamps untouched)
             if self.asr_corrector is not None and speech_segments:
@@ -106,6 +112,7 @@ class AudioPipeline:
                     for segment, original in zip(speech_segments, raw_snapshot):
                         segment.source_text = original
                 timings["asr_correction"] = round(time.monotonic() - t0, 3)
+                logger.info("Audio: ASR contextual correction applied (%.1fs)", timings["asr_correction"])
 
         # 3. Shared Translation (chỉ dịch các segment chưa có bản dịch của người dùng)
         if self.translation_service is not None and speech_segments:
@@ -129,6 +136,10 @@ class AudioPipeline:
                     if not seg.spoken_text and seg.translated_text:
                         seg.spoken_text = seg.translated_text
             timings["translation"] = round(time.monotonic() - t0, 3)
+            logger.info(
+                "Audio: translated %d segments to '%s' (%.1fs)",
+                len(needed_indices), request.target_language, timings["translation"],
+            )
         elif speech_segments:
             for seg in speech_segments:
                 if not seg.spoken_text and seg.translated_text:
@@ -147,6 +158,13 @@ class AudioPipeline:
                 t0 = time.monotonic()
                 tts_dir = audio_dir / "tts"
                 tts_dir.mkdir(parents=True, exist_ok=True)
+
+                tts_total = sum(
+                    1 for seg in speech_segments
+                    if ((seg.spoken_text or seg.translated_text or seg.source_text) or "").strip()
+                )
+                tts_done = 0
+                logger.info("Audio: synthesizing %d TTS segments...", tts_total)
 
                 for seg in speech_segments:
                     text_to_speak = seg.spoken_text or seg.translated_text or seg.source_text
@@ -220,7 +238,17 @@ class AudioPipeline:
                         status = "PARTIAL"
                         warnings.append(f"TTS synthesis failed for segment {seg.segment_id}: {exc}")
 
+                    tts_done += 1
+                    if tts_done % 10 == 0 or tts_done == tts_total:
+                        tts_pct = int(100 * tts_done / tts_total) if tts_total else 100
+                        logger.info(
+                            "Audio: TTS %d/%d segments (%d%%)",
+                            tts_done, tts_total, tts_pct,
+                            extra={"mediaflow_pct": tts_pct, "mediaflow_stage": "audio"},
+                        )
+
                 timings["tts"] = round(time.monotonic() - t0, 3)
+                logger.info("Audio: TTS done — %d clips in %.1fs", len(tts_clips), timings["tts"])
 
                 if tts_clips:
                     t0 = time.monotonic()
@@ -236,6 +264,10 @@ class AudioPipeline:
                         mix_original_volume=mix_volume,
                     )
                     timings["audio_composition"] = round(time.monotonic() - t0, 3)
+                    logger.info(
+                        "Audio: dubbed timeline composed (%.1fs) in %.1fs",
+                        max(source_duration, last_speech_end), timings["audio_composition"],
+                    )
                 elif speech_segments:
                     status = "PARTIAL"
                     warnings.append("Dubbing produced no usable TTS clips.")

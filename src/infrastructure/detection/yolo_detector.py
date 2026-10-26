@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 from src.infrastructure.detection.base import BurnInDetector
 from src.infrastructure.detection.config import DetectionConfig

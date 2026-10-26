@@ -76,7 +76,14 @@ class GeminiRuntime:
     """
 
     def __init__(self, config: Optional[RuntimeConfig] = None, job_id: str = "default") -> None:
-        self._config = config or RuntimeConfig()
+        if config is None:
+            # Default concurrency comes from the environment so parallel OCR /
+            # translation batches actually overlap instead of queueing behind
+            # a single-slot scheduler.
+            config = RuntimeConfig(
+                max_concurrency=max(1, int(os.getenv("GEMINI_MAX_CONCURRENCY", "4") or 4)),
+            )
+        self._config = config
         self._job_id = job_id
         scheduler_options = dict(self._config.scheduler)
         scheduler_options.update(

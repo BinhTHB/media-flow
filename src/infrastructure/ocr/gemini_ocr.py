@@ -11,20 +11,48 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import threading
 import time
 from typing import Any, List
 
 import cv2
 
 from src.core.contracts import OCRPort
+from src.infrastructure.gemini.client import GeminiClient
+from src.infrastructure.gemini.request_scheduler import RequestScheduler
 
 logger = logging.getLogger(__name__)
 
 
 class GeminiOCRAdapter(OCRPort):
-    def __init__(self, api_key: str | None = None, model: str = "gemini-3.5-flash-lite"):
+    def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model = model
+        # MEDIAFLOW_GEMINI_MODEL overrides every Gemini call site (OCR and
+        # translation) so the model is switchable without code edits; note the
+        # OCR cache identity includes the model, so switching starts a fresh
+        # cache tier by design.
+        self.model = os.getenv("MEDIAFLOW_GEMINI_MODEL") or model or "gemini-3.5-flash-lite"
+        # One shared scheduler gates every OCR request: in-flight batches run
+        # concurrently (parallel OCR batches in SubtitleProcessor) while the
+        # scheduler keeps global RPM/TPM/backoff accounting coherent.
+        self._shared_scheduler = RequestScheduler(
+            max_concurrency=max(1, int(os.getenv("GEMINI_MAX_CONCURRENCY", "4") or 4)),
+        )
+        self._clients: dict[str, GeminiClient] = {}
+        self._clients_lock = threading.Lock()
+
+    def _client_for(self, key: str) -> GeminiClient:
+        """Reuse one client per API key; all share the adapter's scheduler so
+        RPM/TPM accounting stays global across concurrent OCR batches."""
+        client = self._clients.get(key)
+        if client is not None:
+            return client
+        with self._clients_lock:
+            client = self._clients.get(key)
+            if client is None:
+                client = GeminiClient(api_key=key, scheduler=self._shared_scheduler)
+                self._clients[key] = client
+        return client
 
     def read_crops(self, crop_images: List[Any]) -> List[str]:
         if not crop_images or not self.api_key:
@@ -66,9 +94,7 @@ class GeminiOCRAdapter(OCRPort):
         if not valid_item_ids:
             return ["" for _ in crop_images]
 
-        from src.infrastructure.gemini.client import GeminiClient
         from src.infrastructure.gemini.contracts import GeminiRequest
-        from src.infrastructure.gemini.request_scheduler import RequestScheduler
         from src.infrastructure.gemini.structured_output import parse_json
 
         raw_keys = str(self.api_key or "")
@@ -81,7 +107,7 @@ class GeminiOCRAdapter(OCRPort):
         for attempt in range(max_attempts):
             key = keys[attempt % len(keys)]
             try:
-                client = GeminiClient(api_key=key, scheduler=RequestScheduler())
+                client = self._client_for(key)
                 response = client.generate_content(
                     GeminiRequest(
                         contents=[{"parts": parts}],
@@ -94,6 +120,10 @@ class GeminiOCRAdapter(OCRPort):
                 )
 
                 payload = parse_json(response.text)
+                if not isinstance(payload, (dict, list)):
+                    raise RuntimeError(
+                        f"Gemini OCR returned uninterpretable payload: {type(payload).__name__}"
+                    )
                 results = ["" for _ in crop_images]
 
                 if isinstance(payload, dict):
@@ -109,8 +139,11 @@ class GeminiOCRAdapter(OCRPort):
                             elif isinstance(val, str):
                                 results[idx_pos] = val.strip()
 
-                if not any(value.strip() for value in results):
-                    raise RuntimeError("Gemini OCR returned only empty strings for non-empty subtitle crops")
+                # All-empty results are EVIDENCE, not failure: the model looked
+                # at the crops and reported no readable text. Callers apply the
+                # text-evidence rule (OCR_EMPTY regions are never redacted);
+                # only uninterpretable payloads or request errors count as
+                # failures worth retrying.
                 return results
             except Exception as exc:
                 last_exc = exc

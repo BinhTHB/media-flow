@@ -4,6 +4,9 @@ A real dubbing job (outputs/jobs/job_v2_1790573383) marked all 21 subtitle
 events TRANSLATION_FAILED because one provider outage failed the single
 all-or-nothing batch call."""
 
+import threading
+import time
+
 from src.core.models.bbox import BBox
 from src.core.models.subtitle_event import SubtitleEvent
 from src.features.visual.subtitle.processor import SubtitleProcessor
@@ -25,10 +28,13 @@ class _FirstChunkFails:
 
     def __init__(self) -> None:
         self.calls = 0
+        self._lock = threading.Lock()
 
     def translate_texts(self, texts, target_language="vi", source_language="auto"):
-        self.calls += 1
-        if self.calls == 1:
+        with self._lock:
+            self.calls += 1
+            first = self.calls == 1
+        if first:
             raise RuntimeError("All translation providers failed. gemini: The read operation timed out")
         return [f"{text}-vi" for text in texts]
 
@@ -75,9 +81,11 @@ def test_all_chunks_failing_marks_every_event_translation_failed(monkeypatch):
     class _AlwaysFails:
         def __init__(self) -> None:
             self.calls = 0
+            self._lock = threading.Lock()
 
         def translate_texts(self, texts, target_language="vi", source_language="auto"):
-            self.calls += 1
+            with self._lock:
+                self.calls += 1
             raise RuntimeError("provider down")
 
     service = _AlwaysFails()
@@ -104,10 +112,13 @@ def test_ocr_batch_failure_is_retried_once_and_recovers(monkeypatch):
     class _FirstBatchFails:
         def __init__(self) -> None:
             self.calls = 0
+            self._lock = threading.Lock()
 
         def read_crops(self, crops):
-            self.calls += 1
-            if self.calls == 1:
+            with self._lock:
+                self.calls += 1
+                first = self.calls == 1
+            if first:
                 raise RuntimeError("request payload too large")
             return [f"ocr-{i}" for i, _ in enumerate(crops)]
 
@@ -135,9 +146,11 @@ def test_ocr_all_batches_failing_is_bounded(monkeypatch):
     class _AlwaysFails:
         def __init__(self) -> None:
             self.calls = 0
+            self._lock = threading.Lock()
 
         def read_crops(self, crops):
-            self.calls += 1
+            with self._lock:
+                self.calls += 1
             raise RuntimeError("model overloaded")
 
     provider = _AlwaysFails()
@@ -151,3 +164,236 @@ def test_ocr_all_batches_failing_is_bounded(monkeypatch):
     assert all(event.replacement_status == "OCR_FAILED" for event in events)
     # Bounded: 2 batches x (1 first round + 1 retry round).
     assert provider.calls == 4
+
+
+def test_ocr_empty_event_gets_upscale_verification_pass(monkeypatch):
+    # Evidence rule companion: before concluding "no caption here", the
+    # processor re-reads an empty event's crop upscaled 2x — small or
+    # stylized burned-in text often only reads at 2x. A recovery re-enters
+    # the normal translate/READY flow; a second empty result stays OCR_EMPTY
+    # and (per the pipeline rule) is never redacted.
+    import numpy as np
+    import cv2 as cv2_module
+
+    from src.core.models.bbox import BBox
+    from src.features.visual.subtitle.processor import SubtitleProcessor
+
+    class _FakeCapture:
+        def __init__(self, _path):
+            self.frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        def set(self, *_args):
+            return None
+
+        def read(self):
+            return True, self.frame
+
+        def release(self):
+            return None
+
+    class _FakeOcr:
+        def __init__(self):
+            self.shapes = []
+
+        def read_crops(self, crops):
+            self.shapes.append([c.shape for c in crops])
+            return [""]
+
+    monkeypatch.setattr(cv2_module, "VideoCapture", _FakeCapture)
+
+    ocr = _FakeOcr()
+    processor = SubtitleProcessor(ocr_provider=ocr)
+    event = SubtitleEvent(
+        event_id="hallucination",
+        track_id="T1",
+        start_time=19.50,
+        end_time=19.77,
+        anchor_bbox=BBox(x1=456, y1=716, x2=936, y2=843, frame_width=1920, frame_height=1080),
+        bbox_trajectory=[],
+        bbox_frame_indices=[],
+        source_text="",
+        translated_text="",
+        replacement_status="OCR_EMPTY",
+        blur_applied=False,
+        overlay_applied=False,
+    )
+
+    processor._verify_ocr_empty_events([event], "fake.mp4")
+
+    # The crop was upscaled 2x: shape (h, w, c) = ((843-716)*2, (936-456)*2, 3).
+    assert ocr.shapes and ocr.shapes[0][0][0] == (843 - 716) * 2
+    assert ocr.shapes[0][0][1] == (936 - 456) * 2
+    # Still empty after verification: empty status, no invented text.
+    assert event.replacement_status == "OCR_EMPTY"
+    assert not event.source_text
+
+
+def test_ocr_verify_pass_recovers_text_into_ready_flow(monkeypatch):
+    import numpy as np
+    import cv2 as cv2_module
+
+    from src.core.models.bbox import BBox
+    from src.features.visual.subtitle.processor import SubtitleProcessor
+
+    class _FakeCapture:
+        def __init__(self, _path):
+            self.frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+        def set(self, *_args):
+            return None
+
+        def read(self):
+            return True, self.frame
+
+        def release(self):
+            return None
+
+    class _FakeOcr:
+        def read_crops(self, _crops):
+            return ["  双手轻柔  "]
+
+    monkeypatch.setattr(cv2_module, "VideoCapture", _FakeCapture)
+
+    processor = SubtitleProcessor(ocr_provider=_FakeOcr())
+    event = SubtitleEvent(
+        event_id="small_text",
+        track_id="T1",
+        start_time=10.0,
+        end_time=11.0,
+        anchor_bbox=BBox(x1=456, y1=716, x2=936, y2=843, frame_width=1920, frame_height=1080),
+        bbox_trajectory=[],
+        bbox_frame_indices=[],
+        source_text="",
+        translated_text="",
+        replacement_status="OCR_EMPTY",
+        blur_applied=False,
+        overlay_applied=False,
+    )
+
+    processor._verify_ocr_empty_events([event], "fake.mp4")
+
+    assert event.source_text == "双手轻柔"
+    assert event.replacement_status == "SKIPPED"  # re-enters translate/READY flow
+
+
+def test_bilingual_pair_translates_to_single_collapsed_line():
+    # Real case (7s): a merged bilingual event ('第一条: 要温柔\nOne: be
+    # gentle') came back with two near-identical Vietnamese lines — the model
+    # translated each language row separately. A human places ONE line, so
+    # the collapse keeps the first and drops the near-duplicate; genuinely
+    # different lines survive.
+    processor = SubtitleProcessor(ocr_provider=None, translation_service=None)
+
+    twin = SubtitleEvent(
+        event_id="twin",
+        track_id="T1",
+        start_time=0.0,
+        end_time=1.0,
+        anchor_bbox=None,
+        bbox_trajectory=[],
+        bbox_frame_indices=[],
+        source_text="第一条: 要温柔\nOne: be gentle",
+        translated_text="Điều thứ nhất: Phải dịu dàng\nThứ nhất: Phải dịu dàng",
+        replacement_status="SKIPPED",
+        blur_applied=False,
+        overlay_applied=False,
+    )
+    distinct = SubtitleEvent(
+        event_id="distinct",
+        track_id="T2",
+        start_time=2.0,
+        end_time=3.0,
+        anchor_bbox=None,
+        bbox_trajectory=[],
+        bbox_frame_indices=[],
+        source_text="第一行\n第二行",
+        translated_text="Mẹ luôn dạy chúng con\nĐừng bao giờ bỏ cuộc",
+        replacement_status="SKIPPED",
+        blur_applied=False,
+        overlay_applied=False,
+    )
+
+    processor._collapse_duplicate_translation_lines([twin, distinct])
+
+    assert twin.translated_text == "Điều thứ nhất: Phải dịu dàng"
+    assert distinct.translated_text == "Mẹ luôn dạy chúng con\nĐừng bao giờ bỏ cuộc"
+
+
+class _ConcurrencyTracking:
+    """Records the peak number of overlapping calls to prove parallelism."""
+
+    def __init__(self, delay: float = 0.08) -> None:
+        self._delay = delay
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_concurrent = 0
+
+    def _enter(self) -> None:
+        with self._lock:
+            self._active += 1
+            self.max_concurrent = max(self.max_concurrent, self._active)
+        # Busy-wait instead of time.sleep: the suite patches processor time.sleep
+        # to no-op the retry pauses, which would also erase this delay.
+        deadline = time.perf_counter() + self._delay
+        while time.perf_counter() < deadline:
+            pass
+
+    def _exit(self) -> None:
+        with self._lock:
+            self._active -= 1
+
+
+class _ParallelTranslationService(_ConcurrencyTracking):
+    def translate_texts(self, texts, target_language="vi", source_language="auto"):
+        self._enter()
+        try:
+            return [f"{text}-vi" for text in texts]
+        finally:
+            self._exit()
+
+
+class _ParallelOCRProvider(_ConcurrencyTracking):
+    def read_crops(self, crops):
+        self._enter()
+        try:
+            return [f"{crop}" for crop in crops]
+        finally:
+            self._exit()
+
+
+def test_parallel_translation_chunks_overlap(monkeypatch):
+    monkeypatch.setattr("src.features.visual.subtitle.processor.time.sleep", lambda seconds: None)
+    service = _ParallelTranslationService()
+    processor = SubtitleProcessor(
+        translation_service=service,
+        translation_chunk_size=1,
+        translation_max_workers=3,
+    )
+    events = [_event(i) for i in range(9)]  # 9 chunks -> 3 workers overlap
+
+    processor._translate_events(events, "vi")
+
+    assert service.max_concurrent >= 2
+    assert all(event.translated_text == f"text {event.event_id[1:]}-vi" for event in events)
+    assert all(event.replacement_status == "SKIPPED" for event in events)
+
+
+def test_parallel_ocr_batches_overlap_and_keep_mapping(monkeypatch):
+    monkeypatch.setattr("src.features.visual.subtitle.processor.time.sleep", lambda seconds: None)
+    provider = _ParallelOCRProvider()
+    processor = SubtitleProcessor(
+        ocr_provider=provider,
+        ocr_chunk_size=2,
+        ocr_max_workers=3,
+    )
+    words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+    events = [_ocr_event(i) for i in range(6)]
+    crops = words[:]
+    metadata = [(event, 0) for event in events]
+
+    processor._ocr_event_crops(crops, metadata, events)
+
+    assert provider.max_concurrent >= 2
+    # Concurrent batches must still land each text on its own event.
+    assert [event.source_text for event in events] == words
+    assert all(event.replacement_status == "SKIPPED" for event in events)

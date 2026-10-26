@@ -37,9 +37,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 ProgressCallback = Callable[["JobEvent"], None]
 JobProfile = Literal["quality", "balanced", "fast"]
 
-#: Presets that run the generic single-class text model and re-label its
-#: detections into canonical classes before tracking/routing.
-GENERIC_PRESETS = {"translate-video-generic", "translate-subtitle-generic"}
+#: Pipeline presets select the DETECTION FLOW only. Everything a job does
+#: (translate/blur/preserve subtitles, dub audio, handle extra text) is
+#: expressed by the explicit feature fields on JobOptions.
+YOLO_FLOW_PRESETS = {"yolo-4class", "yolo-text"}
+#: Deprecated feature-combination presets (plus the "-generic" suffix). They
+#: map onto a flow preset + feature fields and stay accepted so existing
+#: CLI invocations and web clients keep working.
+LEGACY_PRESET_FEATURES: dict[str, tuple[str, bool]] = {
+    # base preset -> (subtitle_action, dub_audio)
+    "translate-video": ("translate", True),
+    "translate-subtitle": ("translate", False),
+    "dub-audio": ("preserve", True),
+    "blur-all": ("blur", False),
+    "blur-and-dub": ("blur", True),
+    "preserve-all": ("preserve", False),
+}
 GENERIC_TEXT_WEIGHTS_REL = Path("models") / "yolo" / "text" / "best.pt"
 GENERIC_TEXT_WEIGHTS_URL = "https://huggingface.co/RoyRud1902/yolo11n-text"
 #: The generic scene-text model is tuned for conf≈0.25; a slightly lower
@@ -48,9 +61,52 @@ GENERIC_TEXT_DEFAULT_CONF = 0.20
 BURN_IN_WEIGHTS_DEFAULT = str(PROJECT_ROOT / "models" / "yolo" / "best.pt")
 
 
-def _base_preset(preset: str) -> str:
-    """Map a generic preset onto its canonical burn-in preset semantics."""
-    return preset.removesuffix("-generic")
+def resolve_preset(
+    preset: str,
+    subtitle_action: str,
+    dub_audio: bool,
+    extra_text_action: str,
+    blur_extra: bool = False,
+) -> tuple[str, str, bool, str]:
+    """Resolve any accepted preset name onto the canonical contract.
+
+    Returns ``(flow_preset, subtitle_action, dub_audio, extra_text_action)``.
+    New-style flow presets pass the feature fields through; deprecated
+    feature-combination presets (with optional "-generic" suffix) map onto
+    the flow + feature fields they stood for. Raises ``ValueError`` for
+    unknown preset names.
+    """
+    generic_suffix = preset.endswith("-generic")
+    base = preset.removesuffix("-generic")
+    if base in YOLO_FLOW_PRESETS:
+        return base, subtitle_action, bool(dub_audio), extra_text_action
+    features = LEGACY_PRESET_FEATURES.get(base)
+    if features is None:
+        raise ValueError(f"Unsupported preset: {preset}")
+    legacy_subtitle, legacy_dub = features
+    legacy_extra = "blur" if (base.startswith("blur-") or blur_extra) else "preserve"
+    flow = "yolo-text" if generic_suffix else "yolo-4class"
+    return flow, legacy_subtitle, legacy_dub, legacy_extra
+
+
+def _normalize_preset(options: "JobOptions") -> None:
+    """Resolve deprecated presets onto the flow preset + feature fields.
+
+    Mutates ``options``. New-style flow presets are left untouched — their
+    feature fields are authoritative.
+    """
+    (
+        options.preset,
+        options.subtitle_action,
+        options.dub_audio,
+        options.extra_text_action,
+    ) = resolve_preset(
+        options.preset,
+        options.subtitle_action,
+        options.dub_audio,
+        options.extra_text_action,
+        blur_extra=options.blur_extra,
+    )
 
 
 @dataclass(frozen=True)
@@ -69,7 +125,15 @@ class JobEvent:
 class JobOptions:
     input_path: str
     output_path: str
-    preset: str = "blur-all"
+    #: Detection flow: "yolo-4class" (self-trained burn-in model) or
+    #: "yolo-text" (single-class yolo11n-text + classifier).
+    preset: str = "yolo-4class"
+    #: What happens to burned-in subtitles: "translate" | "blur" | "preserve".
+    subtitle_action: str = "blur"
+    #: Whether the audio pipeline dubs the video.
+    dub_audio: bool = False
+    #: Action for logo/watermark/other burn-in text: "blur" | "preserve".
+    extra_text_action: str = "blur"
     device: str = "auto"
     job_id: str = ""
     overwrite: bool = False
@@ -227,12 +291,12 @@ class JobRunner:
                 self._job_store.release(claimed_job_id)
 
     def prepare(self, options: JobOptions) -> tuple[JobOptions, ProcessingRequest]:
-        supported_presets = {
-            "blur-all", "translate-subtitle", "preserve-all", "dub-audio",
-            "translate-video", "blur-and-dub",
-        } | GENERIC_PRESETS
-        if options.preset not in supported_presets:
-            raise ValidationError(f"Unsupported preset: {options.preset}")
+        if options.preset not in YOLO_FLOW_PRESETS:
+            _normalize_preset(options)
+        if options.subtitle_action not in {"translate", "blur", "preserve"}:
+            raise ValidationError(f"Unsupported subtitle_action: {options.subtitle_action}")
+        if options.extra_text_action not in {"blur", "preserve"}:
+            raise ValidationError(f"Unsupported extra_text_action: {options.extra_text_action}")
         if options.profile not in {"quality", "balanced", "fast"}:
             raise ValidationError(f"Unsupported profile: {options.profile}")
         if options.device not in {"auto", "cuda", "cpu"}:
@@ -250,7 +314,7 @@ class JobRunner:
         options.translation_provider = config.resolve("translation", options.translation_provider)
         options.tts_provider = config.resolve("tts", options.tts_provider)
         if (
-            options.preset in GENERIC_PRESETS
+            options.preset == "yolo-text"
             and Path(options.yolo_weights).resolve() == Path(BURN_IN_WEIGHTS_DEFAULT).resolve()
         ):
             options.yolo_weights = str(PROJECT_ROOT / GENERIC_TEXT_WEIGHTS_REL)
@@ -258,8 +322,7 @@ class JobRunner:
         options.device = effective_device
         options.input_path = str(input_path)
         options.output_path = str(output_path)
-        base = _base_preset(options.preset)
-        needs_dubbing = base in {"dub-audio", "translate-video", "blur-and-dub"}
+        needs_dubbing = bool(options.dub_audio)
         parsed_segments = None
         if options.segments:
             from src.core.models.speech_segment import SpeechSegment
@@ -283,7 +346,7 @@ class JobRunner:
         normalized_layout = "temporal" if options.subtitle_layout in {"in-place", "temporal"} else "bottom"
         visual.subtitle_layout = normalized_layout
         visual.hide_source_subtitle = options.hide_source_subtitle
-        if options.segments and base in {"translate-subtitle", "translate-video"}:
+        if options.segments and options.subtitle_action == "translate":
             visual.segments = options.segments
         request = ProcessingRequest(
             job_id=options.job_id or f"job_v2_{int(time.time())}",
@@ -297,8 +360,9 @@ class JobRunner:
         return options, request
 
     def _preflight(self, options: JobOptions) -> str:
-        base = _base_preset(options.preset)
-        needs_visual = base != "dub-audio"
+        needs_visual = not (
+            options.subtitle_action == "preserve" and options.extra_text_action == "preserve"
+        )
         effective_device = "cpu"
         if needs_visual:
             torch = self._require_dependency("torch", "torch")
@@ -306,7 +370,7 @@ class JobRunner:
             self._require_dependency("ultralytics", "ultralytics")
             if not Path(options.yolo_weights).is_file():
                 message = f"YOLO weights not found: {options.yolo_weights}"
-                if options.preset in GENERIC_PRESETS:
+                if options.preset == "yolo-text":
                     message += (
                         f". Download best.pt from {GENERIC_TEXT_WEIGHTS_URL} and place it at "
                         "models/yolo/text/best.pt, or pass --yolo-weights / set "
@@ -329,10 +393,9 @@ class JobRunner:
                 for s in options.segments
             )
         )
-        needs_translation = (
-            base in {"translate-subtitle", "dub-audio", "translate-video", "blur-and-dub"}
-            and not has_pretranslated_segments
-        )
+        needs_visual_translation = options.subtitle_action == "translate" and not options.segments
+        needs_audio_translation = bool(options.dub_audio) and not has_pretranslated_segments
+        needs_translation = needs_visual_translation or needs_audio_translation
         has_gemini = bool(os.getenv("GEMINI_API_KEY"))
         has_openrouter = has_openrouter_keys()
         if needs_translation and options.translation_provider == "auto" and not (has_openrouter or has_gemini):
@@ -341,10 +404,10 @@ class JobRunner:
             raise ConfigurationError("OPENROUTER_API_KEY(S) is required for translation provider openrouter.")
         if options.translation_provider == "gemini" and not has_gemini:
             raise ConfigurationError("GEMINI_API_KEY is required for translation provider gemini.")
-        if base in {"translate-subtitle", "translate-video"} and not options.segments and not has_gemini:
+        if needs_visual_translation and not has_gemini:
             raise ConfigurationError("GEMINI_API_KEY is required for visual subtitle OCR.")
 
-        if base in {"dub-audio", "translate-video", "blur-and-dub"}:
+        if options.dub_audio:
             if not options.segments:
                 if options.asr_provider == "auto" and not (os.getenv("GROQ_API_KEY") or has_gemini):
                     raise ConfigurationError("ASR requires GROQ_API_KEY or GEMINI_API_KEY.")
@@ -373,39 +436,45 @@ class JobRunner:
 
     @staticmethod
     def _visual_request(options: JobOptions) -> VisualRequest:
-        base = _base_preset(options.preset)
         common = {
             "target_language": options.target_language,
             "subtitle_layout": options.subtitle_layout,
             "hide_source_subtitle": options.hide_source_subtitle,
         }
-        if options.segments and base in {"translate-subtitle", "translate-video"}:
-            common["segments"] = options.segments
-        if base in {"translate-subtitle", "translate-video"}:
-            blur_action = "blur" if options.blur_extra else "preserve"
-            return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="translate_replace",
-                                 logo_enabled=True, logo_action=blur_action, watermark_enabled=True,
-                                 watermark_action=blur_action, other_text_enabled=True,
-                                 other_text_action=blur_action, **common)
-        if base == "preserve-all":
-            return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="preserve",
-                                 logo_enabled=True, logo_action="preserve", watermark_enabled=True,
-                                 watermark_action="preserve", other_text_enabled=True,
-                                 other_text_action="preserve", **common)
-        if base == "dub-audio":
+        # Nothing touches pixels: skip detection entirely (mirrors the old
+        # dub-audio preset and makes preserve-only jobs cheap).
+        if options.subtitle_action == "preserve" and options.extra_text_action == "preserve":
             return VisualRequest(enabled=False, **common)
-        return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode="blur",
-                             logo_enabled=True, logo_action="blur", watermark_enabled=True,
-                             watermark_action="blur", other_text_enabled=True,
-                             other_text_action="blur", **common)
+        if options.segments and options.subtitle_action == "translate":
+            common["segments"] = options.segments
+        subtitle_mode = {
+            "translate": "translate_replace",
+            "blur": "blur",
+            "preserve": "preserve",
+        }[options.subtitle_action]
+        return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode=subtitle_mode,
+                             logo_enabled=True, logo_action=options.extra_text_action,
+                             watermark_enabled=True, watermark_action=options.extra_text_action,
+                             other_text_enabled=True, other_text_action=options.extra_text_action,
+                             **common)
 
     @staticmethod
     def _compose(options: JobOptions, request: ProcessingRequest) -> tuple[ProcessVideoUseCase, dict[str, Any]]:
         video_util = FFmpegVideoAdapter()
-        base = _base_preset(options.preset)
-        is_generic = options.preset in GENERIC_PRESETS
-        needs_visual_translation = base in {"translate-subtitle", "translate-video"}
-        needs_audio_translation = base in {"dub-audio", "translate-video", "blur-and-dub"}
+        # Resolve here too so direct callers (tests, tooling) with a raw
+        # legacy preset behave exactly like a prepared JobOptions.
+        resolved_preset, _, _, _ = resolve_preset(
+            options.preset,
+            options.subtitle_action,
+            options.dub_audio,
+            options.extra_text_action,
+            blur_extra=options.blur_extra,
+        )
+        use_text_flow = resolved_preset == "yolo-text"
+        needs_visual_translation = (
+            request.visual.enabled and request.visual.subtitle_mode == "translate_replace"
+        )
+        needs_audio_translation = bool(options.dub_audio)
         visual_translation = build_translation_service("subtitle", options.translation_provider) if needs_visual_translation else None
         audio_translation = build_translation_service("spoken", options.translation_provider) if needs_audio_translation else None
         detector_config = {
@@ -414,7 +483,7 @@ class JobRunner:
             # 4-class burn-in model keeps its low default for the rescue gate.
             "conf": (
                 GENERIC_TEXT_DEFAULT_CONF
-                if is_generic and float(options.yolo_conf) == 0.05
+                if use_text_flow and float(options.yolo_conf) == 0.05
                 else options.yolo_conf
             ),
             "iou": options.yolo_iou,
@@ -422,22 +491,22 @@ class JobRunner:
             # matching it speeds detection up sharply on dense frames.
             "imgsz": (
                 640
-                if is_generic and int(options.yolo_imgsz) == 1024
+                if use_text_flow and int(options.yolo_imgsz) == 1024
                 else options.yolo_imgsz
             ),
             "device": options.device,
             # Class-gated weak-subtitle rescue never applies to the generic
             # single-class model; disable it explicitly.
-            "subtitle_rescue_conf": None if is_generic else options.yolo_subtitle_rescue_conf,
+            "subtitle_rescue_conf": None if use_text_flow else options.yolo_subtitle_rescue_conf,
             "subtitle_rescue_max_gap_seconds": options.yolo_subtitle_rescue_max_gap_seconds,
             "subtitle_rescue_min_support_ratio": options.yolo_subtitle_rescue_min_support_ratio,
         }
         detector = YoloDetectorAdapter(**detector_config) if request.visual.enabled else None
-        if is_generic and detector is not None:
+        if use_text_flow and detector is not None:
             from src.features.visual.text_classifier import TextClassifyingDetector
 
             detector = TextClassifyingDetector(detector)
-        if is_generic and request.visual.enabled:
+        if use_text_flow and request.visual.enabled:
             # Classifier edits change detector output semantics; include the
             # classifier source digest so the detection cache invalidates.
             from src.infrastructure.stage_cache import file_digest
@@ -459,11 +528,17 @@ class JobRunner:
                 visual_translation, detector_config, options.translation_provider,
             )
         from src.infrastructure.video.scene_boundaries import FrameDifferenceSceneDetector
+        from src.infrastructure.stage_cache import CachedSceneCuts
+
+        scene_detector = FrameDifferenceSceneDetector()
+        if request.visual.enabled and "scene" in caches:
+            scene_detector = CachedSceneCuts(scene_detector, caches["scene"])
 
         visual_pipeline = VisualPipeline(
             detector=detector,
             subtitle_processor=SubtitleProcessor(ocr_provider=ocr_provider, translation_service=visual_translation),
-            scene_detector=FrameDifferenceSceneDetector(),
+            scene_detector=scene_detector,
+            video_util=video_util,
         )
         audio_pipeline = AudioPipeline(audio_extractor=video_util)
         if request.audio.enabled:

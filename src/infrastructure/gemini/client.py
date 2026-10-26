@@ -5,7 +5,6 @@ import os
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
-import logging
 
 
 from src.infrastructure.gemini.contracts import (

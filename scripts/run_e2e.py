@@ -236,11 +236,31 @@ def parse_args():
     )
     parser.add_argument(
         "--preset",
-        choices=["blur-all", "translate-subtitle", "preserve-all", "dub-audio", "translate-video",
-                 "translate-video-generic", "translate-subtitle-generic"],
-        default="blur-all",
-        help="Policy preset (default: blur-all). *-generic runs the generic single-class "
-             "text model with automatic class classification.",
+        choices=[
+            "yolo-4class", "yolo-text",
+            # Deprecated feature-combination presets (plus the -generic
+            # suffix); they map onto the flow preset + feature flags.
+            "blur-all", "translate-subtitle", "preserve-all", "dub-audio",
+            "translate-video", "blur-and-dub",
+            "translate-video-generic", "translate-subtitle-generic",
+        ],
+        default="yolo-4class",
+        help="Detection-flow preset: yolo-4class = self-trained 4-class burn-in "
+             "model; yolo-text = yolo11n-text single class + classifier. The "
+             "deprecated feature presets map onto the flow + feature flags.",
+    )
+    parser.add_argument(
+        '--subtitle-action', choices=['translate', 'blur', 'preserve'], default='blur',
+        help='What happens to burned-in subtitles (flow presets only; '
+             'deprecated presets derive this from their name).',
+    )
+    parser.add_argument(
+        '--dub-audio', action='store_true',
+        help='Dub the audio track into the target language.',
+    )
+    parser.add_argument(
+        '--extra-text-action', choices=['blur', 'preserve'], default='blur',
+        help='Action for watermark, logo, and other burn-in text.',
     )
     parser.add_argument(
         "--policy", type=str, default="", help="Path to policy YAML file"
@@ -306,8 +326,31 @@ def parse_args():
     return parser.parse_args()
 
 
+def _resolve_args_preset(args):
+    """Resolve deprecated preset names onto the flow preset + feature fields.
+
+    Uses the same contract as the job runner so CLI and web stay aligned;
+    idempotent for already-resolved flow presets.
+    """
+    from src.interfaces.jobs.runner import resolve_preset
+
+    (
+        args.preset,
+        args.subtitle_action,
+        args.dub_audio,
+        args.extra_text_action,
+    ) = resolve_preset(
+        args.preset,
+        getattr(args, "subtitle_action", "blur"),
+        getattr(args, "dub_audio", False),
+        getattr(args, "extra_text_action", "blur"),
+        blur_extra=getattr(args, "blur_extra", False),
+    )
+    return args
+
+
 def preflight_check(args):
-    base_preset = args.preset.removesuffix("-generic")
+    _resolve_args_preset(args)
     print("=" * 60)
     print("[1/5] Preflight Check")
     print("=" * 60)
@@ -317,7 +360,9 @@ def preflight_check(args):
         raise FileNotFoundError(f"Input video does not exist: {input_path}")
     print(f"  [OK] Input video: {input_path}")
 
-    needs_visual = base_preset != "dub-audio"
+    needs_visual = not (
+        args.subtitle_action == "preserve" and args.extra_text_action == "preserve"
+    )
     effective_device = "cpu"
     if needs_visual:
         torch = require_runtime_dependency("torch", "torch")
@@ -326,12 +371,12 @@ def preflight_check(args):
         version = getattr(ultralytics, "__version__", "installed")
         print(f"  [OK] YOLO runtime: ultralytics {version} ({sys.executable})")
         weights_path = Path(args.yolo_weights)
-        if args.preset.endswith("-generic") and weights_path.resolve() == (BASE_DIR / "models" / "yolo" / "best.pt").resolve():
+        if args.preset == "yolo-text" and weights_path.resolve() == (BASE_DIR / "models" / "yolo" / "best.pt").resolve():
             weights_path = BASE_DIR / "models" / "yolo" / "text" / "best.pt"
             args.yolo_weights = str(weights_path)
         if not weights_path.exists():
             message = f"YOLO weights not found at expected location: {weights_path}"
-            if args.preset.endswith("-generic"):
+            if args.preset == "yolo-text":
                 message += (
                     ". Download best.pt from https://huggingface.co/RoyRud1902/yolo11n-text "
                     "and place it at models/yolo/text/best.pt."
@@ -347,7 +392,7 @@ def preflight_check(args):
         else:
             print("  [OK] Compute Device: cpu")
     else:
-        print("  [OK] Visual pipeline disabled for dub-audio; YOLO preflight skipped")
+        print("  [OK] Visual pipeline disabled (preserve-only job); YOLO preflight skipped")
 
     if not shutil.which("ffmpeg"):
         raise RuntimeError("FFmpeg executable not found in PATH.")
@@ -361,7 +406,10 @@ def preflight_check(args):
         raise FileExistsError(f"Output path already exists (use --overwrite to replace): {output_path}")
     print(f"  [OK] Output directory: {output_path.parent} (writable)")
 
-    needs_translation = base_preset in {"translate-subtitle", "dub-audio", "translate-video"} or (args.policy and "translate" in args.policy)
+    needs_translation = (
+        args.subtitle_action == "translate" or args.dub_audio
+        or (args.policy and "translate" in args.policy)
+    )
     if needs_translation:
         has_openrouter = _has_openrouter_keys()
         has_gemini = bool(os.getenv("GEMINI_API_KEY"))
@@ -379,10 +427,10 @@ def preflight_check(args):
         print(f"  [OK] Translation: {selected_translation}")
 
     # Visual subtitle OCR is still a separate Gemini Vision service.
-    if base_preset in {"translate-subtitle", "translate-video"} and not os.getenv("GEMINI_API_KEY"):
+    if args.subtitle_action == "translate" and not os.getenv("GEMINI_API_KEY"):
         raise RuntimeError("GEMINI_API_KEY is currently required for visual subtitle OCR.")
 
-    if base_preset in {"dub-audio", "translate-video"}:
+    if args.dub_audio:
         selected_asr = args.asr_provider
         if selected_asr == "auto":
             if os.getenv("GROQ_API_KEY"):
@@ -430,13 +478,12 @@ def preflight_check(args):
 
 def main():
     args = parse_args()
+    _resolve_args_preset(args)
     effective_device, input_path, output_path = preflight_check(args)
-    base_preset = args.preset.removesuffix("-generic")
-    is_generic = args.preset.endswith("-generic")
     job_id = args.job_id or f"job_v2_{int(time.time())}"
 
-    # Build feature requests based on preset.
-    needs_dubbing = base_preset in {"dub-audio", "translate-video"}
+    # Build feature requests from the resolved feature fields.
+    needs_dubbing = bool(args.dub_audio)
     audio_req = AudioRequest(
         enabled=needs_dubbing,
         source_language=args.source_language,
@@ -444,47 +491,20 @@ def main():
         dubbing_enabled=needs_dubbing,
         voice=args.voice,
     )
-    if base_preset in {"translate-subtitle", "translate-video"}:
-        blur_action = "blur" if getattr(args, "blur_extra", False) else "preserve"
-        visual_req = VisualRequest(
-            enabled=True,
-            subtitle_enabled=True,
-            subtitle_mode="translate_replace",
-            target_language=args.target_language,
-            logo_enabled=True,
-            logo_action=blur_action,
-            watermark_enabled=True,
-            watermark_action=blur_action,
-            other_text_enabled=True,
-            other_text_action=blur_action,
-        )
-    elif base_preset == "preserve-all":
-        visual_req = VisualRequest(
-            enabled=True,
-            subtitle_enabled=True,
-            subtitle_mode="preserve",
-            target_language=args.target_language,
-            logo_enabled=True,
-            logo_action="preserve",
-            watermark_enabled=True,
-            watermark_action="preserve",
-            other_text_enabled=True,
-            other_text_action="preserve",
-        )
-    elif base_preset == "dub-audio":
+    if args.subtitle_action == "preserve" and args.extra_text_action == "preserve":
         visual_req = VisualRequest(enabled=False, target_language=args.target_language)
-    else:  # blur-all / default
+    else:
         visual_req = VisualRequest(
             enabled=True,
             subtitle_enabled=True,
-            subtitle_mode="blur",
+            subtitle_mode={"translate": "translate_replace", "blur": "blur", "preserve": "preserve"}[args.subtitle_action],
             target_language=args.target_language,
             logo_enabled=True,
-            logo_action="blur",
+            logo_action=args.extra_text_action,
             watermark_enabled=True,
-            watermark_action="blur",
+            watermark_action=args.extra_text_action,
             other_text_enabled=True,
-            other_text_action="blur",
+            other_text_action=args.extra_text_action,
         )
 
     visual_req.subtitle_layout = args.subtitle_layout
@@ -507,8 +527,8 @@ def main():
     # Wire replaceable providers at the composition root. Visual and audio translation
     # deliberately use separate service instances and separate prompts/context policies.
     video_util = FFmpegVideoAdapter()
-    needs_visual_translation = base_preset in {"translate-subtitle", "translate-video"}
-    needs_audio_translation = base_preset in {"dub-audio", "translate-video"}
+    needs_visual_translation = visual_req.enabled and visual_req.subtitle_mode == "translate_replace"
+    needs_audio_translation = bool(args.dub_audio)
     visual_translation_service = (
         _build_translation_service("subtitle", args.translation_provider)
         if needs_visual_translation
@@ -521,20 +541,21 @@ def main():
     )
 
     yolo_weights = args.yolo_weights
-    if is_generic and Path(yolo_weights).resolve() == (BASE_DIR / "models" / "yolo" / "best.pt").resolve():
+    use_text_flow = args.preset == "yolo-text"
+    if use_text_flow and Path(yolo_weights).resolve() == (BASE_DIR / "models" / "yolo" / "best.pt").resolve():
         yolo_weights = str(BASE_DIR / "models" / "yolo" / "text" / "best.pt")
     detector_config = dict(
         weights_path=yolo_weights,
-        conf=(0.20 if is_generic and float(args.yolo_conf) == 0.05 else args.yolo_conf),
+        conf=(0.20 if use_text_flow and float(args.yolo_conf) == 0.05 else args.yolo_conf),
         iou=args.yolo_iou,
         imgsz=args.yolo_imgsz,
         device=effective_device,
-        subtitle_rescue_conf=(None if is_generic else args.yolo_subtitle_rescue_conf),
+        subtitle_rescue_conf=(None if use_text_flow else args.yolo_subtitle_rescue_conf),
         subtitle_rescue_max_gap_seconds=args.yolo_subtitle_rescue_max_gap_seconds,
         subtitle_rescue_min_support_ratio=args.yolo_subtitle_rescue_min_support_ratio,
     )
     detector = YoloDetectorAdapter(**detector_config) if visual_req.enabled else None
-    if is_generic and detector is not None:
+    if use_text_flow and detector is not None:
         from src.features.visual.text_classifier import TextClassifyingDetector
         detector = TextClassifyingDetector(detector)
     ocr_provider = None
@@ -543,7 +564,7 @@ def main():
         ocr_provider = GeminiOCRAdapter()
     visual_caches = {}
     if visual_req.enabled and not args.no_visual_cache:
-        if is_generic:
+        if use_text_flow:
             from src.infrastructure.stage_cache import file_digest
             detector_config["classifier_sha256"] = file_digest(
                 BASE_DIR / "src" / "features" / "visual" / "text_classifier.py"
@@ -599,11 +620,15 @@ def main():
 
 def run_job(args, *, runner: JobRunner | None = None):
     """CLI adapter over the same structured runner used by the local web."""
+    _resolve_args_preset(args)
     selected_runner = runner or JobRunner()
     options = JobOptions(
         input_path=args.input,
         output_path=args.output,
         preset=args.preset,
+        subtitle_action=args.subtitle_action,
+        dub_audio=args.dub_audio,
+        extra_text_action=args.extra_text_action,
         device=args.device,
         job_id=args.job_id,
         overwrite=args.overwrite,

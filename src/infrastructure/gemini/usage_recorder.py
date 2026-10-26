@@ -7,7 +7,6 @@ from typing import Callable, Dict, List, Optional
 
 from src.infrastructure.gemini.contracts import (
     MODE_ROLE_PRIMARY,
-    MODE_ROLE_ESCALATION,
 )
 
 

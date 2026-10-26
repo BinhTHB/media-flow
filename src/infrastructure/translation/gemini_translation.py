@@ -7,7 +7,9 @@ Implements TranslationPort using Gemini API directly via GeminiRuntime.
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+import os
+import re
+from typing import Dict, List, Optional
 
 from src.core.contracts import TranslationPort
 from src.infrastructure.gemini.contracts import GeminiRequest
@@ -21,11 +23,13 @@ class GeminiTranslationAdapter(TranslationPort):
     def __init__(
         self,
         runtime: Optional[GeminiRuntime] = None,
-        model: str = "gemini-3.5-flash-lite",
+        model: Optional[str] = None,
         purpose: str = "subtitle",
     ):
         self._runtime = runtime or GeminiRuntime.create()
-        self.model = model
+        # MEDIAFLOW_GEMINI_MODEL overrides every Gemini call site (see
+        # GeminiOCRAdapter for the matching OCR-side override).
+        self.model = os.getenv("MEDIAFLOW_GEMINI_MODEL") or model or "gemini-3.5-flash-lite"
         self.purpose = purpose if purpose in {"subtitle", "spoken"} else "subtitle"
 
     def translate_texts(
@@ -64,31 +68,35 @@ class GeminiTranslationAdapter(TranslationPort):
                 "3. Make the result natural when spoken aloud and concise enough for dubbing, but never omit content merely to shorten it.\n"
                 "4. Do not merge or split numbered segments.\n"
             )
-        else:
-            guidelines = (
-                "1. These are consecutive on-screen subtitle lines from one scene. Infer the topic/domain from the whole batch before translating each line.\n"
-                "2. CRITICAL SEGMENT RULE: each numbered output may contain ONLY meaning present in that same numbered source line. Neighboring lines may disambiguate terminology but must NEVER donate clauses, numbers, objects, or details. If a source line is an incomplete fragment, keep it an incomplete but natural Vietnamese fragment; do not complete it using the next/previous line.\n"
-                "3. Produce fluent, concise captions suitable for at most two subtitle lines.\n"
-                "4. Resolve ambiguous words and jargon by domain, not by everyday literal meaning. In Chinese finance, 国家队 means state-backed market institutions/funds rather than a sports team; 游资 means speculative/hot-money capital or a speculator depending grammar; 燥热 describes physical sweltering/oi bức/nóng nực, never impatience or emotional excitement.\n"
-                "5. Keep proper names, finance terminology, numbers, and recurring terms consistent. Prefer idiomatic Vietnamese over unnecessary English loanwords; for target Vietnamese, 巫师 should normally be 'Phù thủy' or 'Pháp sư', not 'Wizard'.\n"
-                "6. Avoid word-for-word awkward or archaic translations (e.g. translate '拜拜' as 'Tạm biệt' or 'Chào nhé', NOT 'Biệt ly').\n"
-                "7. Preserve original tone, emotion, meaning, and line count.\n"
+            prompt = (
+                f"Translate each numbered video line into natural, conversational {target_language}.\n"
+                "Translation guidelines:\n"
+                f"{guidelines}"
+                "7. Preserve every line number using the exact format 'i: translated_text'.\n"
+                "8. Return only translated numbered lines with no explanations or extra quotes.\n\n"
+                f"{numbered_lines}"
             )
-        prompt = (
-            f"Translate each numbered video line into natural, conversational {target_language}.\n"
-            "Translation guidelines:\n"
-            f"{guidelines}"
-            "7. Preserve every line number using the exact format 'i: translated_text'.\n"
-            "8. Return only translated numbered lines with no explanations or extra quotes.\n\n"
-            f"{numbered_lines}"
-        )
+        else:
+            # Compact prompt with a worked example. Long rule-list prompts push
+            # gemma-4-26b into "describe mode" (it annotates each line instead
+            # of translating); a short instruction plus one example keeps it in
+            # translation mode. Domain-quality guards live in the router
+            # validator, not in the prompt.
+            prompt = (
+                f"Translate each numbered video subtitle line into natural, conversational {target_language}.\n"
+                "Keep each line's meaning only, keep numbers, keep proper names.\n"
+                "A line may contain the same caption twice (Chinese row plus its English translation): translate that meaning ONCE, as a single line.\n"
+                "Output ONLY numbered lines in the format 'i: translation'.\n\n"
+                "Example:\n0: 第一条: 要温柔\n0: Thứ nhất: Hãy dịu dàng\n\n"
+                f"{numbered_lines}"
+            )
 
         try:
             client = self._runtime.get_client(model=self.model)
             response = client.generate_content(
                 GeminiRequest(
                     contents=[{"parts": [{"text": prompt}]}],
-                    generation_config={"temperature": 0.3},
+                    generation_config={"temperature": 0.1},
                     source_kind="translation",
                 )
             )
@@ -101,10 +109,95 @@ class GeminiTranslationAdapter(TranslationPort):
             raise RuntimeError(f"Gemini translation failed: {exc}") from exc
 
     @staticmethod
-    def _parse_numbered_lines(content: str, original_texts: List[str]) -> List[str]:
-        translated = {}
-        for line in content.splitlines():
-            index_text, separator, text = line.partition(":")
-            if separator and index_text.strip().isdigit():
-                translated[int(index_text.strip())] = text.strip()
-        return [translated.get(index, original_texts[index]) for index in range(len(original_texts))]
+    def _sanitize_value(text: str) -> str:
+        value = text.strip()
+        # Gemma echoes the source before its answer: `source` -> "opt A" or "opt B".
+        # The arrow is a safe cut point only when the echoed part looks like the
+        # source (backticks or CJK), so a caption that legitimately contains an
+        # arrow survives unchanged.
+        arrows = [i for i in (value.find("->"), value.find("→"), value.find("=>")) if i != -1]
+        if arrows:
+            cut = max(arrows)
+            if "`" in value[:cut] or re.search(r"[\u3400-\u9fff]", value[:cut]):
+                value = value[cut:].lstrip("-=→> \t").strip()
+        if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
+            value = value[1:-1].strip()
+        value = re.sub(r"^[`\s]+", "", value)
+        value = re.sub(r"[`.\s]+$", "", value)
+        # Quoted alternative lists and "(Same as N)" notes keep only the first
+        # real translation; quoted speech inside an otherwise bare sentence
+        # ("Anh nói "đi" rồi bỏ đi.") matches neither pattern and is preserved.
+        alternatives = re.match(
+            r'^(?:\([^)]{1,40}\)\s*)?["“]([^"”]{1,200})["”]\s*(?:or|hoặc|and)\s*["“]', value
+        )
+        if alternatives:
+            return alternatives.group(1).strip()
+        single = re.match(r'^(?:\([^)]{1,40}\)\s*)?["“]([^"”]{1,200})["”]\s*[.,]?\s*$', value)
+        if single:
+            return single.group(1).strip()
+        return value
+
+    @classmethod
+    def _parse_numbered_lines(cls, content: str, original_texts: List[str]) -> List[str]:
+        translated: Dict[int, str] = {}
+        for raw_line in content.splitlines():
+            # Strip bullet markers and wrapping backticks that chatty models put
+            # around the final "i: answer" line.
+            line = re.sub(r"^[\*\s`\-]+", "", raw_line.strip())
+            # Tolerate "N:", "N." and bullet prefixes from chatty models.
+            match = re.match(r"^(\d{1,3})\s*[.:)\-]\s*(.*)$", line)
+            if not match:
+                continue
+            # One physical line can carry several entries glued together
+            # ("0: A`0: B", "0: A.0: B"). An embedded marker repeating the line
+            # index or jumping forward starts the next entry; timestamps such
+            # as "0:00" (digit after the separator) and parenthetical notes
+            # like "(Same as 0)" (")" separator) do not.
+            start_index = int(match.group(1))
+            rest = match.group(2)
+            cuts = [
+                m for m in re.finditer(r"(?<!\d)(\d{1,3})\s*[.:]\s*(?!\d)", rest)
+                if int(m.group(1)) >= start_index
+            ]
+            bounds = [m.start() for m in cuts] + [len(rest)]
+            segments: List[tuple] = [(start_index, rest[: bounds[0]])]
+            for k, m in enumerate(cuts):
+                segments.append((int(m.group(1)), rest[m.end() : bounds[k + 1]]))
+            # The first non-empty segment per index wins inside the line: the
+            # trailing copies are re-echoes that the line end often truncates.
+            line_translated: Dict[int, str] = {}
+            for index, text in segments:
+                text = re.sub(r"^\d+\s*[.:)\-]\s*", "", text.strip()).strip()
+                text = cls._sanitize_value(text)
+                if text and index not in line_translated:
+                    line_translated[index] = text
+            # Last wins ACROSS lines: reasoning responses echo the sources
+            # first and place the final answers at the very end, so the last
+            # occurrence of each index is the one to keep. Within a line the
+            # first segment still wins (trailing re-echoes get line-end
+            # truncated).
+            for index, text in line_translated.items():
+                translated[index] = text
+        if len(translated) < len(original_texts):
+            # Chain-of-thought responses bury the final answer mid-prose
+            # ("...Is the format correct? Yes.0: Ánh mắt dịu dàng") where the
+            # line-anchored regex cannot reach it. Collect candidates per index
+            # with last-wins (the final answer trails the reasoning), then fill
+            # strictly-empty slots so already-parsed answers stand. Out-of-range
+            # indices are dropped by the fill loop.
+            salvaged: Dict[int, str] = {}
+            for raw_line in content.splitlines():
+                match = re.search(r"(?<!\d)(\d{1,3})\s*[.:)\-]\s*(?!\d)(.+)$", raw_line.strip())
+                if not match:
+                    continue
+                text = cls._sanitize_value(match.group(2).strip().strip("`").strip())
+                if text:
+                    salvaged[int(match.group(1))] = text
+            for index in range(len(original_texts)):
+                if not translated.get(index) and salvaged.get(index):
+                    translated[index] = salvaged[index]
+        # An unparsed line must NOT fall back to the source text: that rendered
+        # original-language captions (with literal "\n") as if they were
+        # translations. An empty value lets the router validation fail the
+        # chunk so the fail-safe pass suppresses the source pixels instead.
+        return [translated.get(index, "") for index in range(len(original_texts))]

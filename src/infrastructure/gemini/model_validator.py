@@ -5,7 +5,6 @@ from typing import Iterable, Optional
 
 from src.infrastructure.gemini.contracts import (
     GeminiModelClient,
-    GENERATE_CONTENT_METHOD,
     MODEL_STAGE_FAIL,
 )
 from src.infrastructure.gemini.exceptions import GeminiModelValidationError, GeminiConfigurationError

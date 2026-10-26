@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from src.core.models.speech_segment import SpeechSegment
 from src.infrastructure.speech.router import FallbackASRAdapter
@@ -116,7 +115,7 @@ class _FailTranslation:
 
 class _GoodTranslation:
     def translate_texts(self, texts, target_language="vi", source_language="auto"):
-        return [f"VI:{text}" for text in texts]
+        return [f"Đã dịch: {text}" for text in texts]
 
 
 def test_translation_router_uses_fallback():
@@ -124,7 +123,7 @@ def test_translation_router_uses_fallback():
         ("primary", _FailTranslation()),
         ("fallback", _GoodTranslation()),
     ])
-    assert router.translate_texts(["a", "b"]) == ["VI:a", "VI:b"]
+    assert router.translate_texts(["a", "b"]) == ["Đã dịch: a", "Đã dịch: b"]
 
 
 def test_translation_router_repairs_cross_segment_leakage_selectively():
@@ -193,6 +192,70 @@ def test_validator_still_flags_token_migration_into_unrelated_line():
     translated = ["Thị trường hôm nay rất đẹp", "Bloomberg terminal đã báo cáo"]
 
     assert 1 in FallbackTranslationAdapter._suspicious_indices(source, translated)
+
+
+def test_validator_flags_prompt_boilerplate_echo():
+    # Real gemma-4-26b output: the model answered with task instructions
+    # instead of a translation, and every other check was blind to it
+    # (non-empty, no numbers, no Latin protected tokens, CJK-free).
+    source = ["One: be gentle", "轻声细语"]
+    translated = [
+        "Preserve line numbers (`i: translated_text`).",
+        "Dịch theo định dạng numbered lines nhé",
+    ]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == [0, 1]
+
+
+def test_validator_flags_untranslated_cjk_echo_with_gloss():
+    # Real gemma-4-26b "explain mode" output: source copied verbatim plus an
+    # English gloss. _normalize strips CJK so the echo itself was invisible
+    # to every earlier check and rendered as a READY "translation".
+    source = ["妈妈总是教导我们", "一位合格的淑女必须遵循以下规则"]
+    translated = [
+        "妈妈总是教导我们 (Chinese: Mom always teaches us)",
+        "A qualified lady must follow these rules (English)",
+    ]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == [0, 1]
+
+
+def test_validator_accepts_real_vietnamese_of_cjk_source():
+    # Guard against false positives: clean Vietnamese contains no CJK at all.
+    source = ["妈妈总是教导我们", "轻声细语"]
+    translated = ["Mẹ luôn dạy chúng con", "Nói khẽ nói nhẹ"]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == []
+
+
+def test_validator_flags_describe_mode_english_for_vi_target():
+    # Real gemma-4-26b "describe mode" output: numbered lines with English
+    # descriptions instead of Vietnamese translations. No CJK echo, no gloss
+    # parentheses — only the missing-diacritics check can catch these.
+    source = ["眼神柔和", "双手轻柔", "轻声细语"]
+    translated = [
+        'Description: "Soft eyes/gaze"',
+        'Description: "Hands gentle/softly"',
+        'Instruction: "Be gentle"',
+    ]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == [0, 1, 2]
+
+
+def test_validator_allows_short_proper_noun_passthrough_for_vi_target():
+    source = ["Spongecake", "WiFi 6"]
+    translated = ["Spongecake", "WiFi 6"]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == []
+
+
+def test_validator_flags_untranslated_long_english_source_for_vi_target():
+    # An English sentence "translated" as itself is not a proper-noun
+    # passthrough; it must be flagged so the fail-safe suppresses it.
+    source = ["A qualified lady must follow these rules"]
+    translated = ["A qualified lady must follow these rules"]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == [0]
 
 
 def test_fish_tts_rotates_key_and_writes_audio(monkeypatch, tmp_path):
@@ -390,3 +453,60 @@ def test_asr_consensus_retries_when_first_model_preserves_mixed_cjk_latin(monkey
     result = corrector.correct_segments(segments, language="zh", audio_path="x.wav")
     assert calls == ["m1", "m2"]
     assert result[0].source_text == "有个外卖我送错。"
+
+
+def test_validator_accepts_latin_canonical_character_names():
+    # Real gemma output on a One Piece clip: CJK person names are canonically
+    # rendered as Latin canonical names without Vietnamese diacritics. The
+    # missing-diacritics check used to reject every one of them, killing the
+    # whole chunk they lived in.
+    source = [
+        "巴索罗米·熊",
+        "月光·莫利亚",
+        "乔拉可尔·米霍克",
+        "波雅·汉库克",
+        "唐吉诃德·多弗朗明哥",
+    ]
+    translated = [
+        "Bartholomew Kuma",
+        "Gekko Moria",
+        "Dracule Mihawk",
+        "Boa Hancock",
+        "Donquixote Doflamingo",
+    ]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == []
+
+
+def test_validator_accepts_name_shaped_output_without_source_dot():
+    source = ["海贼王", "AI制作"]
+    translated = ["One Piece", "AI"]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == []
+
+
+def test_validator_still_flags_english_gloss_without_diacritics():
+    # Name-shaped passthrough must not open the door to describe-mode
+    # English: sentence words and lowercase words still fail.
+    source = ["眼神柔和", "AI制作"]
+    translated = ["Soft eyes", "Made with AI"]
+
+    assert FallbackTranslationAdapter._suspicious_indices(source, translated) == [0, 1]
+
+
+def test_router_fails_only_unresolved_lines_not_the_whole_chunk():
+    # One poisoned line used to raise and mark every neighbor in the chunk
+    # TRANSLATION_FAILED. The router must return best-effort results and
+    # leave only the poisoned line empty (caller maps "" to TRANSLATION_EMPTY).
+    class PoisonedMiddle:
+        def translate_texts(self, texts, target_language="vi", source_language="auto"):
+            return [
+                "Preserve line numbers (`i: translated_text`)."
+                if "hai" in text
+                else f"Đã dịch: {text}"
+                for text in texts
+            ]
+
+    router = FallbackTranslationAdapter([("gemini", PoisonedMiddle())])
+    result = router.translate_texts(["một", "hai", "ba"], target_language="vi")
+    assert result == ["Đã dịch: một", "", "Đã dịch: ba"]

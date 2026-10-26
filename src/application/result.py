@@ -27,6 +27,7 @@ class ProcessingResult:
     tracks_summary: Dict[str, int] = field(default_factory=dict)
     workspace_dir: Optional[str] = None
     timings: Dict[str, float] = field(default_factory=dict)
+    stage_timings: Dict[str, Dict[str, float]] = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
     provenance: Dict[str, Any] = field(default_factory=dict)
     error: Optional[str] = None

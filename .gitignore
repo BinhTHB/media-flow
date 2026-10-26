@@ -133,6 +133,10 @@ FINAL_PHYSICAL_TREE.txt
 Thumbs.db
 desktop.ini
 
+# Agent/editor local state (per-session, not project content)
+.zcode/
+.zcodeignore
+.claude/
 .idea/
 
 .vscode/*

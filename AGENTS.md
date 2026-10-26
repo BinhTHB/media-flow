@@ -1,4 +1,4 @@
-﻿# AGENTS.md
+# AGENTS.md
 
 This file is the operational handbook for AI coding agents and developers working in this repository.
 
@@ -80,20 +80,22 @@ The authoritative architecture rules are defined in `docs/PROJECT_OPERATING_SPEC
 
 Summary:
 
-- `src/domain/` contains entities and validation only.
-- `src/application/` contains use cases, ports, and orchestration policy.
+- `src/core/` contains entities, validation, and port contracts only.
+- `src/features/` contains feature modules (audio, visual, translation, publishing).
+- `src/application/` contains use cases and orchestration policy.
 - `src/infrastructure/` contains provider implementations and third-party integrations.
 - `src/interfaces/` contains CLI/API entry points and dependency wiring.
-- Domain must not import Application, Infrastructure, or Interfaces.
+- Core must not import Application, Features, Infrastructure, or Interfaces.
 - Application must not import Infrastructure or Interfaces.
-- Infrastructure may import Application ports and Domain entities.
+- Features must not import Infrastructure or Interfaces.
+- Infrastructure may import Core/Feature ports and entities.
 - Interfaces may import all layers for composition, parsing, and serialization.
 
 Forbidden examples:
 
 - Calling FFmpeg inside a use case.
-- Importing `faster_whisper`, `openai`, `paddleocr`, or `supabase` in Domain/Application.
-- Making Domain entities aware of provider configuration.
+- Importing `faster_whisper`, `openai`, `paddleocr`, `ultralytics`, or `google.genai` in Core/Application/Features.
+- Making Core entities aware of provider configuration.
 - Putting business orchestration inside a provider.
 - Adding a feature by hard-coding one pipeline branch for one provider.
 
@@ -120,8 +122,8 @@ Required examples:
 
 - Unit tests should use mock providers by default.
 - Real providers require integration tests and must not run by default if they need heavy models, network access, API keys, or GPU.
-- Orchestrator tests must cover feature combinations, including skipped features.
-- Domain tests must cover invalid data and boundary cases.
+- Orchestration tests must cover feature combinations, including skipped features.
+- Core tests must cover invalid data and boundary cases.
 - CLI behavior should be smoke-tested when changing composition, provider selection, or arguments.
 
 ## Before Finishing Any Task
@@ -129,7 +131,7 @@ Required examples:
 Checklist:
 
 - Architecture preserved?
-- Domain/Application free from infrastructure imports?
+- Core/Application free from infrastructure imports?
 - Interfaces stable or deliberately versioned?
 - Data contracts backward compatible?
 - Tests added or updated?
@@ -156,3 +158,5 @@ When uncertain:
 The project evolves by changing providers, features, and composition — not by breaking the architecture.
 
 If a change requires Domain or Application to know about a specific infrastructure tool, the design is wrong and must be revisited.
+
+## Output: Use skill /i-have-adhd

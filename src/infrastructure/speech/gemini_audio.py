@@ -7,7 +7,6 @@ mono MP3 and long inputs are chunked so the adapter remains lightweight locally.
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 import subprocess

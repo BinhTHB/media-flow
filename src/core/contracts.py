@@ -10,8 +10,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from src.core.models.bbox import BBox
 from src.core.models.detection import Detection
+from src.core.models.publication import PublishItem, PublishRecord, VideoMetadata
 from src.core.models.speech_segment import SpeechSegment
 
 
@@ -106,4 +106,43 @@ class VideoUtilPort(ABC):
     @abstractmethod
     def probe_video(self, video_path: str) -> Dict[str, Any]:
         """Probe video duration, resolution, FPS, and audio stream presence."""
+        pass
+
+    def open_encoded_frame_writer(self, output_path: str, fps: float, width: int, height: int) -> Any:
+        """Return a frame writer exposing ``write(frame)``/``release()`` that
+        encodes a web-compatible (H.264 / yuv420p) file in a single pass.
+
+        Optional port extension: implementers may raise NotImplementedError,
+        in which case callers fall back to their local default encoder.
+        """
+        raise NotImplementedError
+
+
+class TransientPublishError(RuntimeError):
+    """Publication failed in a way worth retrying later (rate limit, quota
+    window, 5xx). Raised by PublicationPort providers; the publishing use
+    case owns the retry/backoff policy."""
+
+
+class PublicationPort(ABC):
+    """Publishes one finished video to one platform.
+
+    Providers must raise TransientPublishError for retryable failures so the
+    use case can back off; any other exception marks the item FAILED."""
+
+    platform_name: str = "unknown"
+
+    @abstractmethod
+    def publish(self, item: PublishItem) -> PublishRecord:
+        """Publish a PublishItem; returns a PublishRecord (core models)."""
+        pass
+
+
+class MetadataGenerationPort(ABC):
+    """Generates platform metadata (title/description/tags) for a video."""
+
+    @abstractmethod
+    def generate(self, video_path: str, hints: Optional[Dict[str, Any]] = None) -> VideoMetadata:
+        """Return a VideoMetadata (core models); must not raise on model
+        failure — providers fall back to safe filename-derived metadata."""
         pass

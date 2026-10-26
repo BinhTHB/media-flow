@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from urllib.request import urlopen
 
 import pytest
@@ -99,7 +100,11 @@ def test_web_job_maps_to_shared_runner_contract() -> None:
 
     assert options.input_path == job["input_path"]
     assert options.output_path == job["output_path"]
-    assert options.preset == "dub-audio"
+    # The legacy dub-audio preset resolves onto the flow + feature fields.
+    assert options.preset == "yolo-4class"
+    assert options.subtitle_action == "preserve"
+    assert options.dub_audio is True
+    assert options.extra_text_action == "preserve"
     assert options.profile == "quality"
     assert options.subtitle_layout == "bottom"
     assert options.hide_source_subtitle is False
@@ -132,11 +137,62 @@ def test_create_job_aligns_with_cli_pipeline_defaults(monkeypatch: pytest.Monkey
     }
 
     job = create_job(payload)
-    assert job["preset"] == "translate-video"
+    # The legacy feature preset resolves onto flow + feature fields.
+    assert job["preset"] == "yolo-4class"
+    assert job["subtitle_action"] == "translate"
+    assert job["dub_audio"] is True
+    assert job["extra_text_action"] == "blur"
     assert job["blur_extra"] is True
     assert job["subtitle_layout"] == "temporal"
     assert job["hide_source_subtitle"] is True
     assert job["segments"] is None  # CLI flow: segments is None!
+
+
+def test_create_job_resolves_legacy_generic_preset(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    from src.interfaces.web.server import create_job
+    import src.interfaces.web.server as web_server
+
+    dummy_video = tmp_path / "test.mp4"
+    dummy_video.write_bytes(b"dummy")
+    monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
+    monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
+
+    job = create_job({
+        "input_path": str(dummy_video),
+        "preset": "translate-subtitle-generic",
+        "subtitle_layout": "temporal",
+    })
+    assert job["preset"] == "yolo-text"
+    assert job["subtitle_action"] == "translate"
+    assert job["dub_audio"] is False
+    assert job["extra_text_action"] == "preserve"
+
+
+def test_create_job_accepts_flow_preset_with_feature_fields(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    from src.interfaces.web.server import create_job
+    import src.interfaces.web.server as web_server
+
+    dummy_video = tmp_path / "test.mp4"
+    dummy_video.write_bytes(b"dummy")
+    monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
+    monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
+
+    job = create_job({
+        "input_path": str(dummy_video),
+        "preset": "yolo-text",
+        "subtitle_action": "blur",
+        "dub_audio": False,
+        "extra_text_action": "blur",
+        "subtitle_layout": "temporal",
+    })
+    assert job["preset"] == "yolo-text"
+    assert job["subtitle_action"] == "blur"
+    assert job["dub_audio"] is False
+    assert job["extra_text_action"] == "blur"
 
 
 def test_local_server_serves_health_and_frontend() -> None:
@@ -166,9 +222,9 @@ def test_local_server_serves_health_and_frontend() -> None:
         thread.join(timeout=2)
 
     assert health["status"] == "ok"
-    assert "blur-all" in health["presets"]
-    assert "translate-video-generic" in health["presets"]
-    assert "translate-subtitle-generic" in health["presets"]
+    assert set(health["presets"]) == {"yolo-4class", "yolo-text"}
+    assert set(health["subtitle_actions"]) == {"translate", "blur", "preserve"}
+    assert set(health["extra_text_actions"]) == {"blur", "preserve"}
     assert "MediaFlow" in html
     assert "Xử lý" in cleanup_html
     # Legacy routes (/index.html, /dubbing.html) intentionally serve the unified studio page.
@@ -242,3 +298,81 @@ def test_local_server_delete_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+def _make_registered_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict:
+    from unittest.mock import MagicMock
+    import src.interfaces.web.server as web_server
+
+    dummy_video = tmp_path / "log-handler-video.mp4"
+    dummy_video.write_bytes(b"dummy")
+    monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
+    monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
+    job = web_server.create_job({"input_path": str(dummy_video), "overwrite": True})
+    return job
+
+
+def test_job_log_handler_streams_pipeline_records(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import logging
+    import src.interfaces.web.server as web_server
+
+    job = _make_registered_job(monkeypatch, tmp_path)
+    job_id = job["id"]
+    try:
+        handler = web_server._attach_job_log_handler(job_id)
+        try:
+            pipeline_logger = logging.getLogger("src.features.visual.pipeline")
+            pipeline_logger.info("Visual: rendering 500/1000 frames (50%)", extra={"mediaflow_pct": 50, "mediaflow_stage": "visual"})
+            pipeline_logger.warning("Visual: provider slow, retrying")
+        finally:
+            web_server._detach_job_log_handler(handler)
+
+        logs = web_server._JOBS[job_id]["logs"]
+        assert any("[PIPELINE] Visual: rendering 500/1000 frames (50%)" in line for line in logs)
+        assert any("provider slow, retrying" in line for line in logs)
+        # Pipeline-internal 50% maps into the runner's 40-90 window.
+        assert web_server._JOBS[job_id]["progress"] == 65
+        assert web_server._JOBS[job_id]["message"] == "Visual: rendering 500/1000 frames (50%)"
+    finally:
+        web_server._JOBS.pop(job_id, None)
+
+
+def test_job_log_handler_progress_is_monotonic(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import logging
+    import src.interfaces.web.server as web_server
+
+    job = _make_registered_job(monkeypatch, tmp_path)
+    job_id = job["id"]
+    try:
+        handler = web_server._attach_job_log_handler(job_id)
+        try:
+            visual_logger = logging.getLogger("src.features.visual.pipeline")
+            audio_logger = logging.getLogger("src.features.audio.pipeline")
+            visual_logger.info("Visual: done", extra={"mediaflow_pct": 100, "mediaflow_stage": "visual"})
+            visual_progress = web_server._JOBS[job_id]["progress"]
+            # Audio starts its own 0-100 scale; job progress must never regress.
+            audio_logger.info("Audio: starting", extra={"mediaflow_pct": 0, "mediaflow_stage": "audio"})
+            audio_logger.info("Audio: TTS 5/10 segments (50%)", extra={"mediaflow_pct": 50, "mediaflow_stage": "audio"})
+            final_progress = web_server._JOBS[job_id]["progress"]
+        finally:
+            web_server._detach_job_log_handler(handler)
+
+        assert visual_progress == 90
+        # Audio reports its own 0-100 scale; the monotonic guard keeps the
+        # job progress from regressing below the visual pipeline's peak.
+        assert final_progress == 90
+        assert web_server._JOBS[job_id]["message"] == "Visual: done"
+    finally:
+        web_server._JOBS.pop(job_id, None)
+
+
+def test_job_log_handler_ignores_unknown_job(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import logging
+    import src.interfaces.web.server as web_server
+
+    handler = web_server._JobLogHandler("web_missing_job")
+    record = logging.LogRecord(
+        "src.features.visual.pipeline", logging.INFO, __file__, 1,
+        "Visual: harmless", None, None,
+    )
+    handler.emit(record)  # Must not raise.

@@ -34,12 +34,16 @@ CLASS_IDS: Dict[str, int] = {name: cid for cid, name in CANONICAL_CLASS_NAMES.it
 BOTTOM_BAND_CENTER_Y = 0.62       # mean center-y >= this counts as bottom placement
 MAX_SUBTITLE_WIDTH_RATIO = 0.80   # centered line width cap
 MAX_SUBTITLE_HEIGHT_RATIO = 0.12  # line-like height cap
+#: Bottom-band captions are at most a tall two-line block; anything higher is
+#: a hallucinated region box (dark-textured scenery), not a caption.
+MAX_BAND_CAPTION_HEIGHT_RATIO = 0.20
 MIN_LINE_ASPECT = 3.0             # width/height of a text line
 # The bottom-band path admits off-center captions (cx 0.15-0.85); the
 # line-like path (top-of-frame captions) demands strict centering so a
-# corner handle at cx~0.83 cannot enter the subtitle class.
+# corner handle at cx~0.83 — or a narrow top-left account banner at
+# cx~0.26 — cannot enter the subtitle class.
 CENTER_X_WINDOW = (0.15, 0.85)    # horizontally centered window, bottom-band path
-STRICT_CENTER_X_WINDOW = (0.25, 0.75)  # line-like path (real captions are centered)
+STRICT_CENTER_X_WINDOW = (0.30, 0.70)  # line-like path (real captions are centered)
 
 # Temporal signals. Thresholds are frame counts, deliberately not seconds: the
 # sampled detection stream carries no trustworthy fps, and frame spans are
@@ -110,10 +114,15 @@ def _classify_track(track, video_frame_span: int) -> int:
     frame_w = float(boxes[0].frame_width or 1)
     frame_h = float(boxes[0].frame_height or 1)
 
-    widths = [b.x2 - b.x1 for b in boxes]
-    heights = [b.y2 - b.y1 for b in boxes]
-    centers_x = [(b.x1 + b.x2) / 2 / frame_w for b in boxes]
-    centers_y = [(b.y1 + b.y2) / 2 / frame_h for b in boxes]
+    # Subtitle placement is judged on the per-frame UNION of the track's
+    # boxes, not on individual chips: a wide banner detected as several thin
+    # centered chips passes the line-like test chip-by-chip even though the
+    # visual line it forms is far too wide/tall for a caption.
+    union_boxes = _per_frame_union_boxes(detections)
+    widths = [b.x2 - b.x1 for b in union_boxes]
+    heights = [b.y2 - b.y1 for b in union_boxes]
+    centers_x = [(b.x1 + b.x2) / 2 / frame_w for b in union_boxes]
+    centers_y = [(b.y1 + b.y2) / 2 / frame_h for b in union_boxes]
 
     mean_w = sum(widths) / len(widths)
     mean_h = sum(heights) / len(heights)
@@ -121,6 +130,7 @@ def _classify_track(track, video_frame_span: int) -> int:
     mean_cy = sum(centers_y) / len(centers_y)
 
     bottom_band = mean_cy >= BOTTOM_BAND_CENTER_Y
+    band_height_ok = mean_h / frame_h <= MAX_BAND_CAPTION_HEIGHT_RATIO
     centered = (
         CENTER_X_WINDOW[0] <= mean_cx <= CENTER_X_WINDOW[1]
         and mean_w / frame_w <= MAX_SUBTITLE_WIDTH_RATIO
@@ -137,18 +147,34 @@ def _classify_track(track, video_frame_span: int) -> int:
     # 1. Geometry-first subtitle check: an on-screen caption is placed like a
     #    caption regardless of how long it stays, so short videos never push
     #    long captions into the static classes. Bottom-band captions may sit
-    #    off-center; a top caption qualifies only when strictly centered, so
-    #    corner handles never leak into the subtitle class.
-    if (bottom_band and centered) or (line_like and strictly_centered):
+    #    off-center but stay caption-height (a tall box over dark scenery is
+    #    a detector hallucination, and merging one into a caption track makes
+    #    the rendered panel jump size mid-video); a top caption qualifies only
+    #    when strictly centered, so corner handles never leak into the class.
+    if (bottom_band and centered and band_height_ok) or (line_like and strictly_centered):
         return CLASS_IDS["subtitle"]
 
     # 2. Static overlay classes (watermark / logo). Multi-piece overlays (e.g.
     #    a handle built from several text chips) mix positions inside one
     #    track; evaluate the whole track first, then its modal position
     #    cluster — the stable piece — when the mixture fails the jitter gate.
+    #    Static and cluster rules keep the RAW per-chip geometry they were
+    #    tuned on.
     frame_span = track.end_frame - track.start_frame
-    if _is_static_layout(frame_span, video_frame_span, centers_x, centers_y, widths, heights, frame_w, frame_h):
-        return _static_class(mean_cx, mean_cy, mean_h, frame_h)
+    raw_widths = [b.x2 - b.x1 for b in boxes]
+    raw_heights = [b.y2 - b.y1 for b in boxes]
+    raw_centers_x = [(b.x1 + b.x2) / 2 / frame_w for b in boxes]
+    raw_centers_y = [(b.y1 + b.y2) / 2 / frame_h for b in boxes]
+    if _is_static_layout(
+        frame_span, video_frame_span, raw_centers_x, raw_centers_y,
+        raw_widths, raw_heights, frame_w, frame_h,
+    ):
+        return _static_class(
+            sum(raw_centers_x) / len(raw_centers_x),
+            sum(raw_centers_y) / len(raw_centers_y),
+            sum(raw_heights) / len(raw_heights),
+            frame_h,
+        )
 
     cluster = _modal_position_cluster(detections, frame_w, frame_h)
     if cluster is not None:
@@ -162,6 +188,35 @@ def _classify_track(track, video_frame_span: int) -> int:
 
     # 3. Transient text outside the caption placement is burn-in text.
     return CLASS_IDS["other_burn_in_text"]
+
+
+def _per_frame_union_boxes(detections) -> List:
+    """Union of all track boxes sharing a frame_index, ordered by frame.
+
+    A frame normally holds one grouped detection from the tracker; the union
+    makes the shape metric describe the whole visual line when several chips
+    of the same overlay share a frame.
+    """
+    by_frame: Dict[int, list] = {}
+    for det in detections:
+        by_frame.setdefault(det.frame_index, []).append(det.bbox)
+    unions = []
+    for frame_index in sorted(by_frame):
+        group = by_frame[frame_index]
+        if len(group) == 1:
+            unions.append(group[0])
+        else:
+            unions.append(
+                type(group[0])(
+                    x1=min(b.x1 for b in group),
+                    y1=min(b.y1 for b in group),
+                    x2=max(b.x2 for b in group),
+                    y2=max(b.y2 for b in group),
+                    frame_width=group[0].frame_width,
+                    frame_height=group[0].frame_height,
+                )
+            )
+    return unions
 
 
 def _is_static_layout(frame_span: int, video_frame_span: int, centers_x, centers_y, widths, heights, frame_w: float, frame_h: float) -> bool:

@@ -7,7 +7,7 @@ Supports adaptive font size, line wrapping, and bounded width expansion.
 
 from __future__ import annotations
 
-from typing import Any, List, Tuple
+from typing import Any
 
 from src.core.models.bbox import BBox
 from src.core.models.subtitle_event import SubtitleEvent

@@ -154,3 +154,38 @@ def test_missing_timestamps_still_classify():
         det.timestamp_seconds = 0.0
         detections.append(det)
     assert set(_run(detections)) == {"subtitle"}
+
+
+def test_wide_banner_of_thin_centered_chips_is_not_subtitle():
+    # Real case (T141): a wide in-scene banner (94% of frame width, 28% tall)
+    # was detected as several thin centered chips; chip-by-chip each passed
+    # the line-like test and the banner rendered as a mid-screen "subtitle".
+    # The subtitle rule must judge the per-frame UNION of the chips.
+    detections = []
+    for i in range(0, 25):  # 25 frames: transient, far below static gates
+        detections.append(_det(i, 108, 301, 700, 609))
+        detections.append(_det(i, 700, 301, 1300, 609))
+        detections.append(_det(i, 1300, 301, 1914, 609))
+    assert set(_run(detections)) == {"other_burn_in_text"}
+
+
+def test_narrow_top_left_account_banner_is_not_subtitle():
+    # Real case (T122): a top-left account banner at cx~0.26 slipped through
+    # the old line-like window (0.25-0.75). Strict centering must reject it.
+    detections = _contiguous(range(0, 25), (322, 310, 657, 371))
+    assert set(_run(detections)) != {"subtitle"}
+
+
+def test_tall_bottom_region_box_is_not_subtitle():
+    # Real case (second 7): the detector hallucinated a 420x280 box over dark
+    # scenery (conf 0.23-0.42, height 26% of frame). It passed the old
+    # bottom-band path (which had no height cap), got merged into the caption
+    # track, and made the rendered panel jump size mid-video. Caption-height
+    # cap on the bottom band rejects it; real two-line blocks (~12%) pass.
+    detections = _contiguous(range(0, 25), (96, 801, 516, 1080))
+    assert set(_run(detections)) != {"subtitle"}
+
+
+def test_two_line_bottom_caption_still_subtitle():
+    detections = _contiguous(range(0, 30), (765, 922, 1169, 1054))
+    assert set(_run(detections)) == {"subtitle"}

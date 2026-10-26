@@ -5,7 +5,9 @@
     files: [],
     inputPath: "",
     speakers: [],
-    selectedPreset: "translate-video",
+    selectedPreset: "yolo-4class",
+    subtitleAction: "translate",
+    dubAudio: false,
     blurExtra: true,
     subtitleLayout: "temporal",
     hideSourceSub: true,
@@ -40,7 +42,6 @@
     sourceLanguage: document.getElementById("sourceLanguage"),
     targetLanguage: document.getElementById("targetLanguage"),
     speakerMode: document.getElementById("speakerMode"),
-    fitPolicy: document.getElementById("fitPolicy"),
     planButton: document.getElementById("planButton"),
     exportButton: document.getElementById("exportButton"),
     sideExportButton: document.getElementById("sideExportButton"),
@@ -121,17 +122,13 @@
 
   function updateExportButtonLabel() {
     let text = "⚡ Bắt đầu xử lý (Run Pipeline)";
-    if (state.selectedPreset === "translate-video") {
-      text = "⚡ Dịch toàn diện (Run translate-video)";
-    } else if (state.selectedPreset === "translate-subtitle") {
-      text = "⚡ Dịch phụ đề (Run translate-subtitle)";
-    } else if (state.selectedPreset === "dub-audio") {
-      text = "⚡ Lồng tiếng AI (Run dub-audio)";
-    } else if (state.selectedPreset === "blur-all") {
-      text = "⚡ Làm mờ toàn bộ (Run blur-all)";
-    } else if (state.selectedPreset === "preserve-all") {
-      text = "⚡ Giữ nguyên (Run preserve-all)";
-    }
+    const flowName = state.selectedPreset === "yolo-text" ? "yolo-text" : "yolo-4class";
+    const parts = [];
+    if (state.subtitleAction === "translate") parts.push("Dịch phụ đề");
+    else if (state.subtitleAction === "blur") parts.push("Làm mờ phụ đề");
+    if (state.dubAudio) parts.push("Lồng tiếng");
+    if (!parts.length) parts.push("Giữ nguyên");
+    text = `⚡ ${parts.join(" + ")} (Run ${flowName})`;
 
     const svgIcon = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg> ';
     if (el.exportButton) el.exportButton.innerHTML = svgIcon + "<span>" + text + "</span>";
@@ -164,18 +161,27 @@
       });
     }
 
-    const isTransSub = (state.selectedPreset === "translate-subtitle" || state.selectedPreset === "translate-video");
-    const isBlurAll = (state.selectedPreset === "blur-all");
-    const needsVisual = state.selectedPreset !== "dub-audio";
+    const featureGrid = document.getElementById("featureOptions");
+    if (featureGrid) {
+      featureGrid.querySelectorAll(".preset-btn").forEach(function (btn) {
+        if (btn.dataset.subtitleAction) {
+          btn.classList.toggle("is-active", state.subtitleAction === btn.dataset.subtitleAction);
+        } else if (btn.dataset.dubAudio) {
+          btn.classList.toggle("is-active", Boolean(state.dubAudio));
+        }
+      });
+    }
+
+    const isTransSub = (state.subtitleAction === "translate");
 
     if (el.subtitleOptionsPanel) {
-      el.subtitleOptionsPanel.style.opacity = needsVisual ? "1" : "0.5";
-      el.subtitleOptionsPanel.style.pointerEvents = needsVisual ? "auto" : "none";
+      el.subtitleOptionsPanel.style.opacity = isTransSub ? "1" : "0.5";
+      el.subtitleOptionsPanel.style.pointerEvents = isTransSub ? "auto" : "none";
     }
 
     const blurExtraGroup = document.getElementById("blurExtraOptionGroup");
     if (blurExtraGroup) {
-      blurExtraGroup.style.display = (isTransSub || isBlurAll) ? "flex" : "none";
+      blurExtraGroup.style.display = isTransSub ? "flex" : "none";
     }
     const layoutGroup = document.getElementById("layoutOptionGroup");
     if (layoutGroup) {
@@ -215,7 +221,24 @@
     renderPresetUI();
     updateExportButtonLabel();
     updateExportButtonState();
-    setMessage("Đã chọn preset CLI: " + presetName + ". Bấm 'Bắt đầu xử lý' để chạy pipeline.", false);
+    setMessage("Đã chọn flow nhận diện: " + presetName + ". Bấm 'Bắt đầu xử lý' để chạy pipeline.", false);
+  }
+
+  function selectSubtitleAction(action) {
+    if (["translate", "blur", "preserve"].indexOf(action) === -1) return;
+    state.subtitleAction = action;
+    renderPresetUI();
+    updateExportButtonLabel();
+    updateExportButtonState();
+    setMessage("Đã chọn xử lý phụ đề: " + action + ".", false);
+  }
+
+  function toggleDubAudio(enabled) {
+    state.dubAudio = Boolean(enabled);
+    renderPresetUI();
+    updateExportButtonLabel();
+    updateExportButtonState();
+    setMessage(state.dubAudio ? "Đã bật lồng tiếng AI." : "Đã tắt lồng tiếng AI.", false);
   }
 
   function renderSources() {
@@ -1085,7 +1108,9 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input_path: state.inputPath,
-          preset: state.selectedPreset || "translate-video",
+          preset: state.selectedPreset || "yolo-4class",
+          subtitle_action: state.subtitleAction || "translate",
+          dub_audio: Boolean(state.dubAudio),
           source_language: el.sourceLanguage ? el.sourceLanguage.value : "auto",
           target_language: el.targetLanguage ? el.targetLanguage.value : "vi",
           voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
@@ -1169,7 +1194,8 @@
 
     const sourceName = String(state.inputPath).split(/[\\/]/).pop() || "video.mp4";
     const stem = sourceName.replace(/\.[^.]+$/, "");
-    const preset = state.selectedPreset || "translate-video";
+    const preset = state.selectedPreset || "yolo-4class";
+    const outputSuffix = preset + "-" + (state.subtitleAction || "translate") + (state.dubAudio ? "-dub" : "");
 
     state.isProcessing = true;
     updatePlanButton();
@@ -1182,10 +1208,11 @@
 
       const jobPayload = {
         input_path: state.inputPath,
-        output_name: stem + "-" + preset + ".mp4",
+        output_name: stem + "-" + outputSuffix + ".mp4",
         preset: preset,
-        presets: [preset],
-        blur_extra: Boolean(state.blurExtra),
+        subtitle_action: state.subtitleAction || "translate",
+        dub_audio: Boolean(state.dubAudio),
+        extra_text_action: state.blurExtra ? "blur" : "preserve",
         subtitle_layout: state.subtitleLayout || "temporal",
         hide_source_subtitle: Boolean(state.hideSourceSub !== false),
         device: "auto",
@@ -1527,6 +1554,20 @@
         btn.addEventListener("click", function () {
           const presetName = btn.dataset.preset;
           if (presetName) selectPreset(presetName);
+        });
+      });
+    }
+
+    // Feature options: subtitle action + audio dubbing toggle
+    const featureGrid = document.getElementById("featureOptions");
+    if (featureGrid) {
+      featureGrid.querySelectorAll(".preset-btn").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (btn.dataset.subtitleAction) {
+            selectSubtitleAction(btn.dataset.subtitleAction);
+          } else if (btn.dataset.dubAudio) {
+            toggleDubAudio(!state.dubAudio);
+          }
         });
       });
     }

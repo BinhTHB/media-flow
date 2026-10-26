@@ -8,7 +8,7 @@ No bottom-band position restrictions (works for top, center, bottom detections).
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 from src.core.models.bbox import BBox
 from src.core.models.detection import Detection

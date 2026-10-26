@@ -870,6 +870,10 @@ body {
   cursor: pointer;
 }
 
+.check-label[hidden] {
+  display: none;
+}
+
 .check-label input[type="checkbox"] {
   width: 15px;
   height: 15px;

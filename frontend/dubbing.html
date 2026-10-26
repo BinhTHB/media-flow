@@ -68,41 +68,53 @@
 
       <section class="panel language-panel">
         <div class="preset-selector-container">
-          <span class="preset-label">PRESET XỬ LÝ (BACKEND CLI PIPELINE):</span>
-          <div class="preset-options" id="presetGrid" role="group" aria-label="Preset xử lý video theo backend CLI">
-            <button class="preset-btn is-active" type="button" data-preset="translate-video" title="Dịch toàn diện: Dịch phụ đề đè đúng vị trí + Lồng tiếng AI tiếng Việt">
+          <span class="preset-label">FLOW NHẬN DIỆN (BACKEND CLI PIPELINE):</span>
+          <div class="preset-options" id="presetGrid" role="group" aria-label="Flow nhận diện text theo backend CLI">
+            <button class="preset-btn is-active" type="button" data-preset="yolo-4class" title="YOLO tự train 4 lớp: phân biệt sẵn phụ đề / watermark / logo / text khác">
               <span class="preset-check">✓</span>
               <div class="preset-btn-content">
-                <strong>Dịch toàn diện (translate-video)</strong>
-                <small>Dịch phụ đề + Lồng tiếng</small>
+                <strong>YOLO 4 lớp (yolo-4class)</strong>
+                <small>Model tự train — layout cố định</small>
               </div>
             </button>
-            <button class="preset-btn" type="button" data-preset="translate-subtitle" title="Dịch phụ đề: Nhận diện OCR, dịch và đè phụ đề vào video">
+            <button class="preset-btn" type="button" data-preset="yolo-text" title="YOLO11n-text 1 lớp + tự phân loại theo hình học: linh hoạt với layout lạ">
               <span class="preset-check">✓</span>
               <div class="preset-btn-content">
-                <strong>Dịch phụ đề (translate-subtitle)</strong>
-                <small>OCR &amp; đè sub trên hình</small>
+                <strong>YOLO11n-text (yolo-text)</strong>
+                <small>Generic 1 lớp — layout linh hoạt</small>
               </div>
             </button>
-            <button class="preset-btn" type="button" data-preset="dub-audio" title="Lồng tiếng: Nhận diện giọng nói ASR, dịch và tạo giọng đọc AI tiếng Việt">
+          </div>
+        </div>
+        <div class="preset-selector-container" style="margin-top: 10px;">
+          <span class="preset-label">TUỲ CHỌN XỬ LÝ:</span>
+          <div class="preset-options" id="featureOptions" role="group" aria-label="Tuỳ chọn xử lý phụ đề và âm thanh">
+            <button class="preset-btn is-active" type="button" data-subtitle-action="translate" title="Nhận diện OCR, dịch và đè phụ đề vào video">
               <span class="preset-check">✓</span>
               <div class="preset-btn-content">
-                <strong>Lồng tiếng (dub-audio)</strong>
-                <small>Thuyết minh AI tiếng Việt</small>
+                <strong>Dịch phụ đề</strong>
+                <small>Burn sub dịch lên hình</small>
               </div>
             </button>
-            <button class="preset-btn" type="button" data-preset="blur-all" title="Làm mờ toàn bộ phụ đề, watermark, logo, text rác">
+            <button class="preset-btn" type="button" data-subtitle-action="blur" title="Làm mờ toàn bộ phụ đề gốc">
               <span class="preset-check">✓</span>
               <div class="preset-btn-content">
-                <strong>Làm mờ toàn bộ (blur-all)</strong>
-                <small>Xóa sub, watermark &amp; logo</small>
+                <strong>Làm mờ phụ đề</strong>
+                <small>Xoá sub gốc, không dịch</small>
               </div>
             </button>
-            <button class="preset-btn" type="button" data-preset="preserve-all" title="Giữ nguyên media gốc, không can thiệp">
+            <button class="preset-btn" type="button" data-subtitle-action="preserve" title="Giữ nguyên phụ đề gốc">
               <span class="preset-check">✓</span>
               <div class="preset-btn-content">
-                <strong>Giữ nguyên (preserve-all)</strong>
-                <small>Không can thiệp media</small>
+                <strong>Giữ nguyên phụ đề</strong>
+                <small>Không đụng sub</small>
+              </div>
+            </button>
+            <button class="preset-btn" type="button" data-dub-audio="true" title="Lồng tiếng: Nhận diện giọng nói ASR, dịch và tạo giọng đọc AI tiếng Việt">
+              <span class="preset-check">✓</span>
+              <div class="preset-btn-content">
+                <strong>Lồng tiếng AI</strong>
+                <small>Thuyết minh tiếng Việt</small>
               </div>
             </button>
           </div>
@@ -171,9 +183,6 @@
             </select>
           </label>
         </div>
-        <select id="fitPolicy" hidden>
-          <option value="fit" selected>Tự co giãn voice vào timestamp</option>
-        </select>
         <div class="render-action-wrapper">
           <button class="primary-button render-button" id="sideExportButton" type="button" aria-label="Bắt đầu xử lý video theo pipeline backend CLI" disabled>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>

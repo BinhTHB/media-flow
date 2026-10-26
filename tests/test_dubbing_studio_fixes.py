@@ -1,14 +1,13 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from src.application.request import ProcessingRequest
 from src.core.models.speech_segment import SpeechSegment
-from src.features.audio.models import AudioRequest, AudioResult
+from src.features.audio.models import AudioRequest
 from src.features.audio.pipeline import AudioPipeline
 from src.interfaces.jobs.runner import JobOptions, JobRunner
-from src.interfaces.web.server import build_dubbing_plan, create_job
+from src.interfaces.web.server import build_dubbing_plan
 
 
 def test_speech_segment_from_web_dict():
@@ -112,7 +111,6 @@ def test_audio_pipeline_skips_asr_when_segments_provided(tmp_path):
 
 
 def test_visual_request_deserializes_segments_and_layout():
-    from src.features.visual.pipeline import VisualRequest
 
     data = {
         "input_video": "input/test.mp4",
@@ -171,7 +169,7 @@ def test_job_runner_preflight_allows_segments_without_gemini(monkeypatch, tmp_pa
 def test_visual_pipeline_builds_events_from_segments():
     from src.core.models.bbox import BBox
     from src.core.models.detection import Detection
-    from src.features.visual.pipeline import VisualPipeline, VisualRequest
+    from src.features.visual.pipeline import VisualPipeline
 
     pipeline = VisualPipeline()
     segments = [
@@ -246,7 +244,6 @@ def test_visual_pipeline_applies_subtitle_layout_inplace_and_bottom():
     from src.core.models.bbox import BBox
     from src.core.models.subtitle_event import SubtitleEvent
     from src.features.visual.pipeline import VisualPipeline, VisualRequest
-    from src.features.visual.subtitle.region_planner import SubtitleRegionPlanner
 
     mock_proc = MagicMock()
     mock_proc.render_region_events.side_effect = lambda frame, events, region, **kwargs: "rendered_inplace"
@@ -568,7 +565,6 @@ def test_job_runner_assigns_visual_segments_when_provided(tmp_path):
 
 def test_build_dubbing_plan_does_not_block_translate_subtitle_for_missing_tts():
     from unittest.mock import patch
-    from src.interfaces.web.server import build_dubbing_plan
     fake_capabilities = {
         "status": "partial",
         "ready": False,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -23,7 +24,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from src.interfaces.jobs.runner import JobEvent, JobOptions, JobRunner
+from src.interfaces.jobs.runner import (
+    LEGACY_PRESET_FEATURES,
+    JobEvent,
+    JobOptions,
+    JobRunner,
+    resolve_preset,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -62,8 +69,9 @@ FRONTEND_ROOT = PROJECT_ROOT / "frontend"
 OUTPUT_ROOT = PROJECT_ROOT / "outputs"
 UPLOAD_ROOT = PROJECT_ROOT / "input" / "uploads"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
-PRESETS = {"blur-all", "translate-subtitle", "preserve-all", "dub-audio", "translate-video", "blur-and-dub",
-           "translate-video-generic", "translate-subtitle-generic"}
+PRESETS = {"yolo-4class", "yolo-text"}
+SUBTITLE_ACTIONS = {"translate", "blur", "preserve"}
+EXTRA_TEXT_ACTIONS = {"blur", "preserve"}
 DEVICES = {"auto", "cuda", "cpu"}
 DUBBING_LANGUAGES = {"auto", "zh", "en", "ja", "ko", "vi"}
 DUBBING_SPEAKER_MODES = {"single", "auto"}
@@ -262,14 +270,20 @@ def build_dubbing_plan(payload: dict[str, Any]) -> dict[str, Any]:
     if voice_id not in DUBBING_VOICES:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Voice không được hỗ trợ.")
 
-    preset = str(payload.get("preset", "translate-video")).removesuffix("-generic")
+    resolved_preset, subtitle_action, dub_audio, _extra_text = resolve_preset(
+        str(payload.get("preset", "translate-video")),
+        str(payload.get("subtitle_action", "translate")),
+        bool(payload.get("dub_audio", False)),
+        str(payload.get("extra_text_action", "preserve")),
+        blur_extra=bool(payload.get("blur_extra", False)),
+    )
     capabilities = dubbing_capabilities()
-    if preset == "translate-subtitle":
-        required_provider_ids = ("asr", "translation", "composer")
-    elif preset in {"blur-all", "preserve-all"}:
-        required_provider_ids = ("composer",)
-    else:
+    if dub_audio:
         required_provider_ids = ("asr", "translation", "tts", "composer")
+    elif subtitle_action == "translate":
+        required_provider_ids = ("asr", "translation", "composer")
+    else:
+        required_provider_ids = ("composer",)
 
     blockers = [
         capabilities["providers"][provider_id]["reason"]
@@ -465,10 +479,30 @@ def build_dubbing_plan(payload: dict[str, Any]) -> dict[str, Any]:
 
 def build_job_options(job: dict[str, Any]) -> JobOptions:
     '''Map the validated web job to the shared Python execution contract.'''
+    # Resolve here so persisted jobs created before the flow-preset refactor
+    # (and hand-built job dicts) normalize exactly like fresh API calls.
+    try:
+        preset, subtitle_action, dub_audio, extra_text_action = resolve_preset(
+            str(job.get("preset", "yolo-4class")),
+            str(job.get("subtitle_action", "translate")),
+            bool(job.get("dub_audio", False)),
+            str(job.get("extra_text_action", "preserve")),
+            blur_extra=bool(job.get("blur_extra", False)),
+        )
+    except ValueError:
+        # Unknown preset: pass through verbatim and let the runner raise the
+        # canonical validation error.
+        preset = str(job.get("preset", "yolo-4class"))
+        subtitle_action = str(job.get("subtitle_action", "translate"))
+        dub_audio = bool(job.get("dub_audio", False))
+        extra_text_action = str(job.get("extra_text_action", "preserve"))
     return JobOptions(
         input_path=job["input_path"],
         output_path=job["output_path"],
-        preset=job["preset"],
+        preset=preset,
+        subtitle_action=subtitle_action,
+        dub_audio=dub_audio,
+        extra_text_action=extra_text_action,
         device=job["device"],
         job_id=job["id"],
         overwrite=job["overwrite"],
@@ -527,10 +561,80 @@ def _handle_job_event(job_id: str, event: JobEvent) -> None:
         del logs[:-200]
 
 
+# Loggers whose records belong to the pipeline run and are useful in the
+# web terminal: pipeline stage boundaries, render/TTS progress, provider
+# warnings and errors.
+_PIPELINE_LOGGERS = (
+    "src.application.process_video",
+    "src.features.visual.pipeline",
+    "src.features.audio.pipeline",
+    "src.infrastructure.ocr.gemini_ocr",
+    "src.infrastructure.translation.gemini_translation",
+    "src.infrastructure.translation.openrouter_translation",
+    "src.infrastructure.translation.router",
+)
+
+
+class _JobLogHandler(logging.Handler):
+    """Stream pipeline log records into a job's web terminal log.
+
+    Records may carry ``mediaflow_pct`` (0-100 progress of the reporting
+    pipeline) and ``mediaflow_stage`` (``visual`` / ``audio``) extras; the
+    percentage is mapped onto the window between the runner's coarse stage
+    events (40% -> 90%) with a monotonic guard.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        super().__init__()
+        self._job_id = job_id
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            time_str = datetime.now().strftime("%H:%M:%S")
+            source = record.name.rsplit(".", 1)[-1].upper()
+            line = f"[{time_str}] [{source}] {record.getMessage()}"
+            pct = getattr(record, "mediaflow_pct", None)
+            stage = getattr(record, "mediaflow_stage", None)
+            with _JOBS_LOCK:
+                current = _JOBS.get(self._job_id)
+                if current is None:
+                    return
+                logs = current.setdefault("logs", [])
+                logs.append(line)
+                del logs[:-300]
+                if pct is not None:
+                    window_start = 82 if stage == "audio" else 40
+                    window_span = 0.08 if stage == "audio" else 0.5
+                    mapped = window_start + int(max(0, min(100, int(pct))) * window_span)
+                    if mapped > int(current.get("progress") or 0):
+                        current["progress"] = mapped
+                        current["message"] = record.getMessage()
+        except Exception:
+            self.handleError(record)
+
+
+def _attach_job_log_handler(job_id: str) -> _JobLogHandler:
+    handler = _JobLogHandler(job_id)
+    for name in _PIPELINE_LOGGERS:
+        pipeline_logger = logging.getLogger(name)
+        pipeline_logger.addHandler(handler)
+        pipeline_logger.setLevel(logging.INFO)
+    return handler
+
+
+def _detach_job_log_handler(handler: _JobLogHandler) -> None:
+    for name in _PIPELINE_LOGGERS:
+        pipeline_logger = logging.getLogger(name)
+        pipeline_logger.removeHandler(handler)
+        if not pipeline_logger.handlers:
+            pipeline_logger.setLevel(logging.NOTSET)
+
+
 def _run_job(job_id: str) -> None:
     with _JOBS_LOCK:
         job = dict(_JOBS[job_id])
     started = time.monotonic()
+    log_handler = _attach_job_log_handler(job_id)
     try:
         result = JobRunner().run(
             build_job_options(job),
@@ -557,6 +661,8 @@ def _run_job(job_id: str) -> None:
             duration_seconds=round(time.monotonic() - started, 2),
             pid=None,
         )
+    finally:
+        _detach_job_log_handler(log_handler)
 
 def create_job(payload: dict[str, Any]) -> dict[str, Any]:
     raw_input = payload.get("input_path")
@@ -574,32 +680,49 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
     hide_source_subtitle = bool(payload.get("hide_source_subtitle", True))
 
     raw_presets = payload.get("presets")
-    if "preset" in payload and str(payload.get("preset")) in PRESETS:
-        preset = str(payload.get("preset"))
-    elif isinstance(raw_presets, list) and raw_presets:
+    requested_preset = str(payload.get("preset", ""))
+    is_legacy_preset = (
+        requested_preset not in PRESETS
+        and requested_preset.removesuffix("-generic") in LEGACY_PRESET_FEATURES
+    )
+    if isinstance(raw_presets, list) and raw_presets and not is_legacy_preset:
+        # Legacy clients describe the job as a list of feature presets.
         has_blur = "blur-all" in raw_presets
         has_trans = "translate-subtitle" in raw_presets
         has_dub = "dub-audio" in raw_presets
         has_preserve = "preserve-all" in raw_presets
         if has_preserve and not (has_blur or has_trans or has_dub):
-            preset = "preserve-all"
+            requested_preset = "preserve-all"
         elif (has_trans or has_blur) and has_dub:
-            preset = "translate-video" if has_trans else "blur-and-dub"
+            requested_preset = "translate-video" if has_trans else "blur-and-dub"
         elif has_dub:
-            preset = "dub-audio"
+            requested_preset = "dub-audio"
         elif has_trans:
-            preset = "translate-subtitle"
+            requested_preset = "translate-subtitle"
         elif has_blur:
-            preset = "blur-all"
+            requested_preset = "blur-all"
         else:
-            preset = "preserve-all"
-    else:
-        preset = str(payload.get("preset", "translate-video"))
+            requested_preset = "preserve-all"
+    elif not requested_preset:
+        requested_preset = "translate-video"
 
     blur_extra = bool(
         payload.get("blur_extra", False)
         or (isinstance(raw_presets, list) and "blur-all" in raw_presets)
     )
+    subtitle_action = str(payload.get("subtitle_action", ""))
+    dub_audio = bool(payload.get("dub_audio", False))
+    extra_text_action = str(payload.get("extra_text_action", ""))
+    try:
+        preset, subtitle_action, dub_audio, extra_text_action = resolve_preset(
+            requested_preset,
+            subtitle_action or "translate",
+            dub_audio,
+            extra_text_action or ("blur" if blur_extra else "preserve"),
+            blur_extra=blur_extra,
+        )
+    except ValueError as exc:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Preset không hợp lệ.") from exc
 
     device = str(payload.get("device", "auto"))
     overwrite = bool(payload.get("overwrite", False))
@@ -613,17 +736,21 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
 
     if preset not in PRESETS:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Preset không hợp lệ.")
+    if subtitle_action not in SUBTITLE_ACTIONS:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Hành động phụ đề không hợp lệ.")
+    if extra_text_action not in EXTRA_TEXT_ACTIONS:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Hành động text khác không hợp lệ.")
     if profile not in {"quality", "balanced", "fast"}:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Runtime profile không hợp lệ.")
     if device not in DEVICES:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Thiết bị xử lý không hợp lệ.")
-    if preset == "translate-subtitle":
+    if subtitle_action == "translate":
         if target_language not in DUBBING_LANGUAGES or target_language == "auto":
             raise RequestError(HTTPStatus.BAD_REQUEST, "Ngôn ngữ đích không hợp lệ.")
         if translation_provider not in {"auto", "openrouter", "gemini"}:
             raise RequestError(HTTPStatus.BAD_REQUEST, "Translation provider không hợp lệ.")
 
-    if preset in {"dub-audio", "translate-video", "blur-and-dub"}:
+    if dub_audio:
         if source_language not in DUBBING_LANGUAGES:
             raise RequestError(HTTPStatus.BAD_REQUEST, "Ngôn ngữ nguồn không hợp lệ.")
         if target_language not in DUBBING_LANGUAGES or target_language == "auto":
@@ -662,6 +789,9 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         "output_relative": relative_project_path(output_path),
         "output_name": output_name,
         "preset": preset,
+        "subtitle_action": subtitle_action,
+        "dub_audio": dub_audio,
+        "extra_text_action": extra_text_action,
         "profile": profile,
         "device": device,
         "overwrite": overwrite,
@@ -833,6 +963,8 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
                         "status": "ok",
                         "project": "MediaFlow",
                         "presets": sorted(PRESETS),
+                        "subtitle_actions": sorted(SUBTITLE_ACTIONS),
+                        "extra_text_actions": sorted(EXTRA_TEXT_ACTIONS),
                         "devices": ["auto", "cuda", "cpu"],
                     }
                 )

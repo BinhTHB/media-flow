@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from bisect import bisect_left
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from src.core.contracts import OCRPort
@@ -38,6 +39,10 @@ class SubtitleProcessor:
         translation_chunk_size: int = 8,
         ocr_chunk_size: int = 16,
         ocr_retry_rounds: int = 1,
+        ocr_verify_empty_rounds: int = 1,
+        ocr_verify_scale: float = 2.0,
+        ocr_max_workers: int = 4,
+        translation_max_workers: int = 3,
     ):
         self.ocr_provider = ocr_provider
         self.translation_service = translation_service
@@ -49,6 +54,10 @@ class SubtitleProcessor:
         self.translation_chunk_size = max(1, int(translation_chunk_size))
         self.ocr_chunk_size = max(1, int(ocr_chunk_size))
         self.ocr_retry_rounds = max(0, int(ocr_retry_rounds))
+        self.ocr_verify_empty_rounds = max(0, int(ocr_verify_empty_rounds))
+        self.ocr_verify_scale = max(1.0, float(ocr_verify_scale))
+        self.ocr_max_workers = max(1, int(ocr_max_workers))
+        self.translation_max_workers = max(1, int(translation_max_workers))
 
     def process_tracks(
         self,
@@ -125,11 +134,21 @@ class SubtitleProcessor:
                 self._ocr_event_crops(all_crops, crop_metadata, all_events)
                 all_events = self._merge_redundant_ocr_events(all_events)
 
+        # 2b. Evidence verification: a detector "subtitle" whose OCR came back
+        # empty is usually a hallucinated region (scenery texture, watermark
+        # edges). Before the pipeline concludes "no caption here", re-read each
+        # empty event's crop upscaled — small or stylized burned-in text often
+        # only becomes readable at 2x. Whatever is still empty after this pass
+        # is treated as having no caption at all (never redacted downstream).
+        if video_path and self.ocr_provider is not None and self.ocr_verify_empty_rounds > 0:
+            self._verify_ocr_empty_events(all_events, video_path)
+
         # 3. Translation Stage
         events_needing_translation = [e for e in all_events if e.source_text]
 
         if self.translation_service is not None and events_needing_translation:
             self._translate_events(events_needing_translation, target_language)
+            self._collapse_duplicate_translation_lines(events_needing_translation)
 
         # 4. Fail-Safe Replacement Status Assignment
         for event in all_events:
@@ -154,26 +173,130 @@ class SubtitleProcessor:
         return all_events
 
     def _ocr_event_crops(self, all_crops: List[Any], crop_metadata: List[Any], all_events: List[SubtitleEvent]) -> None:
-        """OCR event crops in bounded batches so one oversized provider call
-        cannot fail the whole batch. Failed batches get one bounded second
-        round; persistent failures keep the fail-safe status for just their
-        own events."""
+        """OCR event crops in bounded batches, executed concurrently so
+        per-request network latency overlaps instead of stacking. Failed
+        batches get bounded retry rounds (also concurrent); persistent
+        failures keep the fail-safe status for just their own events."""
         chunk_size = max(1, int(self.ocr_chunk_size))
-        failed: List[tuple[List[Any], List[Any]]] = []
-        for start in range(0, len(all_crops), chunk_size):
-            crops = all_crops[start:start + chunk_size]
-            metadata = crop_metadata[start:start + chunk_size]
-            if self._ocr_batch(crops, metadata, all_events):
-                failed.append((crops, metadata))
+        batches: List[tuple[List[Any], List[Any]]] = [
+            (all_crops[start:start + chunk_size], crop_metadata[start:start + chunk_size])
+            for start in range(0, len(all_crops), chunk_size)
+        ]
+        failed = self._run_ocr_batches(batches, all_events)
         for _round in range(max(0, int(self.ocr_retry_rounds))):
             if not failed:
                 break
             time.sleep(5.0)
-            still_failed: List[tuple[List[Any], List[Any]]] = []
-            for crops, metadata in failed:
+            failed = self._run_ocr_batches(failed, all_events)
+
+    def _run_ocr_batches(
+        self, batches: List[tuple[List[Any], List[Any]]], all_events: List[SubtitleEvent]
+    ) -> List[tuple[List[Any], List[Any]]]:
+        """Run OCR batches in parallel; each batch only touches its own
+        events, so concurrent mutation of ``all_events`` stays disjoint.
+        Returns the batches that failed and need a retry round."""
+        if not batches:
+            return []
+        failed: List[tuple[List[Any], List[Any]]] = []
+        workers = max(1, min(int(self.ocr_max_workers), len(batches)))
+        if workers == 1:
+            for crops, metadata in batches:
                 if self._ocr_batch(crops, metadata, all_events):
-                    still_failed.append((crops, metadata))
-            failed = still_failed
+                    failed.append((crops, metadata))
+            return failed
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(self._ocr_batch, crops, metadata, all_events): (crops, metadata)
+                for crops, metadata in batches
+            }
+            for future, batch in futures.items():
+                if future.result():
+                    failed.append(batch)
+        return failed
+
+    def _collapse_duplicate_translation_lines(self, events: List[SubtitleEvent]) -> None:
+        """Collapse near-duplicate lines inside one translated caption.
+
+        Merged bilingual events (Chinese row + its English twin) come back
+        with one Vietnamese line per language row, and the two lines read as
+        the same caption twice. A human placing subtitles writes ONE line, so
+        keep the first line and drop any line whose tokens overlap an
+        already-kept line by >= 0.6 Jaccard. Genuinely different lines (a
+        real two-sentence caption) survive.
+        """
+        import unicodedata
+
+        def _tokens(line: str) -> frozenset:
+            value = line.lower().replace("đ", "d")
+            value = unicodedata.normalize("NFD", value)
+            value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+            return frozenset(re.findall(r"[a-z0-9]{2,}", value))
+
+        for event in events:
+            text = event.translated_text or ""
+            if "\n" not in text:
+                continue
+            kept: List[str] = []
+            kept_tokens: List[frozenset] = []
+            for line in text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                tk = _tokens(line)
+                if tk and any(
+                    len(k & tk) / max(1, len(k | tk)) >= 0.6 for k in kept_tokens
+                ):
+                    continue
+                kept.append(line)
+                kept_tokens.append(tk)
+            event.translated_text = "\n".join(kept)
+
+    def _verify_ocr_empty_events(self, events: List[SubtitleEvent], video_path: str) -> None:
+        """Re-OCR empty/failed events once from an upscaled crop.
+
+        Small or low-contrast burned-in text often survives the first pass at
+        native crop resolution but reads fine at 2x. Events that recover here
+        rejoin the normal translate/READY flow; the rest keep their empty
+        status and are deliberately NOT redacted downstream (the evidence
+        rule: never paint without text evidence).
+        """
+        empty = [
+            ev for ev in events
+            if ev.replacement_status in {"OCR_EMPTY", "OCR_FAILED"} and not ev.source_text
+        ]
+        if not empty:
+            return
+        import cv2
+
+        cap = cv2.VideoCapture(video_path)
+        crops: List[Any] = []
+        metadata: List[Any] = []
+        try:
+            for ev in empty:
+                mid_ts = (ev.start_time + ev.end_time) / 2.0
+                cap.set(cv2.CAP_PROP_POS_MSEC, mid_ts * 1000.0)
+                ret, frame_img = cap.read()
+                if not ret or frame_img is None:
+                    continue
+                x1, y1, x2, y2 = ev.anchor_bbox.xyxy_int()
+                crop = frame_img[y1:y2, x1:x2]
+                if crop.size == 0:
+                    continue
+                if self.ocr_verify_scale > 1.0:
+                    crop = cv2.resize(
+                        crop, None, fx=self.ocr_verify_scale, fy=self.ocr_verify_scale,
+                        interpolation=cv2.INTER_CUBIC,
+                    )
+                crops.append(crop)
+                metadata.append((ev, 0))
+        finally:
+            cap.release()
+        chunk_size = max(1, int(self.ocr_chunk_size))
+        self._run_ocr_batches(
+            [(crops[start:start + chunk_size], metadata[start:start + chunk_size])
+             for start in range(0, len(crops), chunk_size)],
+            events,
+        )
 
     def _ocr_batch(self, crops: List[Any], metadata: List[Any], all_events: List[SubtitleEvent]) -> bool:
         """OCR one batch. Returns True when the batch failed and keeps its
@@ -210,21 +333,45 @@ class SubtitleProcessor:
         return False
 
     def _translate_events(self, events: List[SubtitleEvent], target_language: str) -> None:
-        """Translate events in bounded chunks so one failing provider call
-        cannot discard the whole batch; failed chunks keep the fail-safe
-        status and their source pixels are preserved. Failed chunks get one
-        bounded second round because transient outages often recover within
-        the same job but outlast the per-call retry window."""
+        """Translate events in bounded chunks, executed concurrently so
+        per-request network latency overlaps instead of stacking. One failing
+        provider call cannot discard the whole batch; failed chunks keep the
+        fail-safe status and their source pixels are preserved. Failed chunks
+        get one bounded second round because transient outages often recover
+        within the same job but outlast the per-call retry window."""
         chunk_size = max(1, int(self.translation_chunk_size))
-        failed_chunks: List[List[SubtitleEvent]] = []
-        for start in range(0, len(events), chunk_size):
-            chunk = events[start:start + chunk_size]
-            if self._translate_chunk(chunk, target_language):
-                failed_chunks.append(chunk)
+        chunks: List[List[SubtitleEvent]] = [
+            events[start:start + chunk_size]
+            for start in range(0, len(events), chunk_size)
+        ]
+        failed_chunks = self._run_translation_chunks(chunks, target_language)
         if failed_chunks:
             time.sleep(5.0)
-            for chunk in failed_chunks:
-                self._translate_chunk(chunk, target_language)
+            self._run_translation_chunks(failed_chunks, target_language)
+
+    def _run_translation_chunks(
+        self, chunks: List[List[SubtitleEvent]], target_language: str
+    ) -> List[List[SubtitleEvent]]:
+        """Translate chunks in parallel; each chunk only mutates its own
+        events. Returns the chunks that failed and need the retry round."""
+        if not chunks:
+            return []
+        failed: List[List[SubtitleEvent]] = []
+        workers = max(1, min(int(self.translation_max_workers), len(chunks)))
+        if workers == 1:
+            for chunk in chunks:
+                if self._translate_chunk(chunk, target_language):
+                    failed.append(chunk)
+            return failed
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(self._translate_chunk, chunk, target_language): chunk
+                for chunk in chunks
+            }
+            for future, chunk in futures.items():
+                if future.result():
+                    failed.append(chunk)
+        return failed
 
     def _translate_chunk(self, chunk: List[SubtitleEvent], target_language: str) -> bool:
         """Translate one chunk. Returns True when the chunk failed and keeps
@@ -666,10 +813,14 @@ class SubtitleProcessor:
 
     @staticmethod
     def select_render_events(events: List[SubtitleEvent]) -> List[SubtitleEvent]:
-        """Collapse stacked bilingual captions to one translated overlay per lane.
+        """Collapse duplicate caption tracks to one translated overlay per
+        visual line.
 
-        Chinese/native-script events are preferred over duplicate Latin/English
-        rows. Distinct subtitle lanes remain independent.
+        Events whose anchor boxes vertically overlap are the same on-screen
+        line seen through multiple tracks (chip + rescue + full line): the
+        longest, CJK-richest event wins. Distinct stacked rows (a title row
+        above a content row) have disjoint y-ranges and stay independent —
+        their translations are different meanings, not duplicates.
         """
         ready = [e for e in events if e.replacement_status == "READY" and e.overlay_applied]
         if len(ready) <= 1:
@@ -677,13 +828,10 @@ class SubtitleProcessor:
 
         groups: List[List[SubtitleEvent]] = []
         for event in sorted(ready, key=lambda e: (e.anchor_bbox.y1, e.anchor_bbox.x1)):
-            cy = (event.anchor_bbox.y1 + event.anchor_bbox.y2) / 2.0
-            h = max(1.0, float(event.anchor_bbox.frame_height))
             placed = False
             for group in groups:
                 ref = group[0]
-                rcy = (ref.anchor_bbox.y1 + ref.anchor_bbox.y2) / 2.0
-                if abs(cy - rcy) / h <= 0.16:
+                if event.anchor_bbox.y1 < ref.anchor_bbox.y2 - 2 and ref.anchor_bbox.y1 < event.anchor_bbox.y2 - 2:
                     group.append(event)
                     placed = True
                     break
@@ -692,11 +840,19 @@ class SubtitleProcessor:
 
         selected: List[SubtitleEvent] = []
         for group in groups:
-            # Prefer native CJK semantic source over the duplicate English row;
-            # otherwise prefer the event with more semantic content.
-            def score(ev: SubtitleEvent) -> tuple[int, int, float]:
+            # Pick deterministically so overlapping pre/post-roll spans cannot
+            # swap the rendered caption mid-way: the longest event wins (a
+            # short duplicate fragment appearing mid-span no longer takes
+            # over); CJK semantic source and content length only break ties
+            # between equal-length full lines.
+            def score(ev: SubtitleEvent) -> tuple[float, int, int, str]:
                 cjk = len(re.findall(r"[\u3400-\u9fff]", ev.source_text or ""))
-                return (1 if cjk >= 2 else 0, len(ev.source_text or ""), ev.end_time - ev.start_time)
+                return (
+                    ev.end_time - ev.start_time,
+                    1 if cjk >= 2 else 0,
+                    len(ev.source_text or ""),
+                    ev.event_id,
+                )
 
             selected.append(max(group, key=score))
         return selected
@@ -709,6 +865,9 @@ class SubtitleProcessor:
             return frame
         # Source suppression and caption backing are drawn together, so text
         # wrapping cannot expose source pixels or exceed its own backing.
+        # Text sits at the box CENTER: the box is per-event stable, so the
+        # text is pixel-stable within its caption; different captions may
+        # center at different heights by design.
         return TextOverlayAction(text=ready[0].translated_text, anchor_to_bbox=True,
                                  bg_box=bg_box, bg_color=(16, 12, 10, 255)).execute(frame, region)
 
@@ -737,11 +896,12 @@ class SubtitleProcessor:
         if not boxes:
             return frame
 
-        # Bottom burned-in bilingual subtitles are the hardest case for inpainting:
-        # the lower English row is often missed by YOLO on some frames and textured
-        # footage can defeat glyph masks. Use one deliberate localized cinema plate
-        # to hide *both* source rows completely, while keeping the rest of the frame
-        # untouched. Non-bottom text still uses glyph-level inpainting below.
+        # Snug bottom plate: hug the boxes the caller passes (per-event
+        # trajectory unions, already covering every source row for the whole
+        # span) instead of a fixed wide cinema panel — a human-placed caption
+        # box wraps the text, it does not span three quarters of the frame.
+        # Per-frame detection misses cannot expose glyphs because the box is
+        # the event's worst-case extent, not one frame's detection.
         bottom_boxes = [b for b in boxes if ((b[1] + b[3]) / 2.0) >= fh * 0.72]
         out = frame.copy()
         if bottom_boxes:
@@ -749,20 +909,14 @@ class SubtitleProcessor:
             max_x = max(b[2] for b in bottom_boxes)
             heights = [max(1, b[3] - b[1]) for b in bottom_boxes]
             median_h = float(np.median(heights)) if heights else 42.0
-            # The bottom caption uses a stable centered layout. A partial YOLO
-            # detection must not pull the plate sideways and expose the other end
-            # of a source line; detected extents only expand the minimum plate.
-            center_x = float(fw) / 2.0
-            panel_w = float(fw) * 0.72
-            # The stable panel is a minimum, never a crop of detected text.
-            # Long or off-center bilingual lines can exceed its fixed width.
-            # Keep all source boxes inside the opaque interior, including the
-            # rounded corners and feathered edge.
+            # 32px beyond the worst-case union covers glyph anti-aliasing,
+            # outlines, and shadows that chip boxes hug too tightly; the
+            # caller already pads the box once more before this call.
             edge_pad = 32
-            px1 = max(0, min(int(round(center_x - panel_w / 2.0)), min_x - edge_pad))
-            px2 = min(fw, max(int(round(center_x + panel_w / 2.0)), max_x + edge_pad))
-            py1 = max(0, min(int(round(fh * 0.805)), min(b[1] for b in bottom_boxes) - edge_pad))
-            py2 = min(fh, max(int(round(fh * 0.995)), max(b[3] for b in bottom_boxes) + edge_pad))
+            px1 = max(0, min_x - edge_pad)
+            px2 = min(fw, max_x + edge_pad)
+            py1 = max(0, min(b[1] for b in bottom_boxes) - edge_pad)
+            py2 = min(fh, max(b[3] for b in bottom_boxes) + edge_pad)
 
             alpha_mask = np.zeros((fh, fw), dtype=np.uint8)
             radius = max(10, min(22, int(round(median_h * 0.30))))

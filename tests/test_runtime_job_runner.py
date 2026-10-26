@@ -185,3 +185,50 @@ def test_compose_wraps_generic_detector(monkeypatch, tmp_path) -> None:
     assert captured["subtitle_rescue_conf"] is None
     assert captured["weights_path"] == generic_weights
     assert isinstance(use_case.visual_pipeline.detector, TextClassifyingDetector)
+
+
+def test_runner_prepares_flow_preset_with_explicit_features(tmp_path, monkeypatch) -> None:
+    # The new contract: preset selects the detection flow, feature fields say
+    # what happens. yolo-text + translate must reproduce the old generic
+    # subtitle-preset behavior.
+    options = _options(tmp_path)
+    options.preset = "yolo-text"
+    options.subtitle_action = "translate"
+    options.dub_audio = False
+    options.extra_text_action = "preserve"
+    monkeypatch.setattr(JobRunner, "_preflight", lambda self, value: "cpu")
+    runner = JobRunner()
+
+    normalized, request = runner.prepare(options)
+
+    assert normalized.preset == "yolo-text"
+    assert Path(normalized.yolo_weights).as_posix().endswith("models/yolo/text/best.pt")
+    assert request.visual.enabled is True
+    assert request.visual.subtitle_mode == "translate_replace"
+    assert request.visual.other_text_action == "preserve"
+    assert request.audio.enabled is False
+
+
+def test_runner_disables_visual_for_preserve_only_job(tmp_path, monkeypatch) -> None:
+    # preserve subtitles + preserve extra text = nothing touches pixels:
+    # detection is skipped entirely (mirrors the old dub-audio preset).
+    options = _options(tmp_path)
+    options.preset = "yolo-4class"
+    options.subtitle_action = "preserve"
+    options.dub_audio = True
+    options.extra_text_action = "preserve"
+    monkeypatch.setattr(JobRunner, "_preflight", lambda self, value: "cpu")
+    runner = JobRunner()
+
+    _, request = runner.prepare(options)
+
+    assert request.visual.enabled is False
+    assert request.audio.enabled is True
+    assert request.audio.dubbing_enabled is True
+
+
+def test_runner_rejects_unknown_preset(tmp_path) -> None:
+    options = _options(tmp_path)
+    options.preset = "nonsense"
+    with pytest.raises(Exception, match="Unsupported preset"):
+        JobRunner().prepare(options)

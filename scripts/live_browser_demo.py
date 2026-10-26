@@ -3,8 +3,6 @@ Live interactive browser demonstration for MediaFlow Dubbing Studio.
 Performs real user actions, edits subtitles live, verifies timeline and caption overlay sync,
 takes screenshots at each step, and logs everything.
 """
-import json
-import os
 import sys
 import time
 from pathlib import Path

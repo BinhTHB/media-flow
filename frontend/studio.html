@@ -149,64 +149,57 @@
             </div>
 
             <div class="preset-cards-grid" id="presetGrid" role="group" aria-label="Tùy chọn preset xử lý">
-              <button class="preset-option-card is-active" type="button" data-preset="translate-video">
+              <button class="preset-option-card is-active" type="button" data-preset="yolo-4class">
                 <div class="preset-card-top">
-                  <span class="preset-name">translate-video</span>
+                  <span class="preset-name">yolo-4class</span>
                   <span class="preset-tag recommended">KHUYÊN DÙNG</span>
                 </div>
-                <strong class="preset-heading">Dịch toàn diện (Sub + Lồng tiếng)</strong>
-                <p class="preset-summary">Tách thoại Whisper/Gemini, dịch thuật AI, lồng tiếng AI, làm mờ sub cũ và burn phụ đề mới.</p>
+                <strong class="preset-heading">YOLO 4 lớp (tự train)</strong>
+                <p class="preset-summary">Model tự train phân biệt sẵn phụ đề / watermark / logo / text khác. Phù hợp video có layout cố định.</p>
               </button>
 
-              <button class="preset-option-card" type="button" data-preset="translate-subtitle">
+              <button class="preset-option-card" type="button" data-preset="yolo-text">
                 <div class="preset-card-top">
-                  <span class="preset-name">translate-subtitle</span>
+                  <span class="preset-name">yolo-text</span>
+                  <span class="preset-tag">FLEX</span>
                 </div>
-                <strong class="preset-heading">Dịch phụ đề (Burn Sub)</strong>
-                <p class="preset-summary">Nhận diện thoại, dịch kịch bản và in phụ đề dịch lên video. Giữ nguyên âm thanh gốc.</p>
+                <strong class="preset-heading">YOLO11n-text (1 lớp + phân loại)</strong>
+                <p class="preset-summary">Model text generic 1 lớp "text", tự phân loại thành sub/watermark/logo theo hình học. Linh hoạt với layout lạ. Cần weights tại models/yolo/text/best.pt.</p>
               </button>
+            </div>
 
-              <button class="preset-option-card" type="button" data-preset="translate-video-generic">
-                <div class="preset-card-top">
-                  <span class="preset-name">translate-video-generic</span>
-                  <span class="preset-tag">MODEL GENERIC</span>
+            <div class="runner-step-section" style="margin-top: 18px;">
+              <div class="step-header">
+                <span class="step-num">2b</span>
+                <div>
+                  <h2 class="step-title">Tuỳ chọn xử lý (áp dụng cho cả 2 preset)</h2>
+                  <p class="step-desc">Chọn pipeline làm gì với phụ đề, âm thanh và text khác trên video.</p>
                 </div>
-                <strong class="preset-heading">Dịch toàn diện — model text generic</strong>
-                <p class="preset-summary">Dùng YOLO generic 1 lớp "text" + tự phân loại sub/watermark/logo. Cần weights tại models/yolo/text/best.pt.</p>
-              </button>
-
-              <button class="preset-option-card" type="button" data-preset="translate-subtitle-generic">
-                <div class="preset-card-top">
-                  <span class="preset-name">translate-subtitle-generic</span>
-                  <span class="preset-tag">MODEL GENERIC</span>
+              </div>
+              <div class="runner-grid">
+                <div class="runner-field">
+                  <label for="subtitleActionSelect">Phụ đề gốc</label>
+                  <select id="subtitleActionSelect">
+                    <option value="translate">Dịch &amp; burn phụ đề mới</option>
+                    <option value="blur">Làm mờ</option>
+                    <option value="preserve">Giữ nguyên</option>
+                  </select>
                 </div>
-                <strong class="preset-heading">Dịch phụ đề — model text generic</strong>
-                <p class="preset-summary">Burn phụ đề dịch dùng model text generic và phân loại tự động. Giữ nguyên âm thanh gốc.</p>
-              </button>
-
-              <button class="preset-option-card" type="button" data-preset="dub-audio">
-                <div class="preset-card-top">
-                  <span class="preset-name">dub-audio</span>
+                <div class="runner-field">
+                  <label for="dubAudioCheck">Âm thanh</label>
+                  <label class="check-inline" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="dubAudioCheck" />
+                    <span>Lồng tiếng AI theo timeline</span>
+                  </label>
                 </div>
-                <strong class="preset-heading">Lồng tiếng AI (Audio Dub)</strong>
-                <p class="preset-summary">Thay thế hoặc hoà trộn giọng đọc AI tiếng Việt theo timeline, giữ nguyên 100% hình ảnh video.</p>
-              </button>
-
-              <button class="preset-option-card" type="button" data-preset="blur-all">
-                <div class="preset-card-top">
-                  <span class="preset-name">blur-all</span>
+                <div class="runner-field">
+                  <label for="extraTextActionSelect">Text khác (watermark/logo)</label>
+                  <select id="extraTextActionSelect">
+                    <option value="preserve">Giữ nguyên</option>
+                    <option value="blur">Làm mờ</option>
+                  </select>
                 </div>
-                <strong class="preset-heading">Làm mờ toàn bộ (Clean Video)</strong>
-                <p class="preset-summary">Xóa làm mờ phụ đề gốc, watermark và logo bằng mô hình AI mà không thực hiện dịch.</p>
-              </button>
-
-              <button class="preset-option-card" type="button" data-preset="preserve-all">
-                <div class="preset-card-top">
-                  <span class="preset-name">preserve-all</span>
-                </div>
-                <strong class="preset-heading">Giữ nguyên (Media Check)</strong>
-                <p class="preset-summary">Pass-through pipeline kiểm tra tương thích media và container format.</p>
-              </button>
+              </div>
             </div>
           </div>
 
@@ -300,11 +293,7 @@
               <div class="param-box param-flags-box">
                 <span class="param-label">TÙY CHỌN BỔ SUNG (FLAGS)</span>
                 <div class="flags-wrap">
-                  <label class="check-label" title="Xóa làm mờ thêm Watermark & Logo">
-                    <input id="blurExtraCheck" type="checkbox" checked>
-                    <span>--blur-extra (Mờ Watermark &amp; Logo)</span>
-                  </label>
-                  <label class="check-label" title="Ẩn phụ đề gốc để chỉ hiển thị phụ đề dịch">
+                  <label class="check-label" id="hideSourceSubFlag" title="Ẩn phụ đề gốc để chỉ hiển thị phụ đề dịch">
                     <input id="hideSourceSubCheck" type="checkbox" checked>
                     <span>--hide-source-subtitle (Ẩn sub gốc)</span>
                   </label>
@@ -321,7 +310,7 @@
           <div class="runner-step-section action-section">
             <div class="cli-preview-card">
               <span class="cli-preview-label">LỆNH CLI TƯƠNG ĐƯƠNG SẼ CHẠY:</span>
-              <code class="cli-preview-code" id="cliCommandPreview">python -m src.interfaces.cli --input "input/video.mp4" --preset translate-video --target-language vi --voice-id elevenlabs:EXAVITQu4vr4xnSDxMaL --device auto --overwrite</code>
+              <code class="cli-preview-code" id="cliCommandPreview">python -m src.interfaces.cli --input "input/video.mp4" --preset yolo-4class --subtitle-action translate --dub-audio --target-language vi --voice-id elevenlabs:EXAVITQu4vr4xnSDxMaL --device auto --overwrite</code>
             </div>
 
             <div class="run-button-row">

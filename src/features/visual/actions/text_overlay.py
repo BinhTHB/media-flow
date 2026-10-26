@@ -9,7 +9,7 @@ so residual source glyphs/blur patches are not visible around the replacement.
 from __future__ import annotations
 
 import os
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -18,6 +18,9 @@ from src.core.models.bbox import BBox
 
 
 def _wrap_text(text: str, max_chars_per_line: int = 30) -> str:
+    # Some models emit escaped "\n" as literal backslash-n characters; render
+    # them as real line breaks instead of drawing "\n" on the frame.
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n")
     if len(text) <= max_chars_per_line:
         return text
     words = text.split(" ")
@@ -35,7 +38,48 @@ def _wrap_text(text: str, max_chars_per_line: int = 30) -> str:
             curr_len += extra
     if curr:
         lines.append(" ".join(curr))
+    lines = _balance_two_lines(lines)
     return "\n".join(lines)
+
+
+def _balance_two_lines(lines: List[str]) -> List[str]:
+    """Re-split a greedy two-line wrap so both lines are near-equal.
+
+    Greedy wrapping orphans the last word ("Nói năng nhẹ / nhàng"); a human
+    would break where the two lines balance ("Nói năng / nhẹ nhàng").
+    """
+    if len(lines) != 2:
+        return lines
+    first_words = lines[0].split(" ")
+    second_words = lines[1].split(" ")
+    if len(second_words) > 1:
+        best = (lines[0], lines[1])
+        best_gap = abs(len(lines[0]) - len(lines[1]))
+        for take in range(1, len(second_words)):
+            moved = second_words[:take]
+            candidate = (
+                " ".join([*first_words, *moved]),
+                " ".join(second_words[take:]),
+            )
+            gap = abs(len(candidate[0]) - len(candidate[1]))
+            if gap < best_gap:
+                best, best_gap = candidate, gap
+        return list(best)
+    if len(first_words) > 2:
+        # Only the first line has words to give back; pull the tail over so
+        # the orphan disappears.
+        best = (lines[0], lines[1])
+        best_gap = abs(len(lines[0]) - len(lines[1]))
+        for give in range(len(first_words) - 1, 0, -1):
+            candidate = (
+                " ".join(first_words[:give]),
+                " ".join([*first_words[give:], *second_words]),
+            )
+            gap = abs(len(candidate[0]) - len(candidate[1]))
+            if gap < best_gap:
+                best, best_gap = candidate, gap
+        return list(best)
+    return lines
 
 
 def _default_font_path() -> Optional[str]:
@@ -50,6 +94,13 @@ def _default_font_path() -> Optional[str]:
 
 
 class TextOverlayAction:
+    #: Auto-fit bounds as fractions of the base font size: long captions
+    #: shrink to at most 0.72x before wrapping adds lines, roomy boxes grow
+    #: short captions to at most 1.2x. Keeping the band narrow avoids the
+    #: font-size jitter a per-caption free-for-all would produce.
+    MIN_FONT_SCALE = 0.72
+    MAX_FONT_SCALE = 1.2
+
     def __init__(
         self,
         text: str,
@@ -59,6 +110,7 @@ class TextOverlayAction:
         bg_box: bool = True,
         bg_color: Tuple[int, int, int, int] = (12, 16, 22, 218),
         anchor_to_bbox: bool = False,
+        vertical_anchor: str = "center",
     ):
         self.text = text
         self.font_path = font_path
@@ -66,6 +118,7 @@ class TextOverlayAction:
         self.stroke_width = stroke_width
         self.bg_box = bg_box
         self.anchor_to_bbox = anchor_to_bbox
+        self.vertical_anchor = vertical_anchor if vertical_anchor in {"center", "bottom"} else "center"
         self.bg_color = bg_color
 
     def execute(self, frame: Any, bbox: BBox) -> Any:
@@ -85,26 +138,48 @@ class TextOverlayAction:
         # wrapping/clipping (e.g. one Vietnamese word orphaned on a third line).
         fh = bbox.frame_height or frame.shape[0]
         fw = bbox.frame_width or frame.shape[1]
-        font_size = self.font_size or max(28, min(40, int(round(fh * 0.046))))
+        base_font_size = self.font_size or max(28, min(40, int(round(fh * 0.046))))
         font_path = self.font_path or _default_font_path()
-        try:
-            font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.truetype("arial.ttf", font_size)
-        except OSError:
-            font = ImageFont.load_default()
 
-        # Wrap against the video safe area, not the narrow width of a short Chinese source row.
-        # Keep captions naturally readable on 1 or at most 2 balanced lines.
+        # Wrap target: the video safe area for frame-anchored captions, the
+        # region itself for box-anchored ones (the box then hugs the text).
         safe_w = int(fw * 0.74)
-        approx_chars = max(34, min(52, int(safe_w / max(8.0, font_size * 0.52))))
-        wrapped_text = _wrap_text(self.text, max_chars_per_line=approx_chars)
+        if self.anchor_to_bbox:
+            safe_w = max(120, int(target_w * 0.92))
 
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
-        measure = ImageDraw.Draw(pil_img)
-        text_box = measure.multiline_textbbox(
-            (0, 0), wrapped_text, font=font, spacing=max(4, font_size // 7), align="center", stroke_width=self.stroke_width
-        )
-        text_w = text_box[2] - text_box[0]
-        text_h = text_box[3] - text_box[1]
+        def _layout_for(font_size: int):
+            try:
+                font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.truetype("arial.ttf", font_size)
+            except OSError:
+                font = ImageFont.load_default()
+            approx_chars = max(12, min(52, int(safe_w / max(8.0, font_size * 0.52))))
+            wrapped_text = _wrap_text(self.text, max_chars_per_line=approx_chars)
+            measure = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
+            text_box = measure.multiline_textbbox(
+                (0, 0), wrapped_text, font=font, spacing=max(4, font_size // 7), align="center", stroke_width=self.stroke_width
+            )
+            return font, wrapped_text, text_box[2] - text_box[0], text_box[3] - text_box[1]
+
+        font_size = base_font_size
+        font, wrapped_text, text_w, text_h = _layout_for(font_size)
+
+        if self.anchor_to_bbox:
+            # Flexible font: fit the caption inside its own box, shrinking
+            # long captions and gently growing short ones, within the scale
+            # band so consecutive captions stay visually consistent.
+            pad_x = max(12, int(font_size * 0.30))
+            pad_y = max(7, int(font_size * 0.20))
+            avail_w = max(40, target_w - 2 * pad_x)
+            avail_h = max(30, target_h - 2 * pad_y)
+            if text_w > avail_w or text_h > avail_h:
+                scale = max(self.MIN_FONT_SCALE, min(avail_w / max(1, text_w), avail_h / max(1, text_h), 1.0))
+            elif text_w < avail_w * 0.55 and text_h < avail_h * 0.55:
+                scale = min(self.MAX_FONT_SCALE, avail_w / max(1, text_w), avail_h / max(1, text_h))
+            else:
+                scale = 1.0
+            if abs(scale - 1.0) > 0.02:
+                font_size = max(18, int(round(font_size * scale)))
+                font, wrapped_text, text_w, text_h = _layout_for(font_size)
 
         # Standard bottom-center subtitle safe area. Placement is independent of
         # the source row after source suppression, which avoids jitter between
@@ -114,9 +189,18 @@ class TextOverlayAction:
         ty = safe_bottom - text_h
         if self.anchor_to_bbox:
             tx = cx - text_w // 2
-            ty = cy - text_h // 2
+            if self.vertical_anchor == "bottom":
+                # Fixed baseline: the caption sits at a constant offset from
+                # the box's (band-normalized) bottom edge, so 1-line and
+                # 2-line captions share one baseline instead of floating
+                # with their box height.
+                ty = y2 - max(8, int(font_size * 0.24)) - text_h
+            else:
+                ty = cy - text_h // 2
         tx = max(18, min(fw - text_w - 18, tx))
         ty = max(18, min(fh - text_h - 18, ty))
+
+        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
 
         if self.bg_box:
             # Optional compact caption backing only; source subtitle removal is a

@@ -174,6 +174,39 @@ def test_subtitle_blur_mode_blurs_detections_without_overlay():
     assert processor.render_calls == []
 
 
+def test_blur_mode_merges_same_frame_detections_into_union_box():
+    # Real regression: the generic text model emits word-level boxes; blurring
+    # each box separately leaked glyph edges and inter-word gaps of the
+    # original caption. Same-frame subtitle detections must collapse into one
+    # union box before suppression/blur.
+    from src.features.visual.pipeline import merge_same_frame_detections
+
+    left = Detection(
+        class_id=0, class_name="subtitle", confidence=0.9,
+        bbox=BBox(x1=10.0, y1=20.0, x2=100.0, y2=60.0, frame_width=320, frame_height=240),
+        frame_index=0, timestamp_seconds=0.0,
+    )
+    right = Detection(
+        class_id=0, class_name="subtitle", confidence=0.8,
+        bbox=BBox(x1=120.0, y1=25.0, x2=200.0, y2=55.0, frame_width=320, frame_height=240),
+        frame_index=0, timestamp_seconds=0.0,
+    )
+    single = Detection(
+        class_id=0, class_name="subtitle", confidence=0.7,
+        bbox=BBox(x1=10.0, y1=20.0, x2=100.0, y2=60.0, frame_width=320, frame_height=240),
+        frame_index=1, timestamp_seconds=1 / 30.0,
+    )
+
+    merged = merge_same_frame_detections({0: [left, right], 1: [single]})
+
+    assert len(merged[0]) == 1
+    union_bbox = merged[0][0].bbox
+    assert (union_bbox.x1, union_bbox.y1, union_bbox.x2, union_bbox.y2) == (10.0, 20.0, 200.0, 60.0)
+    assert merged[0][0].confidence == 0.9
+    # Single-detection frames pass through untouched.
+    assert merged[1] == [single]
+
+
 def test_translate_replace_preserves_source_when_event_is_not_ready():
     processor = _RecordingSubtitleProcessor()
     pipeline = VisualPipeline(subtitle_processor=processor)

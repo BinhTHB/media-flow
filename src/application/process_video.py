@@ -70,35 +70,50 @@ class ProcessVideoUseCase:
             t0 = time.monotonic()
             request.visual.video_path = str(input_path)
             rendered_temp_path = str(job_dir / "visual_rendered.mp4")
+            logger.info("Visual pipeline: starting (job %s)...", job_id)
             visual_result = self.visual_pipeline.process(
                 request=request.visual,
                 job_workspace_dir=str(job_dir),
                 output_video_path=rendered_temp_path,
             )
             timings["visual_pipeline"] = round(time.monotonic() - t0, 3)
+            logger.info(
+                "Visual pipeline: done in %.1fs (status=%s)",
+                timings["visual_pipeline"], visual_result.status,
+            )
 
         # 3. Execute Audio Pipeline
         audio_result = None
         if request.audio.enabled:
             t0 = time.monotonic()
             request.audio.audio_path = str(input_path)
+            logger.info("Audio pipeline: starting (job %s)...", job_id)
             audio_result = self.audio_pipeline.process(
                 request=request.audio,
                 job_workspace_dir=str(job_dir),
             )
             timings["audio_pipeline"] = round(time.monotonic() - t0, 3)
+            logger.info(
+                "Audio pipeline: done in %.1fs (status=%s)",
+                timings["audio_pipeline"], audio_result.status,
+            )
 
         # 4. Stream Muxing & Output Assembly
         t0 = time.monotonic()
         visual_video = visual_result.rendered_video_path if (visual_result and visual_result.rendered_video_path) else str(input_path)
         audio_source = audio_result.dubbed_audio_path if (audio_result and audio_result.dubbed_audio_path) else str(input_path)
 
+        logger.info("Muxing: combining visual output with audio track...")
         final_video_path = self.video_util.mux_audio_video(
             video_no_audio_path=visual_video,
             audio_source_path=audio_source,
             output_path=str(output_path),
         )
         probe_info = self.video_util.probe_video(final_video_path)
+        logger.info(
+            "Muxing: done — %sx%s @ %.2f fps, %.1fs",
+            probe_info["width"], probe_info["height"], probe_info["fps"], probe_info["duration"],
+        )
 
         timings["stream_muxing"] = round(time.monotonic() - t0, 3)
 
@@ -125,6 +140,10 @@ class ProcessVideoUseCase:
             tracks_summary=visual_result.tracks_summary if visual_result else {},
             workspace_dir=str(job_dir),
             timings=timings,
+            stage_timings={
+                "visual": dict(visual_result.timings) if visual_result else {},
+                "audio": dict(audio_result.timings) if audio_result else {},
+            },
             warnings=warnings,
             provenance={
                 "input": str(input_path),

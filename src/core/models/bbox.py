@@ -7,7 +7,7 @@ Pure Python, zero third-party dependencies.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
 

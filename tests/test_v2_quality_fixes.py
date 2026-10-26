@@ -10,7 +10,6 @@ Unit tests for V2 quality & correctness fixes:
 import json
 from unittest.mock import MagicMock
 
-from src.features.translation.service import TranslationService
 from src.features.visual.subtitle.processor import SubtitleProcessor
 from src.infrastructure.ocr.gemini_ocr import GeminiOCRAdapter
 from src.infrastructure.translation.gemini_translation import GeminiTranslationAdapter
@@ -59,7 +58,10 @@ def test_ocr_adapter_handles_structured_json_dict(monkeypatch):
     mock_resp.text = json.dumps({"item_0": "拜拜", "item_1": "谢谢"})
     mock_client.generate_content.return_value = mock_resp
 
-    monkeypatch.setattr("src.infrastructure.gemini.client.GeminiClient", lambda api_key, **kwargs: mock_client)
+    # Patch the reference the adapter actually resolves (module-level import
+    # in gemini_ocr), not the class's home module — otherwise the real client
+    # is built and the test hits the live API.
+    monkeypatch.setattr("src.infrastructure.ocr.gemini_ocr.GeminiClient", lambda api_key, **kwargs: mock_client)
 
     import numpy as np
     dummy_crop1 = np.zeros((10, 10, 3), dtype=np.uint8)

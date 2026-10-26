@@ -5,7 +5,6 @@ FFmpeg & FFprobe Infrastructure Utilities & Adapter
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict
@@ -180,6 +179,47 @@ def probe_video(video_path: str) -> Dict[str, Any]:
     }
 
 
+class FFmpegFrameWriter:
+    """Frame-by-frame encoder piping raw BGR frames into ffmpeg.
+
+    Produces a single-pass web-compatible (H.264 / yuv420p / faststart) file,
+    so callers never need the mp4v-then-re-encode round trip.
+    """
+
+    def __init__(self, output_path: str, fps: float, width: int, height: int,
+                 crf: int = 20, preset: str = "fast") -> None:
+        self._path = Path(output_path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "rawvideo", "-pix_fmt", "bgr24",
+            "-s", f"{int(width)}x{int(height)}",
+            "-r", f"{float(fps)}",
+            "-i", "-",
+            "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            str(self._path),
+        ]
+        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+    def write(self, frame: Any) -> None:
+        if self._proc is None or self._proc.stdin is None:
+            raise RuntimeError("FFmpegFrameWriter already released.")
+        self._proc.stdin.write(frame.tobytes())
+
+    def release(self) -> None:
+        if self._proc is None:
+            return
+        try:
+            if self._proc.stdin is not None:
+                self._proc.stdin.close()
+            self._proc.wait(timeout=300)
+            if self._proc.returncode != 0:
+                raise RuntimeError(f"ffmpeg encoder exited with {self._proc.returncode}")
+        finally:
+            self._proc = None
+
+
 class FFmpegVideoAdapter(VideoUtilPort):
     def extract_audio(self, video_path: str, output_audio_path: str) -> str:
         return extract_audio(video_path, output_audio_path)
@@ -189,3 +229,6 @@ class FFmpegVideoAdapter(VideoUtilPort):
 
     def probe_video(self, video_path: str) -> Dict[str, Any]:
         return probe_video(video_path)
+
+    def open_encoded_frame_writer(self, output_path: str, fps: float, width: int, height: int) -> Any:
+        return FFmpegFrameWriter(output_path, fps, width, height)

@@ -2,10 +2,8 @@
 from __future__ import annotations
 from bisect import bisect_right
 from dataclasses import dataclass
-from statistics import median
 from src.core.models.bbox import BBox
 from src.core.models.detection import Detection
-from src.core.models.subtitle_event import SubtitleEvent
 
 
 def same_lane(a: BBox, b: BBox) -> bool:

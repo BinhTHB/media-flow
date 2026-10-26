@@ -15,7 +15,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from src.core.contracts import TranslationPort
 

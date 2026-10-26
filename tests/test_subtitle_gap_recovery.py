@@ -68,12 +68,23 @@ def test_source_panel_covers_long_offcenter_bilingual_rows():
     assert np.array_equal(result[:500], frame[:500])
 
 
-def test_partial_left_detection_does_not_shift_panel_off_source_suffix():
+def test_snug_plate_covers_given_box_and_stays_snug():
+    # New contract: the plate hugs the boxes the caller passes. Coverage of a
+    # caption's full extent is the CALLER's job (per-event trajectory union),
+    # so the plate must cover the given box plus its edge pad — and must NOT
+    # span a fixed frame-wide panel anymore.
     frame = np.zeros((720, 1280, 3), dtype=np.uint8)
     frame[620:700, 900:1010] = 255
-    partial = BBox(20, 615, 700, 704, 1280, 720)
-    result = SubtitleProcessor.suppress_source_subtitles(frame, [partial])
-    assert int(result[620:700, 900:1010].max()) < 30
+    full_row = BBox(20, 615, 1030, 704, 1280, 720)
+    result = SubtitleProcessor.suppress_source_subtitles(frame, [full_row])
+    assert int(result[620:700, 900:1010].max()) < 30  # covered: box + pad reach it
+    # Snug: a single narrow box no longer expands to the old 0.72W panel.
+    frame2 = np.zeros((720, 1280, 3), dtype=np.uint8)
+    frame2[620:700, 500:560] = 255
+    narrow = BBox(500, 615, 560, 704, 1280, 720)
+    result2 = SubtitleProcessor.suppress_source_subtitles(frame2, [narrow])
+    assert int(result2[630:695, 505:555].max()) < 30  # covered
+    assert result2[640, 200].tolist() == [0, 0, 0]  # far left stays untouched
 
 
 def test_parallel_bilingual_merge_preserves_union_temporal_coverage():

@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from src.core.contracts import DetectorPort, OCRPort, TranslationPort
+from src.core.contracts import DetectorPort, OCRPort, SceneBoundaryPort, TranslationPort
 from src.core.models.detection import Detection
 
 logger = logging.getLogger(__name__)
@@ -92,6 +92,20 @@ def _valid_texts(value: Any, count: int, allow_empty: bool = False) -> bool:
             and all(isinstance(item, str) and (allow_empty or bool(item.strip())) for item in value))
 
 
+class CachedSceneCuts(SceneBoundaryPort):
+    def __init__(self, provider: SceneBoundaryPort, cache: JsonStageCache):
+        self.provider, self.cache = provider, cache
+
+    def detect_cuts(self, video_path: str) -> list[int]:
+        inputs = {"video_sha256": file_digest(video_path)}
+        payload = self.cache.get("scene", inputs)
+        if payload is not None:
+            return [int(cut) for cut in payload]
+        cuts = self.provider.detect_cuts(video_path)
+        self.cache.put("scene", inputs, [int(cut) for cut in cuts])
+        return cuts
+
+
 class CachedOCR(OCRPort):
     def __init__(self, provider: OCRPort, cache: JsonStageCache):
         self.provider, self.cache = provider, cache
@@ -102,14 +116,21 @@ class CachedOCR(OCRPort):
         inputs = [{"shape": list(crop.shape), "dtype": str(crop.dtype),
                    "sha256": hashlib.sha256(crop.tobytes()).hexdigest()} for crop in crop_images]
         payload = self.cache.get("ocr", inputs)
-        if _valid_texts(payload, len(crop_images)):
+        # Empty strings are legitimate cached outcomes (unreadable crops);
+        # rejecting them here forced re-reads whose recognition drift made
+        # source texts unstable across runs.
+        if _valid_texts(payload, len(crop_images), allow_empty=True):
             return payload
         result = self.provider.read_crops(crop_images)
         if not _valid_texts(result, len(crop_images), allow_empty=True):
             raise ValueError("OCR returned a mismatched or invalid batch")
-        # Empty crops may represent transient recognition failure; retry next run.
-        if _valid_texts(result, len(crop_images)):
-            self.cache.put("ocr", inputs, result)
+        # Persist every batch, including reads that contain empty strings.
+        # Within-run transient failures are already retried by the caller's
+        # bounded rounds; skipping the cache here made re-reads across runs
+        # return different recognitions for the same crop, which drifted the
+        # source texts, invalidated the translation cache, and could regress
+        # READY counts (original subtitles leaking back in).
+        self.cache.put("ocr", inputs, result)
         return result
 
 

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import os
 import hashlib
-import json
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from src.infrastructure.gemini.contracts import GEMINI_API_BASE, GEMINI_API_VERSION, GeminiFileClient
+from src.infrastructure.gemini.contracts import GeminiFileClient
 from src.infrastructure.gemini.exceptions import GeminiFileError
 
 
