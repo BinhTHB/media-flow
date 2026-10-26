@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from src.core.models.account import AccountIdentity
 from src.core.models.detection import Detection
+from src.core.models.ingest import IngestResult, SourceSpec
 from src.core.models.publication import PublishItem, PublishRecord, VideoMetadata
 from src.core.models.speech_segment import SpeechSegment
 from src.core.models.variation import VariationProfile
@@ -185,3 +186,23 @@ class SessionStorePort(ABC):
     def invalidate(self, account: AccountIdentity, note: str = "") -> None:
         """Mark the account's session as no longer usable."""
         pass
+
+
+class DownloaderPort(ABC):
+    """Fetches one remote video into local storage.
+
+    Implementations own the network and the downloader-specific options; the
+    caller only sees a canonical ``IngestResult``. Providers must raise
+    ``TransientIngestError`` for retryable failures (timeouts, 5xx, rate
+    limits) so the use case can back off, and any other exception for
+    permanent ones (private video, geo-block, unsupported URL).
+    """
+
+    @abstractmethod
+    def download(self, source: SourceSpec, output_dir: str) -> IngestResult:
+        """Download ``source`` under ``output_dir`` and report the outcome."""
+        pass
+
+
+class TransientIngestError(RuntimeError):
+    """Ingest failed in a way worth retrying (network, rate limit, 5xx)."""

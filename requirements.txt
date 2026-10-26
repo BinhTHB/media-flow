@@ -1,10 +1,42 @@
-# MediaFlow runtime dependencies
-# Install a CUDA-compatible PyTorch build for your machine if GPU execution is required.
-edge-tts>=7.2,<8
-google-genai>=2.22,<3
+# MediaFlow runtime dependencies.
+#
+# Install with the project virtualenv interpreter:
+#   .venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# PyTorch is intentionally NOT pinned here: the correct wheel depends on the
+# machine (CUDA vs CPU). Install it first, then this file:
+#   CUDA 12.4:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#   CPU only:   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+# Without a preinstalled torch, `ultralytics` pulls the default CPU build.
+
+# --- Core media / numerics -------------------------------------------------
 numpy>=1.26
-opencc-python-reimplemented>=0.1.7,<0.2
 opencv-python>=4.10
+pillow>=10.0
 PyYAML>=6.0
+
+# --- Detection -------------------------------------------------------------
+# Fine-tuned YOLO 4-class burn-in detector lives at models/yolo/best.pt.
 ultralytics>=8.4,<9
+
+# --- External providers ----------------------------------------------------
+# Gemini OCR / translation fallback / ASR fallback / gemini-live TTS.
+google-genai>=2.22,<3
+# Edge TTS is the always-available TTS fallback.
+edge-tts>=7.2,<8
+# YouTube Data API uploads and other plain-HTTP provider calls.
+requests>=2.31
+# Traditional<->Simplified Chinese normalization used by the dubbing script.
+opencc-python-reimplemented>=0.1.7,<0.2
+
+# --- Ingest ----------------------------------------------------------------
+# Source downloader for YouTube/TikTok/Douyin/Bilibili and ~1800 other sites.
+yt-dlp>=2025.1
+
+# --- Tests -----------------------------------------------------------------
 pytest>=8.0
+
+# --- Optional: browser-session publishing ----------------------------------
+# Not installed by default (adds ~150 MB of browser binaries). Enable with:
+#   pip install playwright && playwright install chromium
+# Only `browser:PLATFORM:ACCOUNT` publish targets and `publish_login` need it.

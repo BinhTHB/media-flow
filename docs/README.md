@@ -15,10 +15,11 @@ Read these in this order:
 4. [`PROVIDERS.md`](PROVIDERS.md) — replaceable external-provider boundaries.
 5. [`GEMINI_RUNTIME.md`](GEMINI_RUNTIME.md) — shared Gemini infrastructure rules.
 6. [`YOLO.md`](YOLO.md) — production YOLO detector contract and 4-class mapping.
-7. [`PUBLISHING.md`](PUBLISHING.md) — reup/publish automation, platform OAuth setup, idempotent state.
-8. [`E2E_VALIDATION.md`](E2E_VALIDATION.md) — acceptance and regression validation.
-9. [`QUALITY_AND_OPERATIONS.md`](QUALITY_AND_OPERATIONS.md) — offline quality gate, CI, job lifecycle, and benchmark policy.
-10. [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) — historical migration guidance only; current behavior is defined by the documents above.
+7. [`INGEST.md`](INGEST.md) — source download (yt-dlp), manifest idempotency, retry classification.
+8. [`PUBLISHING.md`](PUBLISHING.md) — reup/publish automation, platform OAuth setup, idempotent state.
+9. [`E2E_VALIDATION.md`](E2E_VALIDATION.md) — acceptance and regression validation.
+10. [`QUALITY_AND_OPERATIONS.md`](QUALITY_AND_OPERATIONS.md) — offline quality gate, CI, job lifecycle, and benchmark policy.
+11. [`MIGRATION_PLAN.md`](MIGRATION_PLAN.md) — historical migration guidance only; current behavior is defined by the documents above.
 
 ## Canonical product shape
 
