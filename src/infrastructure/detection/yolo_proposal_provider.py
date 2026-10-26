@@ -104,6 +104,7 @@ class YoloTextProposalProvider:
         )
 
         frame_counts: Dict[int, int] = {}
+        blank_frames = 0
 
         for i, r in enumerate(results):
             fi = i * stride if stride > 1 else i
@@ -127,9 +128,13 @@ class YoloTextProposalProvider:
             _, stddev = cv2.meanStdDev(orig_img)
             pixel_std = float(stddev.mean())
             if pixel_std < min_pixel_std:
-                raise RuntimeError(
-                    f"Blank/gray frame detected at frame_index={fi} (std={pixel_std:.4f} < {min_pixel_std})."
-                )
+                # Black/solid frames are normal content: fades, title cards,
+                # end cards. They carry no detectable burn-in text, so skip the
+                # frame instead of failing the whole job. The bundle simply has
+                # no detections for it, and every downstream stage already
+                # tolerates frames without boxes.
+                blank_frames += 1
+                continue
 
             img_path: str | None = None
             if output_dir:
@@ -186,6 +191,15 @@ class YoloTextProposalProvider:
 
         if not bundle.frames:
             raise RuntimeError(f"YOLO produced 0 frames from video {video_path}.")
+        if blank_frames:
+            # Not an error: fades/title cards are legitimate content. Log the
+            # count so a detector that skipped everything is still visible.
+            import logging
+
+            logging.getLogger(__name__).info(
+                "Detection: skipped %d blank/solid frame(s) in %s",
+                blank_frames, video_path,
+            )
 
         return bundle
 
