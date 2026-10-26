@@ -259,8 +259,140 @@ def test_youtube_quota_exceeded_is_transient(tmp_path, monkeypatch):
         _youtube_provider(session).publish(_yt_item(tmp_path))
 
 
-# ------------------------------------------------------------- AI metadata --
+# ----------------------------------------------------- variation integration --
 
+class _RecordingVariation:
+    """Fake VideoVariationPort: records profiles, writes a distinct payload."""
+
+    def __init__(self) -> None:
+        self.profiles: list[dict] = []
+
+    def apply(self, video_path, profile, output_path):
+        from pathlib import Path
+
+        self.profiles.append(profile.to_dict())
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(b"VARIANT")
+        return output_path
+
+
+class _CapturingTarget(_FakeTarget):
+    """Remembers the bytes it was handed so the test can prove which file went."""
+
+    def __init__(self, name: str = "capture") -> None:
+        super().__init__(name)
+        self.payloads: list[bytes] = []
+
+    def publish(self, item: PublishItem) -> PublishRecord:
+        from pathlib import Path
+
+        self.payloads.append(Path(item.video_path).read_bytes())
+        return super().publish(item)
+
+
+def test_service_publishes_the_varied_file_when_policy_is_set(tmp_path):
+    from src.features.publishing.variation import VariationPolicy
+
+    variation = _RecordingVariation()
+    target = _CapturingTarget()
+    service = PublishService(
+        targets=[target],
+        variation_policy=VariationPolicy(level="balanced"),
+        variation_provider=variation,
+    )
+
+    records = service.publish_file(_video(tmp_path))
+
+    assert records[0].status == "PUBLISHED"
+    assert len(variation.profiles) == 1
+    assert target.payloads == [b"VARIANT"]
+
+
+def test_service_publishes_master_when_policy_is_off(tmp_path):
+    from src.features.publishing.variation import VariationPolicy
+
+    variation = _RecordingVariation()
+    target = _CapturingTarget()
+    service = PublishService(
+        targets=[target],
+        variation_policy=VariationPolicy(level="off"),
+        variation_provider=variation,
+    )
+
+    service.publish_file(_video(tmp_path))
+
+    # Identity profile: no rendering, master bytes uploaded.
+    assert variation.profiles == []
+    assert target.payloads == [b"fake-video-bytes"]
+
+
+def test_service_falls_back_to_master_when_rendering_fails(tmp_path):
+    from src.features.publishing.variation import VariationPolicy
+
+    class _BrokenVariation:
+        def apply(self, video_path, profile, output_path):
+            raise RuntimeError("ffmpeg exploded")
+
+    target = _CapturingTarget()
+    service = PublishService(
+        targets=[target],
+        variation_policy=VariationPolicy(level="balanced"),
+        variation_provider=_BrokenVariation(),
+    )
+
+    records = service.publish_file(_video(tmp_path))
+
+    # A broken encoder must not lose the upload.
+    assert records[0].status == "PUBLISHED"
+    assert target.payloads == [b"fake-video-bytes"]
+
+
+def test_variation_requires_a_provider(tmp_path):
+    from src.features.publishing.variation import VariationPolicy
+
+    with pytest.raises(ValueError, match="variation_provider"):
+        PublishService(targets=[_FakeTarget()], variation_policy=VariationPolicy())
+
+
+def test_rendered_variant_is_cleaned_up(tmp_path):
+    from src.features.publishing.variation import VariationPolicy
+
+    variant_dir = tmp_path / "variants"
+    service = PublishService(
+        targets=[_FakeTarget()],
+        variation_policy=VariationPolicy(level="balanced"),
+        variation_provider=_RecordingVariation(),
+        variation_dir=str(variant_dir),
+    )
+
+    service.publish_file(_video(tmp_path))
+
+    # Derived artifacts must not accumulate on disk.
+    assert not list(variant_dir.glob("*.mp4"))
+
+
+def test_retry_uses_a_distinct_attempt_profile(tmp_path):
+    """Each retry attempt gets its own deterministic variant."""
+    from src.features.publishing.variation import VariationPolicy
+
+    variation = _RecordingVariation()
+    target = _FakeTarget(failures_before_success=1)
+    service = PublishService(
+        targets=[target],
+        variation_policy=VariationPolicy(level="balanced"),
+        variation_provider=variation,
+        backoff_base_seconds=0.0,
+        sleep=lambda _s: None,
+    )
+
+    records = service.publish_file(_video(tmp_path))
+
+    assert records[0].status == "PUBLISHED"
+    assert len(variation.profiles) == 2
+    assert variation.profiles[0] != variation.profiles[1]
+
+
+# ------------------------------------------------------------- AI metadata --
 class _FakeGeminiClient:
     def __init__(self, text):
         self._text = text

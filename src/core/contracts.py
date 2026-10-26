@@ -10,9 +10,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from src.core.models.account import AccountIdentity
 from src.core.models.detection import Detection
 from src.core.models.publication import PublishItem, PublishRecord, VideoMetadata
 from src.core.models.speech_segment import SpeechSegment
+from src.core.models.variation import VariationProfile
 
 
 class TranslationPort(ABC):
@@ -145,4 +147,41 @@ class MetadataGenerationPort(ABC):
     def generate(self, video_path: str, hints: Optional[Dict[str, Any]] = None) -> VideoMetadata:
         """Return a VideoMetadata (core models); must not raise on model
         failure — providers fall back to safe filename-derived metadata."""
+        pass
+
+
+class VideoVariationPort(ABC):
+    """Applies a :class:`VariationProfile` to a finished video.
+
+    Implementations must be deterministic for a given (input, profile) pair so
+    a re-run produces the same bytes and the publication state stays truthful.
+    The port owns pixels and audio only; it never touches metadata or upload.
+    """
+
+    @abstractmethod
+    def apply(self, video_path: str, profile: VariationProfile, output_path: str) -> str:
+        """Write the varied video to ``output_path`` and return that path."""
+        pass
+
+
+class SessionStorePort(ABC):
+    """Persists browser sessions (cookie jars) for cookie-based publishers.
+
+    Only the publisher implementation interprets the payload; the store treats
+    it as an opaque blob so no platform-specific cookie format leaks upward.
+    """
+
+    @abstractmethod
+    def load(self, account: AccountIdentity) -> Optional[str]:
+        """Return the stored session path for the account, or None."""
+        pass
+
+    @abstractmethod
+    def save(self, account: AccountIdentity, session_path: str) -> str:
+        """Register ``session_path`` as the account's current session."""
+        pass
+
+    @abstractmethod
+    def invalidate(self, account: AccountIdentity, note: str = "") -> None:
+        """Mark the account's session as no longer usable."""
         pass

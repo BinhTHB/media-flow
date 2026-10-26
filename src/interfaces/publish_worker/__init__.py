@@ -3,10 +3,18 @@
     python -m src.interfaces.publish_worker --queue outputs/publish_queue \
         --target file:E:/reup/delivered --target youtube --watch
 
-Targets are wired from the environment (YouTube: YOUTUBE_CLIENT_ID /
-YOUTUBE_CLIENT_SECRET / YOUTUBE_REFRESH_TOKEN — obtained once via the OAuth
-consent screen; see docs/PUBLISHING.md). The worker is idempotent: processed
-videos are tracked in outputs/publishing/state.json and never re-published.
+Targets come from two families:
+
+- **Official API** (``youtube``): credentials from the environment
+  (``YOUTUBE_CLIENT_ID`` / ``YOUTUBE_CLIENT_SECRET`` / ``YOUTUBE_REFRESH_TOKEN``,
+  obtained once via the OAuth consent screen).
+- **Browser session** (``browser:PLATFORM:ACCOUNT``): drives the real web
+  upload UI with a stored cookie jar. Sessions live in the session store and
+  are created with ``--login``.
+
+Re-upload variation (speed/crop/mirror/pitch) is applied per attempt when
+``--variation`` is not ``off``. The worker is idempotent: processed videos are
+tracked in ``outputs/publishing/state.json`` and never re-published.
 """
 
 from __future__ import annotations
@@ -18,18 +26,57 @@ import sys
 import time
 from typing import Optional, Sequence
 
-from src.core.contracts import PublicationPort
+from src.core.contracts import PublicationPort, SessionStorePort
+from src.core.models.account import AccountIdentity
 from src.features.publishing.service import PublishService
+from src.features.publishing.variation import VariationPolicy
 from src.infrastructure.publishing.file_target import FileTargetPublication
 from src.infrastructure.publishing.publication_store import JsonPublicationStore
+from src.infrastructure.publishing.session_store import FileSessionStore
 from src.infrastructure.publishing.youtube import YouTubePublication
 
 logger = logging.getLogger("src.interfaces.publish_worker")
 
 DEFAULT_STATE_PATH = os.path.join("outputs", "publishing", "state.json")
+DEFAULT_SESSION_DIR = os.path.join("outputs", "publishing", "sessions")
 
 
-def build_targets(specs: Sequence[str]) -> list[PublicationPort]:
+def build_browser_publisher(
+    account: AccountIdentity,
+    session_store: SessionStorePort,
+    *,
+    headless: bool = True,
+) -> PublicationPort:
+    """Return the session-based publisher for a platform.
+
+    The registry is explicit rather than dynamic: a new platform is a new
+    module plus one line here, which keeps import cost (and Playwright) lazy.
+    """
+    platform = account.platform.lower()
+    if platform == "tiktok":
+        from src.infrastructure.publishing.tiktok_browser import TikTokBrowserPublisher
+
+        return TikTokBrowserPublisher(account, session_store, headless=headless)
+    raise ValueError(
+        f"No browser publisher for platform {account.platform!r}; "
+        "supported: tiktok"
+    )
+
+
+def build_targets(
+    specs: Sequence[str],
+    session_store: Optional[SessionStorePort] = None,
+    *,
+    headless: bool = True,
+) -> list[PublicationPort]:
+    """Build publication targets from CLI specs.
+
+    ``spec`` forms:
+    - ``file:DIR`` — local delivery (offline, deterministic)
+    - ``youtube`` — official Data API v3 upload (OAuth refresh token)
+    - ``browser:PLATFORM:ACCOUNT`` — session-based web upload; requires a
+      stored session for that account (see ``--login``)
+    """
     targets: list[PublicationPort] = []
     for spec in specs:
         if spec.startswith("file:"):
@@ -42,9 +89,38 @@ def build_targets(specs: Sequence[str]) -> list[PublicationPort]:
                     refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
                 )
             )
+        elif spec.startswith("browser:"):
+            targets.append(_build_browser_target(spec, session_store, headless=headless))
         else:
-            raise ValueError(f"Unknown publish target: {spec!r} (use 'youtube' or 'file:DIR')")
+            raise ValueError(
+                f"Unknown publish target: {spec!r} "
+                "(use 'youtube', 'file:DIR', or 'browser:PLATFORM:ACCOUNT')"
+            )
     return targets
+
+
+def _build_browser_target(
+    spec: str,
+    session_store: Optional[SessionStorePort],
+    *,
+    headless: bool,
+) -> PublicationPort:
+    """Resolve ``browser:PLATFORM:ACCOUNT`` into a session-based publisher."""
+    parts = spec.split(":", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        raise ValueError(
+            f"Malformed browser target {spec!r}; expected 'browser:PLATFORM:ACCOUNT'"
+        )
+    _, platform, account_id = parts
+    if session_store is None:
+        raise ValueError("browser targets require a session store")
+
+    account = AccountIdentity(
+        platform=platform,
+        account_id=account_id,
+        credential_ref=f"{platform.upper()}_{account_id.upper()}_SESSION",
+    )
+    return build_browser_publisher(account, session_store, headless=headless)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,9 +131,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--queue", default=os.path.join("outputs", "publish_queue"),
                         help="Directory watched for new videos (default: outputs/publish_queue)")
     parser.add_argument("--target", action="append", required=True,
-                        help="Publication target: 'youtube' or 'file:DIR' (repeatable)")
+                        help="Publication target: 'youtube', 'file:DIR', or "
+                             "'browser:PLATFORM:ACCOUNT' (repeatable)")
     parser.add_argument("--state", default=DEFAULT_STATE_PATH,
                         help="Publication state store path")
+    parser.add_argument("--sessions", default=DEFAULT_SESSION_DIR,
+                        help="Directory holding stored browser sessions")
+    parser.add_argument("--variation", default="balanced",
+                        choices=["off", "light", "balanced", "aggressive"],
+                        help="Re-upload variation level (default: balanced)")
+    parser.add_argument("--no-headless", action="store_true",
+                        help="Show the browser window (debugging browser targets)")
     parser.add_argument("--watch", action="store_true",
                         help="Keep polling instead of one shot")
     parser.add_argument("--interval", type=float, default=60.0,
@@ -76,8 +160,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     args = build_parser().parse_args(argv)
 
+    session_store = FileSessionStore(args.sessions)
+
     try:
-        targets = build_targets(args.target)
+        targets = build_targets(
+            args.target, session_store, headless=not args.no_headless
+        )
     except (ValueError, KeyError) as exc:
         logger.error("Target configuration error: %s", exc)
         return 2
@@ -89,12 +177,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         metadata_generator = GeminiMetadataGenerator()
         logger.info("Publish: AI metadata generation enabled.")
 
+    variation_provider = None
+    if args.variation != "off":
+        from src.infrastructure.video.variation import FFmpegVariationAdapter
+
+        variation_provider = FFmpegVariationAdapter()
+        logger.info("Publish: variation level '%s' enabled.", args.variation)
+
     service = PublishService(
         targets=targets,
         metadata_generator=metadata_generator,
         store=JsonPublicationStore(args.state),
         max_attempts=args.max_attempts,
         backoff_base_seconds=args.backoff_base,
+        variation_policy=VariationPolicy(level=args.variation) if variation_provider else None,
+        variation_provider=variation_provider,
     )
 
     os.makedirs(args.queue, exist_ok=True)

@@ -75,6 +75,10 @@ exports/
 results/
 review_frames/
 subtitles/generated/
+
+# Browser sessions are credentials: never commit a cookie jar, wherever it lives.
+sessions/
+*.session.json
 /input/
 
 *.mp4
