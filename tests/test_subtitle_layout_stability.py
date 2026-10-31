@@ -11,6 +11,8 @@ from src.core.models.bbox import BBox
 from src.core.models.detection import Detection
 from src.core.models.subtitle_event import SubtitleEvent
 from src.features.visual.pipeline import (
+    LAYOUT_BOX_PAD_MIN_PX,
+    LAYOUT_BOX_PAD_RATIO,
     VisualPipeline,
     VisualRequest,
     _layout_box_for_event,
@@ -20,6 +22,10 @@ from src.features.visual.pipeline import (
 from src.features.visual.subtitle.processor import SubtitleProcessor
 
 FW, FH = 1920, 1080
+
+
+def _layout_pad() -> float:
+    return max(LAYOUT_BOX_PAD_MIN_PX, LAYOUT_BOX_PAD_RATIO * FH)
 
 
 def _box(x1, y1, x2, y2):
@@ -78,18 +84,25 @@ class _LayoutRecordingProcessor:
         return self.frame_boxes.get(frame_index, event.anchor_bbox)
 
 
-def test_stable_layout_box_averages_and_clamps():
+def test_stable_layout_box_uses_median_and_clamps():
     traj = [_box(100, 900, 800, 980), _box(104, 902, 796, 978), _box(108, 904, 792, 976)]
     box = _stable_layout_box(traj, FW, FH)
     assert box.x1 == pytest.approx(104.0)
     assert box.y1 == pytest.approx(902.0)
     assert box.x2 == pytest.approx(796.0)
     assert box.y2 == pytest.approx(978.0)
-    # BBox validates its own bounds at construction (0 <= x1 < x2 <= frame),
-    # so a mean of valid boxes is always in-bounds; the clamp call stays as
-    # defense for float drift at the edges.
     assert 0 <= box.x1 < box.x2 <= FW
     assert 0 <= box.y1 < box.y2 <= FH
+
+
+def test_detector_offset_does_not_move_the_caption():
+    # Seven frames sit on the source line. One YOLO frame is a wide bar
+    # shifted down. The drawn box stays on the source line.
+    source = _box(700, 480, 1100, 560)
+    outlier = _box(200, 900, 1600, 1060)
+    event = _event([source] * 7 + [outlier], event_id="line")
+    box = _layout_box_for_event(event)
+    assert (box.x1, box.y1, box.x2, box.y2) == pytest.approx((700, 480, 1100, 560))
 
 
 def test_layout_box_for_event_falls_back_to_anchor_when_trajectory_empty():
@@ -126,16 +139,9 @@ def test_render_position_identical_across_frames_with_different_detections():
     assert len(processor.render_calls) == 2
     first, second = processor.render_calls
     assert (first.x1, first.y1, first.x2, first.y2) == (second.x1, second.y1, second.x2, second.y2)
-    # Suppression uses the SAME stable box (padded by LAYOUT_BOX_PAD_RATIO,
-    # 0.015 x frame height = 16.2px at 1080p) — never the per-frame detections,
-    # whose unions made the inpainted band shimmer.
-    pad = 0.015 * FH
-    expected = (layout[ev.event_id].x1 - pad, layout[ev.event_id].y1 - pad,
-                layout[ev.event_id].x2 + pad, layout[ev.event_id].y2 + pad)
-    assert len(processor.suppress_calls) == 2
-    for regions in processor.suppress_calls:
-        assert len(regions) == 1
-        assert (regions[0].x1, regions[0].y1, regions[0].x2, regions[0].y2) == pytest.approx(expected)
+    # The rounded panel is the only black shape. A second plate under it
+    # drew a hard rectangle around the caption.
+    assert processor.suppress_calls == []
 
 
 def test_flag_false_restores_per_frame_behavior():
@@ -186,8 +192,8 @@ def test_large_trajectory_spread_logs_warning(caplog):
 
 def test_spread_trajectory_renders_dominant_cluster_and_suppresses_rest():
     # Real case (T100): the same caption appeared at two positions, 70/30.
-    # The mean box sat between them (huge, shifted); now the render box is
-    # the dominant cluster's mean and the leftover position is suppressed.
+    # The median of every box sat between them; now the render box is
+    # the dominant cluster's median and the leftover position is suppressed.
     boxes = [_box(100, 900, 500, 980)] * 7 + [_box(1300, 200, 1800, 280)] * 3
     event = _event(boxes, event_id="T100")
     layout, plate, leftovers = _layout_boxes_for_event(event)
@@ -224,47 +230,42 @@ def test_ocr_empty_events_never_redacted_failed_ones_do():
     assert 628 in mapping and 661 in mapping  # failed caption: redacted (21.0-22.0s ± 2)
 
 
-def test_band_normalization_snaps_bottom_and_center():
-    # Real data (last run): consecutive caption bottoms wobbled 1045-1058 and
-    # x-centers shifted -193..+439 between events. Near-band READY captions
-    # snap to one shared bottom edge and, when close, one shared center.
-    from src.features.visual.pipeline import _apply_band_normalization
+def test_kept_original_captions_are_not_redacted():
+    # A caption already in the target language, or a translation that came
+    # back unchanged, is left on screen. Redacting it would erase the only
+    # readable line.
+    from src.features.visual.pipeline import _build_suppress_only_map
 
-    evs = {}
-    boxes = {}
-    for i, (x1, x2) in enumerate([(660, 1260), (700, 1310), (620, 1210)]):
-        ev = _event([_box(x1, 990, x2, 1052 + i * 3)], event_id=f"e{i}")
-        evs[ev.event_id] = ev
-        boxes[ev.event_id] = _box(x1, 990, x2, 1052 + i * 3)
+    kept = _event([_box(660, 940, 1260, 1020)], event_id="kept")
+    kept.start_time, kept.end_time = 5.0, 6.0
+    kept.replacement_status = "SOURCE_IS_TARGET"
+    echoed = _event([_box(660, 940, 1260, 1020)], event_id="echo")
+    echoed.start_time, echoed.end_time = 8.0, 9.0
+    echoed.replacement_status = "TRANSLATION_UNCHANGED"
+    layouts = {
+        "kept": _box(660, 940, 1260, 1020),
+        "echo": _box(660, 940, 1260, 1020),
+    }
 
-    normalized = _apply_band_normalization(boxes, evs)
+    mapping = _build_suppress_only_map([kept, echoed], layouts, {}, 30.0)
 
-    y2s = {round(b.y2) for b in normalized.values()}
-    assert len(y2s) == 1  # one shared bottom edge
-    cxs = {round((b.x1 + b.x2) / 2) for b in normalized.values()}
-    assert len(cxs) == 1  # x-centers within tolerance re-centered
+    assert mapping == {}
 
 
-def test_band_normalization_keeps_off_band_event_untouched():
-    from src.features.visual.pipeline import _apply_band_normalization
+def test_each_caption_keeps_its_own_position():
+    # A short bottom line, a wide bottom line, and a mid-frame line each
+    # keep the box of their own detections. They are not pulled onto one
+    # shared bottom rectangle.
+    from src.features.visual.pipeline import _layout_maps_for_events
 
-    evs = {}
-    boxes = {}
-    for i, (x1, x2) in enumerate([(660, 1260), (700, 1310), (620, 1210)]):
-        ev = _event([_box(x1, 990, x2, 1052)], event_id=f"e{i}")
-        evs[ev.event_id] = ev
-        boxes[ev.event_id] = _box(x1, 990, x2, 1052)
-    # A top caption (upper row of a bilingual pair) must keep its own band.
-    top = _event([_box(844, 924, 1076, 985)], event_id="top")
-    evs["top"] = top
-    boxes["top"] = _box(844, 924, 1076, 985)
+    short = _event([_box(841, 922, 1080, 1051)] * 5, event_id="short")
+    wide = _event([_box(400, 900, 1398, 1054)] * 5, event_id="wide")
+    mid = _event([_box(400, 420, 900, 520)] * 5, event_id="mid")
+    boxes, _plates, _leftovers = _layout_maps_for_events([short, wide, mid])
 
-    normalized = _apply_band_normalization(boxes, evs)
-
-    assert (normalized["top"].x1, normalized["top"].y1) == (844, 924)
-    # Bottom events snapped together; the top one is far from the band.
-    y2s = {round(normalized[f"e{i}"].y2) for i in range(3)}
-    assert len(y2s) == 1
+    assert boxes["short"].xyxy_int() == (841, 922, 1080, 1051)
+    assert boxes["wide"].xyxy_int() == (400, 900, 1398, 1054)
+    assert boxes["mid"].xyxy_int() == (400, 420, 900, 520)
 
 
 def test_selection_stable_when_short_fragment_overlaps_long_event():
@@ -326,18 +327,17 @@ def test_incoming_event_preroll_suppresses_early_but_does_not_render():
 
     # Text still renders ONLY the current event's stable box (padded)...
     assert len(processor.render_calls) == 1
-    pad = 0.015 * FH
+    pad = _layout_pad()
     expected_render = (layout["current"].x1 - pad, layout["current"].y1 - pad,
                        layout["current"].x2 + pad, layout["current"].y2 + pad)
     assert (processor.render_calls[0].x1, processor.render_calls[0].y1,
             processor.render_calls[0].x2, processor.render_calls[0].y2) == pytest.approx(expected_render)
-    # ...while suppression already covers the incoming caption too (padded).
-    pad = 0.015 * FH
+    # The current caption is the rounded panel only. Suppression covers the
+    # incoming caption, which has no panel yet.
+    pad = _layout_pad()
     suppressed = [(r.x1, r.y1, r.x2, r.y2) for r in processor.suppress_calls[-1]]
-    assert len(suppressed) == 2
-    assert suppressed[0] == pytest.approx((layout["current"].x1 - pad, layout["current"].y1 - pad,
-                                          layout["current"].x2 + pad, layout["current"].y2 + pad))
-    assert suppressed[1] == pytest.approx((layout["next"].x1 - pad, layout["next"].y1 - pad,
+    assert len(suppressed) == 1
+    assert suppressed[0] == pytest.approx((layout["next"].x1 - pad, layout["next"].y1 - pad,
                                           layout["next"].x2 + pad, layout["next"].y2 + pad))
 
 
@@ -368,7 +368,7 @@ def test_failed_event_still_suppresses_source_pixels():
     )
 
     assert processor.render_calls == []  # No text is faked.
-    pad = 0.015 * FH
+    pad = _layout_pad()
     assert len(processor.suppress_calls) == 1
     assert len(processor.suppress_calls[0]) == 1
     assert (processor.suppress_calls[0][0].x1, processor.suppress_calls[0][0].y1,
@@ -405,12 +405,13 @@ def test_duplicate_translation_in_two_lanes_renders_once():
     # The identical translation renders exactly once per frame.
     assert len(processor.render_calls) == 1
     kept_box = layout["lower"]  # longer event wins
-    pad = 0.015 * FH
+    pad = _layout_pad()
     expected = (kept_box.x1 - pad, kept_box.y1 - pad, kept_box.x2 + pad, kept_box.y2 + pad)
     assert (processor.render_calls[0].x1, processor.render_calls[0].y1,
             processor.render_calls[0].x2, processor.render_calls[0].y2) == pytest.approx(expected)
-    # Suppression still covers BOTH rows while both events are mapped.
-    assert len(processor.suppress_calls[-1]) == 2
+    # The drawn row is the rounded panel only. The dropped row still needs
+    # a plate, because its glyphs are not inside that panel.
+    assert len(processor.suppress_calls[-1]) == 1
 
 
 def test_preroll_suppression_skipped_in_caption_free_gap():
@@ -580,7 +581,7 @@ def test_twin_rows_suppress_union_plate_through_longer_span():
         suppress_spans=suppress_spans,
     )
 
-    pad = 0.015 * FH
+    pad = _layout_pad()
     assert len(processor.suppress_calls[-1]) == 1
     painted = processor.suppress_calls[-1][0]
     assert painted.y1 <= 924 - pad  # upper row's glyphs covered

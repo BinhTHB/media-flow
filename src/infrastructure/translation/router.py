@@ -324,6 +324,17 @@ class FallbackTranslationAdapter(TranslationPort):
                 suspicious.append(idx)
                 continue
 
+            # Ordinal leak: "Thứ nhất" on a line that is not an enumerated rule.
+            # Seen on the 30s proof clip where 妈妈总是教导我们 came back as
+            # the neighboring 第一条 translation.
+            if re.search(r"thu+\s+(nhat|hai|ba|tu|nam)|dieu thu", current_norm) and not re.search(
+                r"第[一二三四五六七八九十0-9]|one\s*:|two\s*:|first\s*:|second\s*:",
+                raw_source,
+                re.IGNORECASE,
+            ):
+                suspicious.append(idx)
+                continue
+
             # Detect an LLM accidentally copying the previous segment into this id.
             if idx > 0 and source[idx].strip() != source[idx - 1].strip():
                 previous_norm = cls._normalize(translated[idx - 1])

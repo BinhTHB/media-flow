@@ -23,6 +23,11 @@ from src.features.visual.actions.blur import BlurAction
 from src.features.visual.subtitle.boundary_refiner import SubtitleBoundaryRefiner
 from src.features.visual.subtitle.event_segmenter import SubtitleEventSegmenter
 from src.features.visual.subtitle.renderer import SubtitleRenderer
+from src.features.translation.text_quality import (
+    is_already_target_language,
+    is_caption_worthy,
+    is_effectively_identical,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -143,16 +148,88 @@ class SubtitleProcessor:
         if video_path and self.ocr_provider is not None and self.ocr_verify_empty_rounds > 0:
             self._verify_ocr_empty_events(all_events, video_path)
 
+        # 2c. Caption-worthiness gate: YOLO labels on-screen counters and
+        # watermark digits as "subtitle", and OCR faithfully reads them. A
+        # caption contains letters; "122" does not. Dropping these here keeps
+        # them out of translation and out of the rendered overlay.
+        dropped_noise = 0
+        for event in all_events:
+            if event.source_text and not is_caption_worthy(event.source_text):
+                logger.info(
+                    "SubtitleEvent %s dropped as non-caption OCR noise: %r",
+                    event.event_id, event.source_text,
+                )
+                event.source_text = ""
+                event.replacement_status = "OCR_EMPTY"
+                dropped_noise += 1
+        if dropped_noise:
+            logger.info("Subtitle: dropped %d non-caption event(s) after OCR.", dropped_noise)
+
+        # 2d. A CJK row and its Latin twin often escape the pre-OCR geometry
+        # merge (their tracks only overlap after OCR/dedup). Pair them here so
+        # translation sees one caption and render draws one line at the band.
+        all_events = self._merge_stacked_caption_rows(all_events)
+
         # 3. Translation Stage
-        events_needing_translation = [e for e in all_events if e.source_text]
+        # Skip events whose source is already the target language: translating
+        # Vietnamese into Vietnamese produced diacritic shuffles ("Kì lạ" ->
+        # "Kỳ lạ") or invented text, and re-rendering it over the original
+        # caption is strictly worse than leaving the pixels alone.
+        already_target = [
+            e for e in all_events
+            if e.source_text and is_already_target_language(e.source_text, target_language)
+        ]
+        for event in already_target:
+            event.translated_text = event.source_text
+            event.replacement_status = "SOURCE_IS_TARGET"
+            logger.debug(
+                "SubtitleEvent %s already in target language %r; skipping translation.",
+                event.event_id, target_language,
+            )
+        if already_target:
+            logger.info(
+                "Subtitle: %d/%d event(s) already in target language '%s'; translation skipped for them.",
+                len(already_target), len([e for e in all_events if e.source_text]), target_language,
+            )
+
+        events_needing_translation = [
+            e for e in all_events
+            if e.source_text and e.replacement_status != "SOURCE_IS_TARGET"
+        ]
 
         if self.translation_service is not None and events_needing_translation:
             self._translate_events(events_needing_translation, target_language)
             self._collapse_duplicate_translation_lines(events_needing_translation)
+            all_events = self._merge_stacked_caption_rows(all_events, use_translation=True)
 
         # 4. Fail-Safe Replacement Status Assignment
         for event in all_events:
+            if event.replacement_status == "SOURCE_IS_TARGET":
+                # The caption is already in the target language. Rendering it
+                # again would paint the same words over themselves (losing the
+                # source styling) and translating produced diacritic shuffles.
+                # Leave the original pixels untouched.
+                event.translated_text = ""
+                event.blur_applied = False
+                event.overlay_applied = False
+                logger.info(
+                    "SubtitleEvent %s already in target language; original pixels preserved.",
+                    event.event_id,
+                )
+                continue
             if event.source_text and event.translated_text:
+                # A "translation" identical to its source means the provider
+                # returned the input unchanged. Rendering it would paint the
+                # same text over itself; leaving the original pixels is better.
+                if is_effectively_identical(event.source_text, event.translated_text):
+                    event.replacement_status = "TRANSLATION_UNCHANGED"
+                    event.blur_applied = False
+                    event.overlay_applied = False
+                    logger.info(
+                        "SubtitleEvent %s translation equals source; keeping original pixels.",
+                        event.event_id,
+                    )
+                    continue
                 event.replacement_status = "READY"
                 event.blur_applied = True
                 event.overlay_applied = True
@@ -432,7 +509,7 @@ class SubtitleProcessor:
             cap.release()
             return events
 
-        candidate_gaps: list[tuple[int, float, float]] = []
+        candidate_gaps: list[tuple[int, float, float, SubtitleEvent, SubtitleEvent]] = []
         all_crops: list[Any] = []
         crop_meta: list[tuple[int, float]] = []
 
@@ -480,7 +557,7 @@ class SubtitleProcessor:
                 local_count += 1
 
             if local_count >= 2:
-                candidate_gaps.append((gap_index, gap_start, gap_end))
+                candidate_gaps.append((gap_index, gap_start, gap_end, left, right))
 
         cap.release()
         if not all_crops or not candidate_gaps:
@@ -503,7 +580,7 @@ class SubtitleProcessor:
             return re.sub(r"[\s\W_]+", "", (text or "").lower(), flags=re.UNICODE)
 
         recovered: list[SubtitleEvent] = []
-        for gap_index, gap_start, gap_end in candidate_gaps:
+        for gap_index, gap_start, gap_end, left, right in candidate_gaps:
             samples = sorted(by_gap.get(gap_index, []), key=lambda pair: pair[0])
             if len(samples) < 2:
                 continue
@@ -544,14 +621,7 @@ class SubtitleProcessor:
                         track_id="RECOVERED_BOTTOM",
                         start_time=start,
                         end_time=end,
-                        anchor_bbox=BBox(
-                            x1=fw * 0.10,
-                            y1=fh * 0.78,
-                            x2=fw * 0.90,
-                            y2=fh * 0.995,
-                            frame_width=fw,
-                            frame_height=fh,
-                        ),
+                        anchor_bbox=self._recovered_anchor_bbox(left, right, fw, fh),
                         source_text=source,
                         split_reason="bottom_lane_gap_recovery",
                     )
@@ -567,6 +637,178 @@ class SubtitleProcessor:
         combined = [*events, *recovered]
         combined.sort(key=lambda e: (e.start_time, e.end_time, e.event_id))
         return combined
+
+    @staticmethod
+    def _recovered_anchor_bbox(
+        left: SubtitleEvent, right: SubtitleEvent, frame_width: int, frame_height: int
+    ) -> BBox:
+        """Size a recovered caption from its neighbors, not the wide OCR crop.
+
+        The OCR window is 80% of the frame so a missed line can still be read.
+        That window is not a render box: using it painted a cinema-wide black
+        bar over the scene (seen at 4s on the 30s proof clip).
+        """
+        a, b = left.anchor_bbox, right.anchor_bbox
+        x1 = min(a.x1, b.x1)
+        x2 = max(a.x2, b.x2)
+        y1 = min(a.y1, b.y1)
+        y2 = max(a.y2, b.y2)
+        height = max(1.0, y2 - y1)
+        # A single-row neighbor pair still hides a two-row bilingual caption.
+        if height < frame_height * 0.10:
+            y1 = min(y1, y2 - frame_height * 0.12)
+        # Neighbors are often a clipped English chip. The missed caption is the
+        # full bilingual plate, so grow toward a centered band and cap at 68%.
+        union_w = max(1.0, x2 - x1)
+        target_w = min(frame_width * 0.68, max(union_w * 1.28, frame_width * 0.52))
+        cx = (x1 + x2) / 2.0
+        pad_y = max(10.0, height * 0.10)
+        return BBox.clamped(
+            cx - target_w / 2.0,
+            y1 - pad_y,
+            cx + target_w / 2.0,
+            y2 + pad_y,
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+
+    def _merge_stacked_caption_rows(
+        self,
+        events: List[SubtitleEvent],
+        *,
+        use_translation: bool = False,
+    ) -> List[SubtitleEvent]:
+        """Merge a CJK row with its Latin twin after OCR (or after translation).
+
+        Pre-OCR geometry merge misses pairs whose tracks only overlap once
+        fragments are deduped. Left unmerged, they render two Vietnamese
+        captions: one on the Chinese row (mid-frame) and one on the English
+        row, with the source line still visible (seen at 12s).
+        """
+        if len(events) < 2:
+            return events
+
+        def _tokens(text: str) -> frozenset[str]:
+            import unicodedata
+
+            value = (text or "").lower().replace("đ", "d")
+            value = unicodedata.normalize("NFD", value)
+            value = "".join(ch for ch in value if unicodedata.category(ch) != "Mn")
+            return frozenset(re.findall(r"[a-z0-9]{2,}", value))
+
+        def _cjk(text: str) -> bool:
+            return len(re.findall(r"[\u3400-\u9fff]", text or "")) >= 2
+
+        def _latin(text: str) -> bool:
+            return len(re.findall(r"[A-Za-z]", text or "")) >= 3 and not _cjk(text)
+
+        def _center(box: BBox) -> tuple[float, float]:
+            return ((box.x1 + box.x2) / 2.0, (box.y1 + box.y2) / 2.0)
+
+        def _union(a: BBox, b: BBox) -> BBox:
+            return BBox(
+                x1=min(a.x1, b.x1),
+                y1=min(a.y1, b.y1),
+                x2=max(a.x2, b.x2),
+                y2=max(a.y2, b.y2),
+                frame_width=a.frame_width,
+                frame_height=a.frame_height,
+            )
+
+        def _same_meaning(left: SubtitleEvent, right: SubtitleEvent) -> bool:
+            if _cjk(left.source_text) and _latin(right.source_text):
+                return True
+            if _latin(left.source_text) and _cjk(right.source_text):
+                return True
+            if not use_translation:
+                return False
+            a, b = _tokens(left.translated_text), _tokens(right.translated_text)
+            if not a or not b:
+                return False
+            return len(a & b) / max(1, len(a | b)) >= 0.55
+
+        ordered = sorted(events, key=lambda e: (e.start_time, e.end_time, e.event_id))
+        used: set[int] = set()
+        merged: List[SubtitleEvent] = []
+
+        for i, left in enumerate(ordered):
+            if i in used:
+                continue
+            best_j = None
+            best_score = -1.0
+            left_dur = max(0.05, left.end_time - left.start_time)
+            lx, ly = _center(left.anchor_bbox)
+            lw = max(1.0, left.anchor_bbox.width)
+            fh = float(max(1, left.anchor_bbox.frame_height))
+            fw = float(max(1, left.anchor_bbox.frame_width))
+
+            for j in range(i + 1, len(ordered)):
+                if j in used:
+                    continue
+                right = ordered[j]
+                if right.start_time > left.end_time + 0.12:
+                    break
+                overlap = min(left.end_time, right.end_time) - max(left.start_time, right.start_time)
+                if overlap <= 0:
+                    continue
+                right_dur = max(0.05, right.end_time - right.start_time)
+                overlap_min = overlap / min(left_dur, right_dur)
+                overlap_long = overlap / max(left_dur, right_dur)
+                # Complementary scripts may share only the shorter row's span.
+                if overlap_min < 0.55 or overlap_long < 0.40:
+                    continue
+                if not _same_meaning(left, right):
+                    continue
+
+                rx, ry = _center(right.anchor_bbox)
+                y_sep = abs(ly - ry) / fh
+                x_sep = abs(lx - rx) / fw
+                if not (0.015 <= y_sep <= 0.18) or x_sep > 0.14:
+                    continue
+                x_overlap = max(
+                    0.0,
+                    min(left.anchor_bbox.x2, right.anchor_bbox.x2)
+                    - max(left.anchor_bbox.x1, right.anchor_bbox.x1),
+                )
+                width_ratio = x_overlap / max(1.0, min(lw, right.anchor_bbox.width))
+                if width_ratio < 0.25:
+                    continue
+                score = overlap_min + width_ratio - x_sep - y_sep
+                if score > best_score:
+                    best_score = score
+                    best_j = j
+
+            if best_j is None:
+                merged.append(left)
+                used.add(i)
+                continue
+
+            right = ordered[best_j]
+            cjk_event, other = (left, right) if _cjk(left.source_text) else (right, left)
+            source = self._select_bilingual_source_text(
+                f"{left.source_text}\n{right.source_text}"
+            ) or cjk_event.source_text
+            translated = (cjk_event.translated_text or other.translated_text or "").strip()
+            merged.append(
+                SubtitleEvent(
+                    event_id=f"{left.event_id}+{right.event_id}",
+                    track_id=f"STACKED:{left.track_id}+{right.track_id}",
+                    start_time=min(left.start_time, right.start_time),
+                    end_time=max(left.end_time, right.end_time),
+                    anchor_bbox=_union(left.anchor_bbox, right.anchor_bbox),
+                    bbox_trajectory=[],
+                    bbox_frame_indices=[],
+                    source_text=source,
+                    translated_text=translated,
+                    replacement_status=cjk_event.replacement_status or left.replacement_status,
+                    split_reason="stacked_caption_merge",
+                )
+            )
+            used.add(i)
+            used.add(best_j)
+
+        merged.sort(key=lambda e: (e.start_time, e.end_time, e.event_id))
+        return merged
 
     @staticmethod
     def _merge_redundant_ocr_events(events: List[SubtitleEvent]) -> List[SubtitleEvent]:
@@ -704,6 +946,16 @@ class SubtitleProcessor:
                 y_sep = abs(ly - ry) / h
                 x_sep = abs(lx - rx) / w
                 if not (0.025 <= y_sep <= 0.16) or x_sep > 0.12:
+                    continue
+                # A gap of about one line or more is a second caption, not the
+                # English row of the same sentence.
+                row_gap = max(
+                    0.0,
+                    max(left.anchor_bbox.y1, right.anchor_bbox.y1)
+                    - min(left.anchor_bbox.y2, right.anchor_bbox.y2),
+                )
+                shorter = min(left.anchor_bbox.height, right.anchor_bbox.height)
+                if row_gap > 0.6 * max(1.0, shorter):
                     continue
 
                 x_overlap = max(
@@ -865,11 +1117,15 @@ class SubtitleProcessor:
             return frame
         # Source suppression and caption backing are drawn together, so text
         # wrapping cannot expose source pixels or exceed its own backing.
-        # Text sits at the box CENTER: the box is per-event stable, so the
-        # text is pixel-stable within its caption; different captions may
-        # center at different heights by design.
-        return TextOverlayAction(text=ready[0].translated_text, anchor_to_bbox=True,
-                                 bg_box=bg_box, bg_color=(16, 12, 10, 255)).execute(frame, region)
+        # Text sits in the middle of this line's box. Each row keeps its own
+        # box, so a tall row and a short row do not share one baseline.
+        return TextOverlayAction(
+            text=ready[0].translated_text,
+            anchor_to_bbox=True,
+            vertical_anchor="center",
+            bg_box=bg_box,
+            bg_color=(16, 12, 10, 255),
+        ).execute(frame, region)
 
     @staticmethod
     def suppress_source_subtitles(frame: Any, detections: List[Any]) -> Any:
@@ -896,36 +1152,31 @@ class SubtitleProcessor:
         if not boxes:
             return frame
 
-        # Snug bottom plate: hug the boxes the caller passes (per-event
-        # trajectory unions, already covering every source row for the whole
-        # span) instead of a fixed wide cinema panel — a human-placed caption
-        # box wraps the text, it does not span three quarters of the frame.
-        # Per-frame detection misses cannot expose glyphs because the box is
-        # the event's worst-case extent, not one frame's detection.
+        # One plate per box. A second caption row a line below the name must
+        # not stretch the name's plate down across the costume between them.
+        # The caller already pads the trajectory box; a few more pixels cover
+        # the stroke. A 32px union pad painted an empty black margin.
         bottom_boxes = [b for b in boxes if ((b[1] + b[3]) / 2.0) >= fh * 0.72]
         out = frame.copy()
-        if bottom_boxes:
-            min_x = min(b[0] for b in bottom_boxes)
-            max_x = max(b[2] for b in bottom_boxes)
-            heights = [max(1, b[3] - b[1]) for b in bottom_boxes]
-            median_h = float(np.median(heights)) if heights else 42.0
-            # 32px beyond the worst-case union covers glyph anti-aliasing,
-            # outlines, and shadows that chip boxes hug too tightly; the
-            # caller already pads the box once more before this call.
-            edge_pad = 32
-            px1 = max(0, min_x - edge_pad)
-            px2 = min(fw, max_x + edge_pad)
-            py1 = max(0, min(b[1] for b in bottom_boxes) - edge_pad)
-            py2 = min(fh, max(b[3] for b in bottom_boxes) + edge_pad)
+        edge_pad = 4
+        for x1, y1, x2, y2 in bottom_boxes:
+            box_h = max(1, y2 - y1)
+            px1 = max(0, x1 - edge_pad)
+            px2 = min(fw, x2 + edge_pad)
+            py1 = max(0, y1 - edge_pad)
+            py2 = min(fh, y2 + edge_pad)
+            if px2 - px1 < 4 or py2 - py1 < 4:
+                continue
 
             alpha_mask = np.zeros((fh, fw), dtype=np.uint8)
-            radius = max(10, min(22, int(round(median_h * 0.30))))
+            radius = max(4, min(14, int(round(box_h * 0.18))))
+            radius = min(radius, (px2 - px1) // 2, (py2 - py1) // 2)
             cv2.rectangle(alpha_mask, (px1 + radius, py1), (px2 - radius, py2), 255, -1)
             cv2.rectangle(alpha_mask, (px1, py1 + radius), (px2, py2 - radius), 255, -1)
             for cx, cy in ((px1 + radius, py1 + radius), (px2 - radius, py1 + radius),
                            (px1 + radius, py2 - radius), (px2 - radius, py2 - radius)):
                 cv2.circle(alpha_mask, (cx, cy), radius, 255, -1)
-            alpha_mask = cv2.GaussianBlur(alpha_mask, (0, 0), 2.2).astype(np.float32) / 255.0
+            alpha_mask = cv2.GaussianBlur(alpha_mask, (0, 0), 1.2).astype(np.float32) / 255.0
             alpha_mask *= 0.985
             matte = np.zeros_like(out, dtype=np.float32)
             matte[:, :, 0] = 10.0

@@ -19,6 +19,7 @@ from src.features.audio.models import AudioRequest, AudioResult, TTSClip
 from src.features.audio.ports import AudioExtractionPort, ASRCorrectionPort, ASRPort, TTSPort
 from src.core.contracts import SpokenRewritePort
 from src.features.translation.service import TranslationService
+from src.features.translation.text_quality import accept_spoken_line, is_already_target_language
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +118,17 @@ class AudioPipeline:
         # 3. Shared Translation (chỉ dịch các segment chưa có bản dịch của người dùng)
         if self.translation_service is not None and speech_segments:
             t0 = time.monotonic()
-            needed_indices = [
-                idx for idx, s in enumerate(speech_segments)
-                if not (s.spoken_text or s.translated_text).strip()
-            ]
+            needed_indices = []
+            for idx, seg in enumerate(speech_segments):
+                if (seg.spoken_text or seg.translated_text).strip():
+                    continue
+                source = (seg.source_text or "").strip()
+                if is_already_target_language(source, request.target_language):
+                    seg.translated_text = source
+                    seg.spoken_text = source
+                    continue
+                if source:
+                    needed_indices.append(idx)
             if needed_indices:
                 raw_texts = [speech_segments[idx].source_text for idx in needed_indices]
                 translated_texts = self.translation_service.translate_texts(
@@ -129,12 +137,29 @@ class AudioPipeline:
                     source_language=request.source_language,
                 )
                 for idx, trans in zip(needed_indices, translated_texts):
-                    speech_segments[idx].translated_text = trans
-                    speech_segments[idx].spoken_text = trans
+                    accepted = accept_spoken_line(
+                        speech_segments[idx].source_text,
+                        trans,
+                        request.target_language,
+                    )
+                    speech_segments[idx].translated_text = accepted
+                    speech_segments[idx].spoken_text = accepted
+                    if (
+                        not accepted
+                        and not request.dubbing_enabled
+                        and (speech_segments[idx].source_text or "").strip()
+                    ):
+                        warnings.append(
+                            f"Segment {speech_segments[idx].segment_id} left untranslated: "
+                            "translation did not produce target-language speech."
+                        )
             else:
                 for seg in speech_segments:
                     if not seg.spoken_text and seg.translated_text:
-                        seg.spoken_text = seg.translated_text
+                        accepted = accept_spoken_line(
+                            seg.source_text, seg.translated_text, request.target_language
+                        )
+                        seg.spoken_text = accepted
             timings["translation"] = round(time.monotonic() - t0, 3)
             logger.info(
                 "Audio: translated %d segments to '%s' (%.1fs)",
@@ -143,7 +168,13 @@ class AudioPipeline:
         elif speech_segments:
             for seg in speech_segments:
                 if not seg.spoken_text and seg.translated_text:
-                    seg.spoken_text = seg.translated_text
+                    seg.spoken_text = accept_spoken_line(
+                        seg.source_text, seg.translated_text, request.target_language
+                    )
+                elif not seg.spoken_text and is_already_target_language(
+                    seg.source_text, request.target_language
+                ):
+                    seg.spoken_text = seg.source_text.strip()
 
         # 4. Dubbing / TTS
         dubbed_audio_path = None
@@ -167,8 +198,17 @@ class AudioPipeline:
                 logger.info("Audio: synthesizing %d TTS segments...", tts_total)
 
                 for seg in speech_segments:
-                    text_to_speak = seg.spoken_text or seg.translated_text or seg.source_text
+                    text_to_speak = accept_spoken_line(
+                        seg.source_text,
+                        seg.spoken_text or seg.translated_text,
+                        request.target_language,
+                    )
                     if not text_to_speak.strip():
+                        if (seg.source_text or seg.translated_text or "").strip():
+                            warnings.append(
+                                f"Segment {seg.segment_id} left undubbed: no target-language line."
+                            )
+                            status = "PARTIAL"
                         continue
                     clip_path = str(tts_dir / f"tts_{seg.segment_id}.mp3")
                     trimmed_path = tts_dir / f"trimmed_{seg.segment_id}.wav"

@@ -73,7 +73,10 @@ class ClassAwareTracker:
             track_counter += len(class_tracks)
             tracks.extend(class_tracks)
 
-        # Post-process: merge broken static tracks for non-subtitle classes
+        # Post-process: merge broken static tracks for non-subtitle classes.
+        # A short leading subtitle fragment is the same line the model only
+        # locked onto a few frames later; stitch that fragment forward.
+        tracks = self._stitch_leading_subtitle_fragments(tracks)
         tracks = self._merge_static_tracks(tracks)
         return tracks
 
@@ -111,6 +114,36 @@ class ClassAwareTracker:
                 )
 
         return sub + merged
+
+    def _stitch_leading_subtitle_fragments(self, tracks: List[Track]) -> List[Track]:
+        """Join a short same-line fragment onto the subtitle track that follows it.
+
+        A full caption is not the fragment, so two names that share a spot
+        stay separate tracks.
+        """
+        others = [t for t in tracks if t.class_name != "subtitle"]
+        subs = []
+        for track in tracks:
+            if track.class_name != "subtitle":
+                continue
+            track.detections.sort(key=lambda d: d.frame_index)
+            subs.append(track)
+        subs.sort(key=lambda t: (t.start_frame, t.end_frame))
+        stitched: List[Track] = []
+        for track in subs:
+            if not stitched:
+                stitched.append(track)
+                continue
+            prev = stitched[-1]
+            gap = track.start_frame - prev.end_frame
+            prev_span = prev.end_frame - prev.start_frame
+            same_line = _box_iou(prev.detections[-1].bbox, track.detections[0].bbox) >= 0.45
+            if 0 < gap <= 15 and prev_span <= 18 and same_line:
+                prev.detections.extend(track.detections)
+                prev.detections.sort(key=lambda d: d.frame_index)
+                continue
+            stitched.append(track)
+        return others + stitched
 
     def _group_frame_candidates(self, detections: List[Detection]) -> List[List[Detection]]:
         remaining = sorted(detections, key=lambda d: (d.bbox.y1, d.bbox.x1))

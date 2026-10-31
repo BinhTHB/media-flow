@@ -203,8 +203,11 @@ class TextOverlayAction:
         pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
 
         if self.bg_box:
-            # Optional compact caption backing only; source subtitle removal is a
-            # separate stage now, so this must never expand to cover the source bbox.
+            # Caption backing. When anchored to the source box, the panel must
+            # cover the WHOLE source region — not just the new text — otherwise
+            # the original caption's background (a yellow band, a coloured
+            # banner) and any glyph the suppression pass missed stay visible
+            # around the replacement, which reads as two overlapping captions.
             text_pad_x = max(12, int(font_size * 0.30))
             text_pad_y = max(7, int(font_size * 0.18))
 
@@ -214,17 +217,29 @@ class TextOverlayAction:
             by2 = min(fh, ty + text_h + text_pad_y)
 
             if self.anchor_to_bbox:
-                source_pad = max(10, int(font_size * 0.45))
-                bx1 = max(0, min(bx1, x1 - source_pad))
-                by1 = max(0, min(by1, y1 - source_pad))
-                bx2 = min(fw, max(bx2, x2 + source_pad))
-                by2 = min(fh, max(by2, y2 + source_pad))
+                source_w = max(1, x2 - x1)
+                text_span = text_w + 2 * text_pad_x
+                # Cover the source row when it is a real caption box. A
+                # cinema-wide recovery crop (80% of the frame) is not: expanding
+                # onto it paints a black bar across the scene.
+                cover_source = source_w <= max(text_span * 2.2, int(fw * 0.62))
+                if cover_source:
+                    # A few pixels past the detected glyphs covers the stroke.
+                    # A larger pad paints an empty black margin around the line.
+                    source_pad = 4
+                    bx1 = max(0, min(bx1, x1 - source_pad))
+                    by1 = max(0, min(by1, y1 - source_pad))
+                    bx2 = min(fw, max(bx2, x2 + source_pad))
+                    by2 = min(fh, max(by2, y2 + source_pad))
+                    bx1 = max(0, min(bx1, x1))
+                    by1 = max(0, min(by1, y1))
+                    bx2 = min(fw, max(bx2, x2))
+                    by2 = min(fh, max(by2, y2))
 
             overlay = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
             draw_overlay = ImageDraw.Draw(overlay)
-            radius = max(8, min(18, int((by2 - by1) * 0.16)))
-            if self.anchor_to_bbox:
-                radius = min(radius, max(2, source_pad // 2))
+            radius = max(10, min(18, int((by2 - by1) * 0.22)))
+            radius = min(radius, max(0, (bx2 - bx1) // 2), max(0, (by2 - by1) // 2))
             draw_overlay.rounded_rectangle(
                 [bx1, by1, bx2, by2],
                 radius=radius,

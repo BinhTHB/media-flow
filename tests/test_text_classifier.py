@@ -12,6 +12,7 @@ from src.core.models.detection import Detection
 from src.features.visual.text_classifier import (
     TextClassifyingDetector,
     classify_generic_text_detections,
+    promote_subtitle_rows_labeled_watermark,
 )
 
 FW, FH = 1920, 1080
@@ -35,6 +36,61 @@ def _run(detections: List[Detection]) -> List[str]:
 
 def _contiguous(frames: range, box) -> List[Detection]:
     return [_det(i, *box) for i in frames]
+
+
+def test_second_caption_row_labeled_watermark_becomes_subtitle():
+    # Real frame at 9s: the name is subtitle, the line under it is watermark.
+    name = _det(270, 541, 807, 1382, 897, class_name="subtitle")
+    line = _det(270, 681, 987, 1265, 1042, class_name="watermark")
+    out = promote_subtitle_rows_labeled_watermark([name, line])
+    assert [d.class_name for d in out] == ["subtitle", "subtitle"]
+
+
+def test_narrow_corner_mark_stays_watermark():
+    subtitle = _det(10, 600, 900, 1300, 980, class_name="subtitle")
+    mark = _det(10, 1500, 20, 1880, 70, class_name="watermark")
+    out = promote_subtitle_rows_labeled_watermark([subtitle, mark])
+    assert out[1].class_name == "watermark"
+
+
+def test_watermark_far_below_a_subtitle_stays_watermark():
+    subtitle = _det(10, 600, 400, 1300, 480, class_name="subtitle")
+    mark = _det(10, 600, 980, 1300, 1040, class_name="watermark")
+    out = promote_subtitle_rows_labeled_watermark([subtitle, mark])
+    assert out[1].class_name == "watermark"
+
+
+def test_opening_line_labeled_watermark_joins_the_subtitle_track():
+    # The first second of douyin_new_30s: the line is on screen at frame 5
+    # labeled watermark, and the subtitle class only appears at frame 22.
+    from src.features.visual.tracker import ClassAwareTracker
+
+    dets = [
+        _det(5, 570, 982, 1365, 1046, class_name="watermark"),
+        _det(12, 570, 981, 1369, 1047, class_name="watermark"),
+    ]
+    dets += [_det(frame, 596, 987, 1253, 1045, class_name="subtitle") for frame in range(22, 40)]
+    promoted = promote_subtitle_rows_labeled_watermark(dets)
+    assert all(det.class_name == "subtitle" for det in promoted)
+    tracks = [t for t in ClassAwareTracker().track(promoted) if t.class_name == "subtitle"]
+    assert len(tracks) == 1
+    assert tracks[0].start_frame == 5
+
+
+def test_two_long_captions_in_the_same_place_stay_separate_tracks():
+    from src.features.visual.tracker import ClassAwareTracker
+
+    dets = [_det(frame, 705, 809, 1218, 892, class_name="subtitle") for frame in range(0, 60)]
+    dets += [_det(frame, 705, 810, 1214, 896, class_name="subtitle") for frame in range(70, 120)]
+    tracks = [t for t in ClassAwareTracker().track(dets) if t.class_name == "subtitle"]
+    assert len(tracks) == 2
+
+
+def test_watermark_more_than_a_second_before_a_subtitle_stays_watermark():
+    early = _det(0, 570, 982, 1365, 1046, class_name="watermark")
+    later = _det(40, 596, 987, 1253, 1045, class_name="subtitle")
+    out = promote_subtitle_rows_labeled_watermark([early, later])
+    assert out[0].class_name == "watermark"
 
 
 def test_bottom_caption_four_seconds_in_ten_second_video_is_subtitle():

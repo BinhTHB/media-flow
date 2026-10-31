@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import logging
 import statistics
+from dataclasses import replace
 from typing import Dict, List
 
 from src.core.contracts import DetectorPort
+from src.core.models.bbox import BBox
 from src.core.models.detection import CANONICAL_CLASS_NAMES, Detection
 from src.features.visual.tracker import ClassAwareTracker
 
@@ -55,6 +57,15 @@ MAX_STATIC_JITTER = 0.01          # normalized center std for a static track
 MAX_STATIC_SIZE_JITTER = 0.02     # normalized width/height std
 CORNER_MARGIN = 0.22              # center outside this margin counts as corner
 SMALL_HEIGHT_RATIO = 0.08         # small box height for watermark
+#: A second caption row the 4-class model labeled watermark. It must be a
+#: wide line sitting just under a subtitle; a corner mark is too narrow.
+CAPTION_ROW_MIN_WIDTH_RATIO = 0.18
+CAPTION_ROW_MAX_GAP_RATIO = 0.12
+CAPTION_ROW_OVERLAP_RATIO = 0.45
+#: A watermark box on the same glyphs as a subtitle, up to about one second
+#: before the model also emits the subtitle class.
+SAME_LINE_FRAME_WINDOW = 30
+SAME_LINE_VERTICAL_OVERLAP = 0.50
 
 
 class TextClassifyingDetector(DetectorPort):
@@ -68,6 +79,71 @@ class TextClassifyingDetector(DetectorPort):
         return classify_generic_text_detections(
             self._inner.detect_video(video_path, stride=stride)
         )
+
+
+def promote_subtitle_rows_labeled_watermark(detections: List[Detection]) -> List[Detection]:
+    """Re-label a wide watermark that is really a caption line.
+
+    The 4-class model sometimes calls a caption watermark: the second line
+    under a subtitle, or the same line for up to a second before it also
+    emits the subtitle class. A corner mark stays a watermark.
+    """
+    by_frame: Dict[int, List[Detection]] = {}
+    for det in detections:
+        by_frame.setdefault(det.frame_index, []).append(det)
+    promoted: List[Detection] = []
+    for det in detections:
+        if det.class_name != "watermark":
+            promoted.append(det)
+            continue
+        frame_w = float(det.bbox.frame_width)
+        frame_h = float(det.bbox.frame_height)
+        if det.bbox.width < CAPTION_ROW_MIN_WIDTH_RATIO * frame_w:
+            promoted.append(det)
+            continue
+        matched = False
+        for other in _nearby_subtitles(by_frame, det.frame_index):
+            if _is_second_caption_row(det, other, frame_h) or _is_same_caption_line(det, other):
+                matched = True
+                break
+        if not matched:
+            promoted.append(det)
+            continue
+        promoted.append(replace(det, class_id=CLASS_IDS["subtitle"], class_name="subtitle"))
+    return promoted
+
+
+def _nearby_subtitles(by_frame: Dict[int, List[Detection]], frame_index: int) -> List[Detection]:
+    found: List[Detection] = []
+    for frame in range(frame_index - SAME_LINE_FRAME_WINDOW, frame_index + SAME_LINE_FRAME_WINDOW + 1):
+        for other in by_frame.get(frame, []):
+            if other.class_name == "subtitle":
+                found.append(other)
+    return found
+
+
+def _horizontal_overlap_ratio(a: BBox, b: BBox) -> float:
+    overlap = min(a.x2, b.x2) - max(a.x1, b.x1)
+    return overlap / max(1.0, min(a.width, b.width))
+
+
+def _is_second_caption_row(watermark: Detection, subtitle: Detection, frame_h: float) -> bool:
+    """True when the watermark is the next line under this subtitle."""
+    if watermark.frame_index != subtitle.frame_index:
+        return False
+    gap = watermark.bbox.y1 - subtitle.bbox.y2
+    if gap < -0.03 * frame_h or gap > CAPTION_ROW_MAX_GAP_RATIO * frame_h:
+        return False
+    return _horizontal_overlap_ratio(watermark.bbox, subtitle.bbox) >= CAPTION_ROW_OVERLAP_RATIO
+
+
+def _is_same_caption_line(watermark: Detection, subtitle: Detection) -> bool:
+    """True when both boxes sit on one row of glyphs."""
+    overlap_y = min(watermark.bbox.y2, subtitle.bbox.y2) - max(watermark.bbox.y1, subtitle.bbox.y1)
+    shorter = min(watermark.bbox.height, subtitle.bbox.height)
+    if overlap_y < SAME_LINE_VERTICAL_OVERLAP * max(1.0, shorter):
+        return False
+    return _horizontal_overlap_ratio(watermark.bbox, subtitle.bbox) >= CAPTION_ROW_OVERLAP_RATIO
 
 
 def classify_generic_text_detections(detections: List[Detection]) -> List[Detection]:

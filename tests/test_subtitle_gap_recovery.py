@@ -56,6 +56,13 @@ def test_recover_bottom_lane_gap_requires_repeated_ocr(tmp_path: Path):
     assert synthetic[0].source_text == "那年夏天很热"
     assert synthetic[0].start_time == 0.4
     assert synthetic[0].end_time == 1.4
+    # Render box is a centered band grown from the neighbors, never the
+    # 0.10-0.90 OCR window that painted a cinema-wide black bar.
+    box = synthetic[0].anchor_bbox
+    assert box.x1 >= 640 * 0.12
+    assert box.x2 <= 640 * 0.88
+    assert box.width < 640 * 0.72
+    assert box.width > 640 * 0.45
 
 
 def test_source_panel_covers_long_offcenter_bilingual_rows():
@@ -87,6 +94,21 @@ def test_snug_plate_covers_given_box_and_stays_snug():
     assert result2[640, 200].tolist() == [0, 0, 0]  # far left stays untouched
 
 
+def test_two_bottom_rows_keep_separate_plates():
+    # A name row and a second caption a full line below must not become one
+    # tall bar, and the narrower row must not inherit the wider row's width.
+    frame = np.full((1080, 1920, 3), 180, dtype=np.uint8)
+    name = BBox(541, 807, 1382, 897, 1920, 1080)
+    line = BBox(681, 987, 1265, 1042, 1920, 1080)
+    result = SubtitleProcessor.suppress_source_subtitles(frame, [name, line])
+
+    assert int(result[850, 960].max()) < 40
+    assert int(result[1010, 960].max()) < 40
+    assert result[780, 960].tolist() == [180, 180, 180]
+    assert result[940, 960].tolist() == [180, 180, 180]
+    assert result[1010, 560].tolist() == [180, 180, 180]
+
+
 def test_parallel_bilingual_merge_preserves_union_temporal_coverage():
     top = SubtitleEvent(
         event_id="TOP",
@@ -108,6 +130,39 @@ def test_parallel_bilingual_merge_preserves_union_temporal_coverage():
     assert len(merged) == 1
     assert merged[0].start_time == 4.40
     assert merged[0].end_time == 5.70
+
+
+def test_stacked_cjk_latin_rows_merge_into_one_bottom_box():
+    # Real 12s pair: Chinese row at y=922 and English row at y=991 translated
+    # independently so Vietnamese sat on the faces while 眼神柔和 stayed visible.
+    top = SubtitleEvent(
+        event_id="T012",
+        track_id="T012_subtitle",
+        start_time=11.87,
+        end_time=12.70,
+        anchor_bbox=BBox(842, 922, 1072, 980, 1920, 1080),
+        source_text="眼神柔和",
+        translated_text="Ánh mắt dịu dàng",
+    )
+    bottom = SubtitleEvent(
+        event_id="T011",
+        track_id="T011_subtitle",
+        start_time=11.87,
+        end_time=12.87,
+        anchor_bbox=BBox(843, 991, 1080, 1051, 1920, 1080),
+        source_text="soft eyes",
+        translated_text="Ánh mắt dịu dàng",
+    )
+
+    merged = SubtitleProcessor()._merge_stacked_caption_rows([top, bottom])
+
+    assert len(merged) == 1
+    event = merged[0]
+    assert event.source_text == "眼神柔和"
+    assert event.anchor_bbox.y1 == 922
+    assert event.anchor_bbox.y2 == 1051
+    assert event.start_time == 11.87
+    assert event.end_time == 12.87
 
 
 def test_recover_bottom_lane_gap_rejects_single_unstable_guess(tmp_path: Path):

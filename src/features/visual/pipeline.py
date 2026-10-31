@@ -24,36 +24,40 @@ from src.features.visual.processors.logo import LogoProcessor
 from src.features.visual.processors.other_text import OtherTextProcessor
 from src.features.visual.processors.watermark import WatermarkProcessor
 from src.features.visual.subtitle.processor import SubtitleProcessor
+from src.features.visual.text_classifier import promote_subtitle_rows_labeled_watermark
 from src.features.visual.tracker import ClassAwareTracker
 
 logger = logging.getLogger(__name__)
 
 VALID_SUBTITLE_MODES = {"translate_replace", "blur", "preserve"}
 
-# Layout geometry is intentionally per-event, not per-frame: word-level
-# detections jitter between frames, so a caption must be drawn from ONE box
-# computed once for the whole event. Suppression stays per-frame.
-LAYOUT_BOX_PAD_RATIO = 0.015
-LAYOUT_BOX_PAD_MIN_PX = 8.0
+# Layout geometry is one box per event, computed once from that event's own
+# detections. A few YOLO frames offset from the glyphs must not move the
+# caption, and the caption stays where the source line sits. Suppression
+# stays per-frame.
+LAYOUT_BOX_PAD_RATIO = 0.004
+LAYOUT_BOX_PAD_MIN_PX = 4.0
 LAYOUT_SPREAD_WARN_RATIO = 0.05
 #: Suppression bucket grid (5% of the frame) used to split a two-position
 #: trajectory into its dominant cluster and the leftover positions.
 LAYOUT_CLUSTER_BUCKET = 20
-#: Band normalization (see _apply_band_normalization): bottom-edge capture
-#: window and the maximum x-center correction for near-band captions.
-BAND_Y2_TOLERANCE_RATIO = 0.06
-BAND_X_CENTER_MAX_SHIFT_RATIO = 0.08
+
+
+def _median(values: List[float]) -> float:
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def _stable_layout_box(trajectory_boxes: List[BBox], frame_width: int, frame_height: int) -> BBox:
-    """Average the trajectory boxes per coordinate and clamp into the frame."""
-    count = max(1, len(trajectory_boxes))
-    mean_x1 = sum(b.x1 for b in trajectory_boxes) / count
-    mean_y1 = sum(b.y1 for b in trajectory_boxes) / count
-    mean_x2 = sum(b.x2 for b in trajectory_boxes) / count
-    mean_y2 = sum(b.y2 for b in trajectory_boxes) / count
+    """Median of each edge, so a few offset detections do not move the caption."""
     return BBox.clamped(
-        mean_x1, mean_y1, mean_x2, mean_y2,
+        _median([b.x1 for b in trajectory_boxes]),
+        _median([b.y1 for b in trajectory_boxes]),
+        _median([b.x2 for b in trajectory_boxes]),
+        _median([b.y2 for b in trajectory_boxes]),
         frame_width=frame_width, frame_height=frame_height,
     )
 
@@ -86,7 +90,7 @@ def _layout_boxes_for_event(event: SubtitleEvent):
     Empty trajectory (merged events, or detection failure) falls back to the
     mandatory anchor box. A trajectory whose centers span more than
     LAYOUT_SPREAD_WARN_RATIO of the frame is split into its dominant position
-    cluster: the text renders at the dominant position's MEAN box (stable)
+    cluster: the text renders at the dominant position's median box (stable)
     while every other cluster contributes a suppression-only box, so a
     caption that genuinely appears at two positions neither renders in
     between nor leaks pixels at the secondary position. The PLATE is the
@@ -242,14 +246,14 @@ def _build_suppress_only_map(
     """Frame map of boxes that are blurred but never rendered as text.
 
     Evidence rule: redaction (fail-safe) applies only where TEXT EVIDENCE
-    exists. READY events contribute only their off-cluster leftover
-    positions. OCR_EMPTY events are never redacted — the OCR pass (including
-    its upscale verification) found no readable caption in the region, so a
-    redaction would paint an empty box over scenery. OCR_FAILED and
-    translation failures keep redaction: text was seen (or the reader
-    crashed mid-batch), only the translation is missing. Redaction uses the
-    event's PLATE box (worst-case trajectory union) so glyph edges never
-    leak at trajectory extremes.
+    exists and nothing will be drawn in its place. READY events contribute
+    only their off-cluster leftover positions. OCR_EMPTY, SOURCE_IS_TARGET
+    and TRANSLATION_UNCHANGED are never redacted: there is no replacement
+    caption, so a redaction would blank the original line or paint an empty
+    box over scenery. OCR_FAILED and translation failures keep redaction:
+    text was seen (or the reader crashed mid-batch), only the translation is
+    missing. Redaction uses the event's PLATE box (worst-case trajectory
+    union) so glyph edges never leak at trajectory extremes.
     """
     plates = event_plate_boxes or {}
     suppress_only_by_frame: Dict[int, List[BBox]] = {}
@@ -259,7 +263,14 @@ def _build_suppress_only_map(
         for leftover in event_suppress_boxes.get(ev.event_id, []):
             for f_i in range(span_start, min(span_end, int(fps * 3600)) + 1):
                 suppress_only_by_frame.setdefault(f_i, []).append(leftover)
-        if ev.replacement_status in {"READY", "OCR_EMPTY"}:
+        if ev.replacement_status in {
+            "READY",
+            "OCR_EMPTY",
+            "SOURCE_IS_TARGET",
+            "TRANSLATION_UNCHANGED",
+        }:
+            # SOURCE_IS_TARGET / TRANSLATION_UNCHANGED: nothing is rendered,
+            # so redacting the region would blank the original caption.
             continue
         box = plates.get(ev.event_id) or event_layout_boxes.get(ev.event_id) or ev.anchor_bbox
         for f_i in range(max(0, span_start - 2), min(span_end + 2, int(fps * 3600)) + 1):
@@ -267,61 +278,22 @@ def _build_suppress_only_map(
     return suppress_only_by_frame
 
 
-def _apply_band_normalization(
-    event_layout_boxes: Dict[str, BBox], events_by_id: Dict[str, SubtitleEvent]
-) -> Dict[str, BBox]:
-    """Snap near-band READY caption boxes to one shared bottom edge/center.
+def _layout_maps_for_events(subtitle_events: List[SubtitleEvent]):
+    """Render box, suppression plate and leftover boxes for every event.
 
-    Consecutive captions of one video share one subtitle band; per-event
-    means still wobble a few pixels and that wobble reads as the caption
-    "jumping" between lines. The band bottom is the most common y2 bucket of
-    the READY events; a box within BAND_Y2_TOLERANCE_RATIO of it is shifted
-    to the shared bottom edge (height preserved) and, when its x-center is
-    within BAND_X_CENTER_MAX_SHIFT_RATIO of the band center, re-centered
-    (width preserved). Events far from the band (top captions, the upper row
-    of a bilingual pair) keep their own geometry.
+    Each caption keeps the median box of its own detections. A line in the
+    middle of the frame stays there; a short line stays short. Nothing is
+    moved onto a shared bottom band.
     """
-    ready_boxes = [
-        (event_id, box)
-        for event_id, box in event_layout_boxes.items()
-        if events_by_id.get(event_id) is not None
-        and events_by_id[event_id].replacement_status == "READY"
-    ]
-    if len(ready_boxes) < 3:
-        return event_layout_boxes
-    frame_width = int(ready_boxes[0][1].frame_width)
-    frame_height = int(ready_boxes[0][1].frame_height)
-    bucket_size = BAND_Y2_TOLERANCE_RATIO / 3.0
-    y2_buckets: Dict[int, List[tuple]] = {}
-    for entry in ready_boxes:
-        y2 = entry[1].y2 / max(1.0, frame_height)
-        y2_buckets.setdefault(int(y2 / bucket_size), []).append(entry)
-    modal_bucket = max(y2_buckets.values(), key=len)
-    if len(modal_bucket) * 3 < len(ready_boxes):
-        return event_layout_boxes
-    band_y2 = sum(b.y2 for _, b in modal_bucket) / len(modal_bucket) / max(1.0, frame_height)
-    band_cx = sum((b.x1 + b.x2) / 2 for _, b in modal_bucket) / len(modal_bucket) / max(1.0, frame_width)
-
-    normalized = dict(event_layout_boxes)
-    for event_id, box in ready_boxes:
-        y2 = box.y2 / max(1.0, frame_height)
-        if abs(y2 - band_y2) > BAND_Y2_TOLERANCE_RATIO:
-            continue
-        x1, y1, x2 = box.x1, box.y1, box.x2
-        height = box.y2 - box.y1
-        new_y2 = band_y2 * frame_height
-        y1 = new_y2 - height
-        y2_px = new_y2
-        cx = (x1 + x2) / 2 / max(1.0, frame_width)
-        if abs(cx - band_cx) <= BAND_X_CENTER_MAX_SHIFT_RATIO:
-            shift = (band_cx - cx) * frame_width
-            x1 += shift
-            x2 += shift
-        normalized[event_id] = BBox.clamped(
-            x1, y1, x2, y2_px,
-            frame_width=frame_width, frame_height=frame_height,
-        )
-    return normalized
+    event_layout_boxes: Dict[str, BBox] = {}
+    event_plate_boxes: Dict[str, BBox] = {}
+    event_suppress_boxes: Dict[str, List[BBox]] = {}
+    for event in subtitle_events:
+        box, plate, leftovers = _layout_boxes_for_event(event)
+        event_layout_boxes[event.event_id] = box
+        event_plate_boxes[event.event_id] = plate
+        event_suppress_boxes[event.event_id] = leftovers
+    return event_layout_boxes, event_plate_boxes, event_suppress_boxes
 
 
 def merge_same_frame_detections(
@@ -566,54 +538,8 @@ class VisualPipeline:
             if render_spans is None or (span and span[0] <= frame_index <= span[1]):
                 active_events.append(event)
 
-        # Suppression covers every event mapped to this frame (pre/post-roll
-        # included), padded identically to the render box so the text area is
-        # always backed by suppression — plus the fail-safe boxes of
-        # non-READY events so failed captions are never left readable.
-        if hide_source and hasattr(self.subtitle_processor, "suppress_source_subtitles"):
-            suppress_boxes = []
-            twin_spans = suppress_spans or {}
-            for event in in_place_events:
-                box = plates.get(event.event_id) or event_layout_boxes.get(event.event_id, event.anchor_bbox)
-                span = twin_spans.get(event.event_id)
-                if span is None:
-                    span = render_spans.get(event.event_id) if render_spans is not None else None
-                if span is not None and not (span[0] <= frame_index <= span[1]):
-                    # Pre/post-roll frame: the panel must only hide source
-                    # pixels that are actually there. Raw per-frame subtitle
-                    # detections (no backward fill) tell us whether the
-                    # original caption is still visible in this lane.
-                    raw_dets = (raw_sub_dets_by_frame or {}).get(frame_index, [])
-                    if raw_sub_dets_by_frame is not None and not any(
-                        same_lane(det.bbox, box) for det in raw_dets
-                    ):
-                        continue
-                event_pad = max(LAYOUT_BOX_PAD_MIN_PX, LAYOUT_BOX_PAD_RATIO * float(box.frame_height))
-                suppress_boxes.append(BBox.clamped(
-                    box.x1 - event_pad, box.y1 - event_pad,
-                    box.x2 + event_pad, box.y2 + event_pad,
-                    frame_width=box.frame_width, frame_height=box.frame_height,
-                ))
-            for box in (suppress_only_boxes or []):
-                event_pad = max(LAYOUT_BOX_PAD_MIN_PX, LAYOUT_BOX_PAD_RATIO * float(box.frame_height))
-                suppress_boxes.append(BBox.clamped(
-                    box.x1 - event_pad, box.y1 - event_pad,
-                    box.x2 + event_pad, box.y2 + event_pad,
-                    frame_width=box.frame_width, frame_height=box.frame_height,
-                ))
-            if suppress_boxes:
-                frame = self.subtitle_processor.suppress_source_subtitles(frame, suppress_boxes)
-
-        if not active_events:
-            return frame
-
-        # The same bilingual caption can exist as two lane events (upper CJK
-        # row + lower Latin row) that escaped the pre-OCR merge; drawing both
-        # duplicates the translated string at two positions and makes the band
-        # jump when one ends. Keep one event per identical or near-identical
-        # translation — the OCR verification pass recovers small rows whose
-        # Vietnamese then differs from its twin by one word only. Identical
-        # text is just Jaccard 1.0, so one token-overlap test covers both.
+        # Drop a near-duplicate translation before painting, so the caption
+        # we draw is not also covered by a second black plate.
         kept_events: List[tuple] = []
         twin_map = twin_members or {}
 
@@ -653,6 +579,54 @@ class VisualPipeline:
             ):
                 kept_events[kept_events.index(twin)] = (tokens, event)
         active_events = [ev for _tokens, ev in kept_events]
+        rendered_ids = {ev.event_id for ev in active_events}
+
+        # A drawn caption gets one rounded panel. Painting the trajectory
+        # plate under it left a hard rectangle around that panel. Pre-roll
+        # and failed captions still get a plate, because nothing else covers
+        # the original glyphs.
+        if hide_source and hasattr(self.subtitle_processor, "suppress_source_subtitles"):
+            suppress_boxes = []
+            twin_spans = suppress_spans or {}
+            for event in in_place_events:
+                layout = event_layout_boxes.get(event.event_id, event.anchor_bbox)
+                box = plates.get(event.event_id) or layout
+                if event.event_id in rendered_ids and (
+                    abs(box.x1 - layout.x1) <= 8 and abs(box.y1 - layout.y1) <= 8
+                    and abs(box.x2 - layout.x2) <= 8 and abs(box.y2 - layout.y2) <= 8
+                ):
+                    continue
+                span = twin_spans.get(event.event_id)
+                if span is None:
+                    span = render_spans.get(event.event_id) if render_spans is not None else None
+                if span is not None and not (span[0] <= frame_index <= span[1]):
+                    # Pre/post-roll frame: the panel must only hide source
+                    # pixels that are actually there. Raw per-frame subtitle
+                    # detections (no backward fill) tell us whether the
+                    # original caption is still visible in this lane.
+                    raw_dets = (raw_sub_dets_by_frame or {}).get(frame_index, [])
+                    if raw_sub_dets_by_frame is not None and not any(
+                        same_lane(det.bbox, box) for det in raw_dets
+                    ):
+                        continue
+                event_pad = max(LAYOUT_BOX_PAD_MIN_PX, LAYOUT_BOX_PAD_RATIO * float(box.frame_height))
+                suppress_boxes.append(BBox.clamped(
+                    box.x1 - event_pad, box.y1 - event_pad,
+                    box.x2 + event_pad, box.y2 + event_pad,
+                    frame_width=box.frame_width, frame_height=box.frame_height,
+                ))
+            for box in (suppress_only_boxes or []):
+                event_pad = max(LAYOUT_BOX_PAD_MIN_PX, LAYOUT_BOX_PAD_RATIO * float(box.frame_height))
+                suppress_boxes.append(BBox.clamped(
+                    box.x1 - event_pad, box.y1 - event_pad,
+                    box.x2 + event_pad, box.y2 + event_pad,
+                    frame_width=box.frame_width, frame_height=box.frame_height,
+                ))
+            if suppress_boxes:
+                frame = self.subtitle_processor.suppress_source_subtitles(frame, suppress_boxes)
+
+        if not active_events:
+            return frame
 
         groups: List[list] = []
         for event in active_events:
@@ -704,7 +678,7 @@ class VisualPipeline:
                     frame_height=cluster_box.frame_height,
                 )
                 frame = self.subtitle_processor.render_region_events(
-                    frame, cluster_events, layout_box, bg_box=False
+                    frame, cluster_events, layout_box, bg_box=True
                 )
         return frame
 
@@ -849,7 +823,7 @@ class VisualPipeline:
                             frame, suppress_boxes
                         )
                 frame = self.subtitle_processor.render_region_events(
-                    frame, chosen, tight_box, bg_box=False
+                    frame, chosen, tight_box, bg_box=True
                 )
 
             # Render non-source cinema subtitles if any without black box
@@ -923,7 +897,9 @@ class VisualPipeline:
         # 1. YOLO 4-class Detection
         t0 = time.monotonic()
         logger.info("Visual: running YOLO detection on '%s'...", Path(request.video_path).name)
-        detections = self.detector.detect_video(request.video_path, stride=1)
+        detections = promote_subtitle_rows_labeled_watermark(
+            self.detector.detect_video(request.video_path, stride=1)
+        )
         timings["detection"] = round(time.monotonic() - t0, 3)
 
         class_counts: Dict[str, int] = {}
@@ -1024,24 +1000,18 @@ class VisualPipeline:
             len(subtitle_tracks),
         )
 
-        # Per-event stable layout geometry (see _stable_layout_box): computed
-        # once per event, reused for every frame the event covers. Suppressed
-        # entirely when the caller opts out via stable_subtitle_layout=False.
-        # A spread trajectory renders at its dominant position cluster and the
-        # leftover positions become suppression-only boxes; finally READY
-        # caption boxes near the shared bottom band snap to one common edge
-        # so consecutive captions stop wobbling.
+        # Per-event stable layout geometry (see _stable_layout_box): the
+        # median of that caption's own detections, reused for every frame it
+        # covers. A spread trajectory renders at its dominant cluster and the
+        # leftover positions become suppression-only boxes. The box is not
+        # moved onto a shared bottom band.
         event_layout_boxes: Dict[str, BBox] = {}
         event_suppress_boxes: Dict[str, List[BBox]] = {}
         event_plate_boxes: Dict[str, BBox] = {}
         if request.stable_subtitle_layout:
-            for ev in subtitle_events:
-                box, plate, leftovers = _layout_boxes_for_event(ev)
-                event_layout_boxes[ev.event_id] = box
-                event_plate_boxes[ev.event_id] = plate
-                event_suppress_boxes[ev.event_id] = leftovers
-            events_by_id = {ev.event_id: ev for ev in subtitle_events}
-            event_layout_boxes = _apply_band_normalization(event_layout_boxes, events_by_id)
+            event_layout_boxes, event_plate_boxes, event_suppress_boxes = (
+                _layout_maps_for_events(subtitle_events)
+            )
         else:
             suppress_spans = {}
 

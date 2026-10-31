@@ -130,6 +130,27 @@ def test_parallel_bilingual_events_merge_into_one_union_event():
     assert event.anchor_bbox.y2 == 175
 
 
+def test_two_chinese_rows_a_line_apart_stay_separate():
+    # 9s of douyin_new_30s: the name and the sentence under it are different
+    # captions. Merging them paints one tall box and drops the name.
+    name = SubtitleEvent(
+        event_id="NAME",
+        track_id="T_NAME",
+        start_time=8.73,
+        end_time=10.80,
+        anchor_bbox=BBox(541, 807, 1382, 897, 1920, 1080),
+    )
+    sentence = SubtitleEvent(
+        event_id="LINE",
+        track_id="T_LINE",
+        start_time=8.67,
+        end_time=10.80,
+        anchor_bbox=BBox(681, 987, 1265, 1042, 1920, 1080),
+    )
+    merged = SubtitleProcessor._merge_parallel_bilingual_events([name, sentence])
+    assert {event.event_id for event in merged} == {"NAME", "LINE"}
+
+
 def test_parallel_bilingual_merge_does_not_drop_long_event_coverage():
     long_top = SubtitleEvent(
         event_id="TOP_LONG",

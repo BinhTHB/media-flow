@@ -249,6 +249,14 @@ def test_validator_allows_short_proper_noun_passthrough_for_vi_target():
     assert FallbackTranslationAdapter._suspicious_indices(source, translated) == []
 
 
+def test_validator_flags_ordinal_copied_from_neighbor_rule():
+    source = ["妈妈总是教导我们", "第一条: 要温柔"]
+    translated = ["Thứ nhất: Hãy dịu dàng", "Thứ nhất: Phải dịu dàng"]
+
+    assert 0 in FallbackTranslationAdapter._suspicious_indices(source, translated)
+    assert 1 not in FallbackTranslationAdapter._suspicious_indices(source, translated)
+
+
 def test_validator_flags_untranslated_long_english_source_for_vi_target():
     # An English sentence "translated" as itself is not a proper-noun
     # passthrough; it must be flagged so the fail-safe suppresses it.

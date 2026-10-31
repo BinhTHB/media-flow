@@ -27,7 +27,7 @@ class SubtitleEvent:
     source_text: str = ""
     translated_text: str = ""
     split_reason: str = "initial"
-    replacement_status: str = "SKIPPED"  # READY | OCR_EMPTY | OCR_FAILED | TRANSLATION_EMPTY | TRANSLATION_FAILED | SKIPPED
+    replacement_status: str = "SKIPPED"  # READY | OCR_EMPTY | OCR_FAILED | TRANSLATION_EMPTY | TRANSLATION_FAILED | SOURCE_IS_TARGET | TRANSLATION_UNCHANGED | SKIPPED
     blur_applied: bool = False
     overlay_applied: bool = False
 

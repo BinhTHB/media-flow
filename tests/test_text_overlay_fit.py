@@ -55,3 +55,71 @@ def test_font_grows_for_short_caption_in_roomy_region():
     # least the base line height (40px + stroke), not a tiny remnant.
     assert small.max() - small.min() >= 30
     assert big.max() <= region.y2 + 6
+
+
+def test_panel_hugs_text_when_source_box_is_cinema_wide():
+    # Gap-recovery used to store an 80%-wide crop as the event box. Expanding
+    # the caption panel onto that box painted a black bar across the scene.
+    region = BBox(192, 842, 1728, 1074, FW, FH)
+    frame = np.zeros((FH, FW, 3), dtype=np.uint8)
+    out = TextOverlayAction(
+        text="Xin chào",
+        anchor_to_bbox=True,
+        vertical_anchor="bottom",
+        bg_box=True,
+    ).execute(frame, region)
+    mid_y = 1000
+    # Far into the source box, left of the actual caption, stays empty.
+    assert int(out[mid_y, 250].sum()) < 40
+    # The caption itself is present near the box center/bottom.
+    band = out[940:1060, 700:1220]
+    assert int(band.max()) > 200
+
+
+def test_anchored_panel_corner_stays_clear():
+    # The caption backing is one rounded panel. Its outer corner is not a
+    # filled rectangle.
+    region = BBox(700, 940, 1220, 1040, FW, FH)
+    frame = np.full((FH, FW, 3), 180, dtype=np.uint8)
+    out = TextOverlayAction(
+        text="Xin chào",
+        anchor_to_bbox=True,
+        vertical_anchor="center",
+        bg_box=True,
+        bg_color=(16, 12, 10, 255),
+    ).execute(frame, region)
+    assert out[int(region.y1), int(region.x1)].tolist() == [180, 180, 180]
+    assert out[int(region.y1) + 24, int(region.x1) + 36].tolist() == [10, 12, 16]
+
+
+def test_region_render_centers_text_in_its_box():
+    # The production caller places the caption in the middle of its own box.
+    from src.core.models.subtitle_event import SubtitleEvent
+    from src.features.visual.subtitle.processor import SubtitleProcessor
+
+    processor = SubtitleProcessor()
+    tall = BBox(700, 900, 1300, 1054, FW, FH)
+    short = BBox(700, 990, 1300, 1054, FW, FH)
+    frame = np.zeros((FH, FW, 3), dtype=np.uint8)
+
+    def _event(box: BBox) -> SubtitleEvent:
+        return SubtitleEvent(
+            event_id="E",
+            track_id="T",
+            start_time=0.0,
+            end_time=1.0,
+            anchor_bbox=box,
+            translated_text="Nói năng nhẹ nhàng",
+            replacement_status="READY",
+            overlay_applied=True,
+        )
+
+    def _mid(box: BBox) -> float:
+        rows = _white_rows(processor.render_region_events(frame.copy(), [_event(box)], box))
+        return float(rows.min() + rows.max()) / 2.0
+
+    mid_tall = _mid(tall)
+    mid_short = _mid(short)
+    assert abs(mid_tall - (tall.y1 + tall.y2) / 2.0) < 24
+    assert abs(mid_short - (short.y1 + short.y2) / 2.0) < 24
+    assert mid_short > mid_tall
