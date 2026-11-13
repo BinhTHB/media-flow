@@ -10,8 +10,9 @@
     theme: document.documentElement.getAttribute("data-theme") || "dark",
     activeTool: "video",
     files: [],
+    showCatalog: false,
     selectedFile: null,
-    selectedPreset: "yolo-4class",
+    selectedPreset: "reup",
     activeJobId: null,
     pollTimer: null,
     capabilities: null,
@@ -25,6 +26,8 @@
     runtimeDetail: document.getElementById("runtimeDetail"),
     navTabs: document.querySelectorAll("[data-nav-tool]"),
     videoSection: document.getElementById("videoSection"),
+    sourceSection: document.getElementById("sourceSection"),
+    publishSection: document.getElementById("publishSection"),
     ttsSection: document.getElementById("ttsSection"),
 
     // Step 1: Input Video
@@ -38,11 +41,17 @@
     fileInput: document.getElementById("fileInput"),
     uploadProgress: document.getElementById("uploadProgress"),
     sourceList: document.getElementById("sourceList"),
+    fileFilter: document.getElementById("fileFilter"),
     refreshFiles: document.getElementById("refreshFiles"),
     clearFilesBtn: document.getElementById("clearFilesBtn"),
 
     // Step 2: Preset
     presetCards: document.querySelectorAll(".preset-option-card"),
+    reupOptions: document.getElementById("reupOptions"),
+    genericProcessOptions: document.getElementById("genericProcessOptions"),
+    reupVisualCheck: document.getElementById("reupVisualCheck"),
+    reupAudioCheck: document.getElementById("reupAudioCheck"),
+    reupSpeechCaptionCheck: document.getElementById("reupSpeechCaptionCheck"),
     subtitleActionSelect: document.getElementById("subtitleActionSelect"),
     dubAudioCheck: document.getElementById("dubAudioCheck"),
     extraTextActionSelect: document.getElementById("extraTextActionSelect"),
@@ -55,6 +64,7 @@
     subtitleLayoutSelect: document.getElementById("subtitleLayoutSelect"),
     deviceSelect: document.getElementById("deviceSelect"),
     profileSelect: document.getElementById("profileSelect"),
+    variationSelect: document.getElementById("variationSelect"),
     hideSourceSubCheck: document.getElementById("hideSourceSubCheck"),
     overwriteCheck: document.getElementById("overwriteCheck"),
 
@@ -70,6 +80,7 @@
     jobMonitoringSection: document.getElementById("jobMonitoringSection"),
     jobStageTitle: document.getElementById("jobStageTitle"),
     jobStatusText: document.getElementById("jobStatusText"),
+    jobFrameLine: document.getElementById("jobFrameLine"),
     jobProgressPercent: document.getElementById("jobProgressPercent"),
     progressFill: document.getElementById("progressFill"),
     jobMetrics: document.getElementById("jobMetrics"),
@@ -167,29 +178,26 @@
   function switchTool(tool) {
     state.activeTool = tool;
     el.navTabs.forEach(function (tab) {
-      const match = tab.getAttribute("data-nav-tool") === tool;
-      tab.classList.toggle("is-active", match);
+      tab.classList.toggle("is-active", tab.getAttribute("data-nav-tool") === tool);
     });
-
-    if (tool === "video") {
-      if (el.videoSection) {
-        el.videoSection.classList.add("is-active");
-        el.videoSection.removeAttribute("hidden");
+    const sections = {
+      video: el.videoSection,
+      sources: el.sourceSection,
+      publish: el.publishSection,
+      tts: el.ttsSection,
+    };
+    Object.keys(sections).forEach(function (name) {
+      const section = sections[name];
+      if (!section) return;
+      if (name === tool) {
+        section.classList.add("is-active");
+        section.removeAttribute("hidden");
+      } else {
+        section.classList.remove("is-active");
+        section.setAttribute("hidden", "");
       }
-      if (el.ttsSection) {
-        el.ttsSection.classList.remove("is-active");
-        el.ttsSection.setAttribute("hidden", "");
-      }
-    } else if (tool === "tts") {
-      if (el.ttsSection) {
-        el.ttsSection.classList.add("is-active");
-        el.ttsSection.removeAttribute("hidden");
-      }
-      if (el.videoSection) {
-        el.videoSection.classList.remove("is-active");
-        el.videoSection.setAttribute("hidden", "");
-      }
-    }
+    });
+    if (tool === "publish") loadZernioAccounts();
   }
 
   // Runtime State
@@ -202,21 +210,48 @@
     }
   }
 
+  function processChoices() {
+    const preset = state.selectedPreset || "reup";
+    if (preset === "reup") {
+      const visual = el.reupVisualCheck ? el.reupVisualCheck.checked : true;
+      const audio = el.reupAudioCheck ? el.reupAudioCheck.checked : true;
+      return {
+        preset: preset,
+        subAction: visual ? "translate" : "preserve",
+        dubAudio: audio,
+        extraAction: visual ? "blur" : "preserve",
+      };
+    }
+    return {
+      preset: preset,
+      subAction: el.subtitleActionSelect ? el.subtitleActionSelect.value : "translate",
+      dubAudio: el.dubAudioCheck ? el.dubAudioCheck.checked : false,
+      extraAction: el.extraTextActionSelect ? el.extraTextActionSelect.value : "preserve",
+    };
+  }
+
+  function syncReupPanel() {
+    const reup = state.selectedPreset === "reup";
+    if (el.reupOptions) el.reupOptions.hidden = !reup;
+    if (el.genericProcessOptions) el.genericProcessOptions.hidden = reup;
+  }
+
   // Update CLI Command Preview Box
   function updateCliCommandPreview() {
     if (!el.cliCommandPreview) return;
 
     const inputPath = state.selectedFile ? state.selectedFile.path : "<chọn-video-đầu-vào>";
-    const preset = state.selectedPreset || "yolo-4class";
+    const choices = processChoices();
+    const preset = choices.preset;
     const srcLang = el.sourceLanguageSelect ? el.sourceLanguageSelect.value : "vi";
     const tgtLang = el.targetLanguageSelect ? el.targetLanguageSelect.value : "vi";
-    const voiceId = el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL";
+    const voiceId = el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb";
     const subLayout = el.subtitleLayoutSelect ? el.subtitleLayoutSelect.value : "in-place";
     const device = el.deviceSelect ? el.deviceSelect.value : "auto";
     const profile = el.profileSelect ? el.profileSelect.value : "balanced";
-    const subAction = el.subtitleActionSelect ? el.subtitleActionSelect.value : "translate";
-    const dubAudio = el.dubAudioCheck ? el.dubAudioCheck.checked : false;
-    const extraAction = el.extraTextActionSelect ? el.extraTextActionSelect.value : "preserve";
+    const subAction = choices.subAction;
+    const dubAudio = choices.dubAudio;
+    const extraAction = choices.extraAction;
     const hideSourceSub = el.hideSourceSubCheck && el.hideSourceSubCheck.checked;
     const overwrite = el.overwriteCheck && el.overwriteCheck.checked;
 
@@ -227,7 +262,11 @@
       `--subtitle-action ${subAction}`,
     ];
 
-    if (dubAudio) parts.push("--dub-audio");
+    if (preset === "reup" && !dubAudio) parts.push("--no-dub-audio");
+    else if (dubAudio) parts.push("--dub-audio");
+    if (preset === "reup" && el.reupSpeechCaptionCheck && !el.reupSpeechCaptionCheck.checked) {
+      parts.push("--no-speech-captions");
+    }
     parts.push(`--extra-text-action ${extraAction}`);
 
     if (subAction === "translate" || dubAudio) {
@@ -243,6 +282,8 @@
 
     if (device !== "auto") parts.push(`--device ${device}`);
     if (profile !== "balanced") parts.push(`--profile ${profile}`);
+    const variation = el.variationSelect ? el.variationSelect.value : "balanced";
+    if (variation !== "balanced") parts.push(`--variation ${variation}`);
     if (subAction === "translate" && hideSourceSub) parts.push("--hide-source-subtitle");
     if (overwrite) parts.push("--overwrite");
 
@@ -262,6 +303,9 @@
   // Video Management & File List
   async function loadFileList() {
     if (!el.sourceList) return;
+    state.showCatalog = true;
+    el.sourceList.hidden = false;
+    if (el.fileFilter) el.fileFilter.hidden = false;
     el.sourceList.innerHTML = '<div class="empty-state">Đang tải danh sách video dự án…</div>';
     try {
       const res = await api("/api/files");
@@ -272,14 +316,35 @@
     }
   }
 
+  function visibleFiles() {
+    const query = el.fileFilter ? el.fileFilter.value.trim().toLowerCase() : "";
+    if (!query) return state.files;
+    return state.files.filter(function (file) {
+      const name = (file.name || "").toLowerCase();
+      const path = (file.path || "").toLowerCase();
+      return name.indexOf(query) !== -1 || path.indexOf(query) !== -1;
+    });
+  }
+
   function renderFileList() {
     if (!el.sourceList) return;
+    if (el.fileFilter) el.fileFilter.hidden = !state.showCatalog;
+    if (!state.showCatalog) {
+      el.sourceList.hidden = true;
+      return;
+    }
+    el.sourceList.hidden = false;
     if (!state.files.length) {
-      el.sourceList.innerHTML = '<div class="empty-state">Chưa có video nào. Kéo thả file video vào ô trên để tải lên!</div>';
+      el.sourceList.innerHTML = '<div class="empty-state">Chưa có video nào. Kéo thả file video vào ô trên để tải lên.</div>';
+      return;
+    }
+    const files = visibleFiles();
+    if (!files.length) {
+      el.sourceList.innerHTML = '<div class="empty-state">Không có file khớp bộ lọc.</div>';
       return;
     }
 
-    el.sourceList.innerHTML = state.files.map(function (file) {
+    el.sourceList.innerHTML = files.map(function (file) {
       const isSelected = state.selectedFile && state.selectedFile.path === file.path;
       const isSample = file.path.startsWith("test_videos/");
       const isOutput = file.path.startsWith("outputs/");
@@ -326,11 +391,6 @@
         deleteFile(p);
       });
     });
-
-    // Nếu chưa chọn video nào và có danh sách, tự động chọn file đầu tiên
-    if (!state.selectedFile && state.files.length > 0) {
-      selectVideo(state.files[0]);
-    }
   }
 
   function selectVideo(file) {
@@ -378,7 +438,7 @@
   function resetSelectedVideo() {
     state.selectedFile = null;
     if (el.currentMediaPath) el.currentMediaPath.textContent = "Chưa chọn video";
-    if (el.currentMediaMeta) el.currentMediaMeta.textContent = "Vui lòng bấm chọn một file từ danh sách bên dưới";
+    if (el.currentMediaMeta) el.currentMediaMeta.textContent = "Tải video mới, hoặc bấm Hiện";
     if (el.videoStatusBadge) {
       el.videoStatusBadge.textContent = "CHỜ VIDEO";
       el.videoStatusBadge.className = "banner-badge";
@@ -410,18 +470,14 @@
     }
   }
 
-  async function clearAllFiles() {
-    if (!confirm("Bạn có chắc chắn muốn dọn dẹp toàn bộ file tải lên và kết quả cũ trong dự án?")) return;
-    try {
-      const res = await api("/api/files", { method: "DELETE" });
-      resetSelectedVideo();
-      await loadFileList();
-      if (el.videoFormMessage) {
-        el.videoFormMessage.textContent = `Đã dọn dẹp ${res.deleted_count || 0} file khỏi dự án.`;
-        el.videoFormMessage.className = "yup-msg form-message is-success";
-      }
-    } catch (err) {
-      alert("Lỗi khi dọn dẹp: " + err.message);
+  function clearPickerView() {
+    state.showCatalog = false;
+    if (el.fileFilter) el.fileFilter.value = "";
+    resetSelectedVideo();
+    renderFileList();
+    if (el.videoFormMessage) {
+      el.videoFormMessage.textContent = "Đã ẩn danh sách trên màn hình. File trên đĩa vẫn còn.";
+      el.videoFormMessage.className = "yup-msg form-message is-success";
     }
   }
 
@@ -485,8 +541,7 @@
 
       if (progressFill) progressFill.style.width = "100%";
       const result = await response.json();
-      await loadFileList();
-
+      if (state.showCatalog) await loadFileList();
       const uploaded = state.files.find(function (f) { return f.name === result.name || f.path === result.path; }) || result;
       selectVideo(uploaded);
 
@@ -521,10 +576,11 @@
           c.classList.toggle("is-active", c.getAttribute("data-preset") === preset);
         });
 
-        // Cập nhật câu lệnh CLI
+        syncReupPanel();
         updateCliCommandPreview();
       });
     });
+    syncReupPanel();
   }
 
   // CLI Parameters Listeners
@@ -536,11 +592,15 @@
       el.subtitleLayoutSelect,
       el.deviceSelect,
       el.profileSelect,
+      el.variationSelect,
       el.hideSourceSubCheck,
       el.overwriteCheck,
       el.subtitleActionSelect,
       el.dubAudioCheck,
       el.extraTextActionSelect,
+      el.reupVisualCheck,
+      el.reupAudioCheck,
+      el.reupSpeechCaptionCheck,
     ];
 
     inputs.forEach(function (input) {
@@ -637,10 +697,15 @@
         return;
       }
 
-      const resolvedPreset = state.selectedPreset || "yolo-4class";
-      const subAction = el.subtitleActionSelect ? el.subtitleActionSelect.value : "translate";
-      const dubAudio = el.dubAudioCheck ? el.dubAudioCheck.checked : false;
-      const extraAction = el.extraTextActionSelect ? el.extraTextActionSelect.value : "preserve";
+      const choices = processChoices();
+      if (choices.preset === "reup" && choices.subAction === "preserve" && !choices.dubAudio) {
+        alert("Chọn xử lý hình, tiếng, hoặc cả hai.");
+        return;
+      }
+      const resolvedPreset = choices.preset;
+      const subAction = choices.subAction;
+      const dubAudio = choices.dubAudio;
+      const extraAction = choices.extraAction;
       const srcName = state.selectedFile.name || "video.mp4";
       const stem = srcName.replace(/\.[^.]+$/, "");
       const outputPreset = dubAudio && subAction === "translate"
@@ -654,13 +719,15 @@
         subtitle_action: subAction,
         dub_audio: dubAudio,
         extra_text_action: extraAction,
+        create_missing_subtitles: el.reupSpeechCaptionCheck ? el.reupSpeechCaptionCheck.checked : true,
         source_language: el.sourceLanguageSelect ? el.sourceLanguageSelect.value : "vi",
         target_language: el.targetLanguageSelect ? el.targetLanguageSelect.value : "vi",
-        voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+        voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb",
         subtitle_layout: el.subtitleLayoutSelect ? el.subtitleLayoutSelect.value : "in-place",
         hide_source_subtitle: el.hideSourceSubCheck ? el.hideSourceSubCheck.checked : true,
         device: el.deviceSelect ? el.deviceSelect.value : "auto",
         profile: el.profileSelect ? el.profileSelect.value : "balanced",
+        variation_level: el.variationSelect ? el.variationSelect.value : "balanced",
         overwrite: el.overwriteCheck ? el.overwriteCheck.checked : true,
       };
 
@@ -677,14 +744,8 @@
         el.videoFormMessage.className = "yup-msg form-message";
       }
 
-      // Hiện khung monitoring & terminal logs, ẩn khung kết quả cũ
-      if (el.jobMonitoringSection) el.jobMonitoringSection.removeAttribute("hidden");
       if (el.jobResultSection) el.jobResultSection.setAttribute("hidden", "");
-
-      // Cuộn êm đến khung monitoring
-      if (el.jobMonitoringSection) {
-        el.jobMonitoringSection.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      showJobMonitor({ status: "queued", progress: 0, message: "Đang khởi tạo tiến trình CLI..." });
 
       if (el.jobLogsArea) el.jobLogsArea.textContent = "Đang khởi tạo tiến trình CLI...\n";
       if (el.progressFill) el.progressFill.style.width = "0%";
@@ -699,6 +760,7 @@
         });
 
         state.activeJobId = job.id;
+        rememberJob(job.id);
         startJobPolling(job.id);
       } catch (err) {
         el.runJobBtn.removeAttribute("disabled");
@@ -716,8 +778,89 @@
     });
   }
 
+  function rememberJob(jobId) {
+    try {
+      if (jobId) sessionStorage.setItem("mediaflow.activeJobId", jobId);
+    } catch (_) {
+      // Phiên riêng tư có thể chặn storage. Dock vẫn bám job trong bộ nhớ.
+    }
+  }
+
+  function rememberedJobId() {
+    try {
+      return sessionStorage.getItem("mediaflow.activeJobId") || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function finishJobView(job) {
+    setCancelVisible(false);
+    if (el.runJobBtn) el.runJobBtn.removeAttribute("disabled");
+    if (el.runButtonText) el.runButtonText.textContent = "⚡ BẮT ĐẦU CHẠY PIPELINE (RUN CLI)";
+    if (job.status === "succeeded") {
+      if (el.videoStatusBadge) {
+        el.videoStatusBadge.textContent = "HOÀN THÀNH";
+        el.videoStatusBadge.className = "banner-badge success";
+      }
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = "Pipeline CLI đã hoàn tất thành công!";
+        el.videoFormMessage.className = "yup-msg form-message is-success";
+      }
+      if (el.jobResultSection) {
+        el.jobResultSection.removeAttribute("hidden");
+        if (el.resultFilePath) {
+          el.resultFilePath.textContent = `Tệp kết quả: ${job.output_relative || job.output_path || "outputs/output.mp4"}`;
+        }
+        if (el.resultFileSize) {
+          el.resultFileSize.textContent = `Dung lượng: ${formatBytes(job.output_size || 0)}`;
+        }
+        const mediaUrl = `/api/media?path=${encodeURIComponent(job.output_relative || job.output_name)}`;
+        if (el.resultDownloadBtn) {
+          el.resultDownloadBtn.href = mediaUrl;
+          el.resultDownloadBtn.download = job.output_name || "output.mp4";
+        }
+        if (el.resultViewBtn) el.resultViewBtn.href = mediaUrl;
+      }
+      if (state.showCatalog) loadFileList();
+      fillPublishMetadata(job.output_relative || job.output_name);
+      return;
+    }
+    if (job.status === "failed") {
+      if (el.videoStatusBadge) {
+        el.videoStatusBadge.textContent = "THẤT BẠI";
+        el.videoStatusBadge.className = "banner-badge error";
+      }
+      if (el.videoFormMessage) {
+        el.videoFormMessage.textContent = `Thực thi thất bại: ${job.message || "Lỗi không xác định"}`;
+        el.videoFormMessage.className = "yup-msg form-message is-error";
+      }
+    }
+  }
+
+  function attachJob(job, poll) {
+    if (!job || !job.id) return;
+    state.activeJobId = job.id;
+    rememberJob(job.id);
+    showJobMonitor(job);
+    const live = job.status === "running" || job.status === "queued";
+    if (live) {
+      setCancelVisible(true);
+      if (el.runJobBtn) el.runJobBtn.setAttribute("disabled", "");
+      if (el.runButtonText) el.runButtonText.textContent = "⏳ ĐANG CHẠY PIPELINE...";
+      if (poll) startJobPolling(job.id);
+      return;
+    }
+    finishJobView(job);
+  }
+
+  function isStaleStoredRun(job) {
+    return Boolean(job && job.persisted && (job.status === "running" || job.status === "queued"));
+  }
+
   function startJobPolling(jobId) {
     if (state.pollTimer) clearInterval(state.pollTimer);
+    rememberJob(jobId);
 
     state.pollTimer = setInterval(async function () {
       try {
@@ -727,54 +870,7 @@
         if (job.status === "succeeded" || job.status === "failed") {
           clearInterval(state.pollTimer);
           state.pollTimer = null;
-          setCancelVisible(false);
-
-          el.runJobBtn.removeAttribute("disabled");
-          if (el.runButtonText) el.runButtonText.textContent = "⚡ BẮT ĐẦU CHẠY PIPELINE (RUN CLI)";
-
-          if (job.status === "succeeded") {
-            if (el.videoStatusBadge) {
-              el.videoStatusBadge.textContent = "HOÀN THÀNH";
-              el.videoStatusBadge.className = "banner-badge success";
-            }
-            if (el.jobStatusText) el.jobStatusText.textContent = "COMPLETED";
-            if (el.videoFormMessage) {
-              el.videoFormMessage.textContent = "Pipeline CLI đã hoàn tất thành công!";
-              el.videoFormMessage.className = "yup-msg form-message is-success";
-            }
-
-            // Hiển thị Card kết quả
-            if (el.jobResultSection) {
-              el.jobResultSection.removeAttribute("hidden");
-              if (el.resultFilePath) {
-                el.resultFilePath.textContent = `Tệp kết quả: ${job.output_relative || job.output_path || "outputs/output.mp4"}`;
-              }
-              if (el.resultFileSize) {
-                el.resultFileSize.textContent = `Dung lượng: ${formatBytes(job.output_size || 0)}`;
-              }
-              const mediaUrl = `/api/media?path=${encodeURIComponent(job.output_relative || job.output_name)}`;
-              if (el.resultDownloadBtn) {
-                el.resultDownloadBtn.href = mediaUrl;
-                el.resultDownloadBtn.download = job.output_name || "output.mp4";
-              }
-              if (el.resultViewBtn) {
-                el.resultViewBtn.href = mediaUrl;
-              }
-            }
-
-            // Tải lại danh sách file để thấy video kết quả mới trong dự án
-            await loadFileList();
-          } else {
-            if (el.videoStatusBadge) {
-              el.videoStatusBadge.textContent = "THẤT BẠI";
-              el.videoStatusBadge.className = "banner-badge error";
-            }
-            if (el.jobStatusText) el.jobStatusText.textContent = "FAILED";
-            if (el.videoFormMessage) {
-              el.videoFormMessage.textContent = `Thực thi thất bại: ${job.message || "Lỗi không xác định"}`;
-              el.videoFormMessage.className = "yup-msg form-message is-error";
-            }
-          }
+          finishJobView(job);
         }
       } catch (err) {
         // Polling retry
@@ -782,22 +878,69 @@
     }, 800);
   }
 
+  function monitorDetail(job) {
+    const message = String(job.message || "");
+    if (describeFrames(message)) return message;
+    const logs = Array.isArray(job.logs) ? job.logs : [];
+    for (let index = logs.length - 1; index >= 0; index -= 1) {
+      if (describeFrames(logs[index])) return String(logs[index]);
+    }
+    return message;
+  }
+
+  function describeFrames(message) {
+    const match = String(message || "").match(/(\d+)\s*\/\s*(\d+)\s*frames/i);
+    if (!match) return "";
+    return match[1] + " / " + match[2] + " khung";
+  }
+
+  function showJobMonitor(job) {
+    if (el.jobMonitoringSection) el.jobMonitoringSection.removeAttribute("hidden");
+    if (job) updateJobUI(job);
+  }
+
   function updateJobUI(job) {
     const progress = Math.min(100, Math.max(0, job.progress || 0));
+    const live = job.status === "running" || job.status === "queued";
+    const statusLabels = {
+      running: "ĐANG CHẠY",
+      queued: "XẾP HÀNG",
+      succeeded: "XONG",
+      failed: "LỖI",
+    };
+    if (el.jobMonitoringSection) el.jobMonitoringSection.classList.toggle("is-live", live);
     if (el.progressFill) el.progressFill.style.width = `${progress}%`;
     if (el.jobProgressPercent) el.jobProgressPercent.textContent = `${Math.round(progress)}%`;
-    if (el.jobStageTitle) el.jobStageTitle.textContent = job.message || "Đang xử lý…";
-
-    if (job.detections) {
-      if (el.metricSubtitle) el.metricSubtitle.textContent = job.detections.subtitle || 0;
-      if (el.metricWatermark) el.metricWatermark.textContent = job.detections.watermark || 0;
-      if (el.metricLogo) el.metricLogo.textContent = job.detections.logo || 0;
-      if (el.metricOther) el.metricOther.textContent = job.detections.other_text || job.detections.other || 0;
+    const detail = monitorDetail(job);
+    if (el.jobStageTitle) el.jobStageTitle.textContent = detail || "Đang xử lý…";
+    if (el.jobFrameLine) el.jobFrameLine.textContent = describeFrames(detail);
+    if (el.jobStatusText && statusLabels[job.status]) {
+      el.jobStatusText.textContent = statusLabels[job.status];
     }
 
-    if (job.logs && Array.isArray(job.logs) && el.jobLogsArea) {
-      el.jobLogsArea.textContent = job.logs.join("\n");
-      el.jobLogsArea.scrollTop = el.jobLogsArea.scrollHeight;
+    const detections = job.detections || {};
+    const counts = {
+      subtitle: detections.subtitle || 0,
+      watermark: detections.watermark || 0,
+      logo: detections.logo || 0,
+      other: detections.other_text || detections.other || 0,
+    };
+    if (el.metricSubtitle) el.metricSubtitle.textContent = counts.subtitle;
+    if (el.metricWatermark) el.metricWatermark.textContent = counts.watermark;
+    if (el.metricLogo) el.metricLogo.textContent = counts.logo;
+    if (el.metricOther) el.metricOther.textContent = counts.other;
+    if (el.jobMetrics) {
+      const any = counts.subtitle || counts.watermark || counts.logo || counts.other;
+      el.jobMetrics.hidden = !any;
+    }
+
+    if (el.jobLogsBox) {
+      const lines = Array.isArray(job.logs) ? job.logs : [];
+      el.jobLogsBox.hidden = lines.length === 0;
+      if (lines.length && el.jobLogsArea) {
+        el.jobLogsArea.textContent = lines.join("\n");
+        el.jobLogsArea.scrollTop = el.jobLogsArea.scrollHeight;
+      }
     }
   }
 
@@ -872,6 +1015,161 @@
     });
   }
 
+  let zernioAccounts = [];
+
+  function initSources() {
+    const button = document.getElementById("sourcePollBtn");
+    if (!button) return;
+    button.addEventListener("click", async function () {
+      const message = document.getElementById("sourcePollMessage");
+      const log = document.getElementById("sourcePollLog");
+      button.setAttribute("disabled", "");
+      try {
+        await api("/api/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sources: document.getElementById("sourcesText").value,
+            limit: Number(document.getElementById("sourceLimit").value || 10),
+            then_process: document.getElementById("sourceThenProcess").checked,
+          }),
+        });
+        if (message) message.textContent = "Đang tải. Có thể mất vài phút nếu bật xử lý reup.";
+        const timer = setInterval(async function () {
+          const status = await api("/api/ingest");
+          if (log) log.textContent = (status.log || []).join("\n") || status.message || "Đang chạy…";
+          if (status.status === "running") return;
+          clearInterval(timer);
+          button.removeAttribute("disabled");
+          if (message) message.textContent = status.message || status.status;
+        }, 2000);
+      } catch (err) {
+        if (message) message.textContent = err.message;
+        button.removeAttribute("disabled");
+      }
+    });
+  }
+
+  async function loadZernioAccounts() {
+    const list = document.getElementById("zernioAccountList");
+    if (!list) return;
+    const payload = await api("/api/zernio/accounts");
+    zernioAccounts = payload.accounts || [];
+    if (!zernioAccounts.length) {
+      list.innerHTML = "<p>Chưa có API key.</p>";
+      return;
+    }
+    list.innerHTML = zernioAccounts.map(function (row) {
+      return `<label class="check-inline" style="display:flex;gap:8px;align-items:center;margin:6px 0;">
+        <input type="checkbox" class="zernio-pick" value="${row.id}" checked>
+        <span>${row.label} · ${row.platform} · ${row.api_key_masked}</span>
+        <button type="button" data-check="${row.id}">Kiểm tra</button>
+        <button type="button" data-remove="${row.id}">Xóa</button>
+      </label>`;
+    }).join("");
+    list.querySelectorAll("[data-remove]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        await api(`/api/zernio/accounts/${btn.getAttribute("data-remove")}`, { method: "DELETE" });
+        loadZernioAccounts();
+      });
+    });
+    list.querySelectorAll("[data-check]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        const message = document.getElementById("zernioMessage");
+        try {
+          const result = await api(`/api/zernio/accounts/${btn.getAttribute("data-check")}/check`, { method: "POST" });
+          const names = (result.matched || []).map(function (item) { return item.name || item.id; }).join(", ");
+          if (message) message.textContent = names
+            ? `Đã nối ${result.platform}: ${names}`
+            : `Key hợp lệ nhưng chưa có tài khoản ${result.platform}.`;
+        } catch (err) {
+          if (message) message.textContent = err.message;
+        }
+      });
+    });
+  }
+
+  async function fillPublishMetadata(videoPath) {
+    const pathInput = document.getElementById("publishVideoPath");
+    const title = document.getElementById("publishTitle");
+    const content = document.getElementById("publishContent");
+    const tags = document.getElementById("publishTags");
+    if (!videoPath) return;
+    if (pathInput) pathInput.value = videoPath;
+    try {
+      const meta = await api("/api/publish/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_path: videoPath }),
+      });
+      if (title) title.value = meta.title || "";
+      if (content) content.value = meta.description || "";
+      if (tags) tags.value = (meta.tags || []).join(", ");
+    } catch (_) {
+      if (title && !title.value) title.value = String(videoPath).split(/[\\/]/).pop() || "";
+    }
+  }
+
+  function initPublish() {
+    const add = document.getElementById("zernioAddBtn");
+    const suggest = document.getElementById("publishSuggestBtn");
+    const publish = document.getElementById("zernioPublishBtn");
+    if (suggest) {
+      suggest.addEventListener("click", function () {
+        const pathInput = document.getElementById("publishVideoPath");
+        fillPublishMetadata(pathInput ? pathInput.value : "");
+      });
+    }
+    if (add) {
+      add.addEventListener("click", async function () {
+        const message = document.getElementById("zernioMessage");
+        try {
+          await api("/api/zernio/accounts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              label: document.getElementById("zernioLabel").value,
+              platform: document.getElementById("zernioPlatform").value,
+              api_key: document.getElementById("zernioKey").value,
+            }),
+          });
+          document.getElementById("zernioKey").value = "";
+          if (message) message.textContent = "Đã lưu key.";
+          loadZernioAccounts();
+        } catch (err) {
+          if (message) message.textContent = err.message;
+        }
+      });
+    }
+    if (publish) {
+      publish.addEventListener("click", async function () {
+        const message = document.getElementById("zernioMessage");
+        const ids = Array.from(document.querySelectorAll(".zernio-pick:checked")).map(function (box) {
+          return box.value;
+        });
+        try {
+          const result = await api("/api/zernio/publish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              video_path: document.getElementById("publishVideoPath").value,
+              title: document.getElementById("publishTitle").value,
+              content: document.getElementById("publishContent").value,
+              tags: document.getElementById("publishTags") ? document.getElementById("publishTags").value : "",
+              account_ids: ids,
+            }),
+          });
+          const lines = (result.results || []).map(function (row) {
+            return row.ok ? `${row.label}: ${row.url || row.post_id || "đã gửi"}` : `${row.label || row.id}: ${row.error}`;
+          });
+          if (message) message.textContent = lines.join(" · ") || "Không có kết quả.";
+        } catch (err) {
+          if (message) message.textContent = err.message;
+        }
+      });
+    }
+  }
+
   // Application Initialization
   async function init() {
     initTheme();
@@ -880,13 +1178,21 @@
     initPresets();
     initCliParams();
     initJobRunner();
+    initSources();
+    initPublish();
     initTTS();
 
     if (el.refreshFiles) {
-      el.refreshFiles.addEventListener("click", loadFileList);
+      el.refreshFiles.addEventListener("click", function () {
+        state.showCatalog = true;
+        loadFileList();
+      });
+    }
+    if (el.fileFilter) {
+      el.fileFilter.addEventListener("input", renderFileList);
     }
     if (el.clearFilesBtn) {
-      el.clearFilesBtn.addEventListener("click", clearAllFiles);
+      el.clearFilesBtn.addEventListener("click", clearPickerView);
     }
 
     // Health check
@@ -897,9 +1203,41 @@
       setRuntime(false, "Server Offline");
     }
 
-    // Load video files and update preview
-    await loadFileList();
+    renderFileList();
     updateCliCommandPreview();
+    await resumeActiveJob();
+  }
+
+  async function resumeActiveJob() {
+    try {
+      const payload = await api("/api/jobs");
+      const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+      const live = jobs.find(function (job) {
+        return !job.persisted && (job.status === "running" || job.status === "queued");
+      });
+      if (live) {
+        attachJob(live, true);
+        return;
+      }
+      const savedId = rememberedJobId();
+      if (savedId) {
+        try {
+          const saved = await api(`/api/jobs/${encodeURIComponent(savedId)}`);
+          if (!isStaleStoredRun(saved)) {
+            attachJob(saved, true);
+            return;
+          }
+        } catch (_) {
+          // Job đã bị dọn. Rơi xuống job mới nhất còn đọc được.
+        }
+      }
+      const latest = jobs.find(function (job) {
+        return job && job.id && !isStaleStoredRun(job);
+      });
+      if (latest) attachJob(latest, false);
+    } catch (_) {
+      // Không có job thì để màn hình trống.
+    }
   }
 
   init().catch(function (err) {

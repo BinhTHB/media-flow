@@ -14,6 +14,7 @@ FORBIDDEN_INFRASTRUCTURE_PACKAGES = {
     "moviepy",
     "openai",
     "paddleocr",
+    "rapidocr",
     "ultralytics",
     "whisper",
 }

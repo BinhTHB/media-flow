@@ -188,7 +188,9 @@ class RequestScheduler:
 
     def compute_retry_delay(self, attempt: int, retry_after: Optional[float] = None) -> float:
         if self.respect_retry_after and retry_after is not None:
-            return float(retry_after)
+            # A provider can ask for an hour. Sleeping that long stalls a
+            # 30-second dub. The configured backoff cap is the longest wait.
+            return min(float(retry_after), self.backoff_max_seconds)
         base = self.backoff_initial_seconds * (2 ** attempt)
         base = min(base, self.backoff_max_seconds)
         return base + self._random() * 0.1 * base

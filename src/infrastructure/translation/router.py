@@ -35,7 +35,20 @@ class FallbackTranslationAdapter(TranslationPort):
                     target_language=target_language,
                     source_language=source_language,
                 )
-                self._validate_complete(result, texts)
+                if len(result) != len(texts):
+                    raise RuntimeError("provider returned incomplete translation batch")
+                if not any(str(item).strip() for item in result):
+                    raise RuntimeError("provider returned an empty translation batch")
+                if any(not str(item).strip() for item in result):
+                    # A timed-out spoken line stays blank. The lines that did
+                    # translate are still spoken. An all-empty batch already
+                    # failed above so another provider can try.
+                    logger.warning(
+                        "Translation provider %s left %d/%d line(s) empty",
+                        name,
+                        sum(1 for item in result if not str(item).strip()),
+                        len(result),
+                    )
 
                 suspicious = self._suspicious_indices(texts, result, target_language)
                 if not suspicious:
@@ -48,24 +61,29 @@ class FallbackTranslationAdapter(TranslationPort):
                 unresolved = list(suspicious)
                 repair_providers = [(name, provider), *self.providers[provider_index + 1 :]]
                 for repair_name, repair_provider in repair_providers:
+                    if not unresolved:
+                        break
+                    try:
+                        isolated_sources = [texts[idx] for idx in unresolved]
+                        isolated = repair_provider.translate_texts(
+                            texts=isolated_sources,
+                            target_language=target_language,
+                            source_language=source_language,
+                        )
+                        self._validate_complete(isolated, isolated_sources)
+                    except Exception as exc:
+                        errors.append(f"{repair_name} isolated-repair: {str(exc)[:240]}")
+                        continue
+                    candidate = list(repaired)
+                    for offset, idx in enumerate(unresolved):
+                        candidate[idx] = isolated[offset]
+                    still_bad = set(self._suspicious_indices(texts, candidate, target_language))
                     next_unresolved: list[int] = []
-                    for idx in unresolved:
-                        try:
-                            single = repair_provider.translate_texts(
-                                texts=[texts[idx]],
-                                target_language=target_language,
-                                source_language=source_language,
-                            )
-                            self._validate_complete(single, [texts[idx]])
-                            candidate = list(repaired)
-                            candidate[idx] = single[0]
-                            if idx not in self._suspicious_indices(texts, candidate, target_language):
-                                repaired[idx] = single[0]
-                            else:
-                                next_unresolved.append(idx)
-                        except Exception as exc:
-                            errors.append(f"{repair_name} isolated-repair id={idx}: {str(exc)[:240]}")
+                    for offset, idx in enumerate(unresolved):
+                        if idx in still_bad:
                             next_unresolved.append(idx)
+                        else:
+                            repaired[idx] = isolated[offset]
                     unresolved = next_unresolved
                     if not unresolved:
                         logger.warning(

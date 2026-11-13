@@ -20,11 +20,10 @@ from src.core.contracts import TTSPort
 from src.infrastructure.elevenlabs_dubbing import configured_elevenlabs_keys
 
 
-# Sarah is a premade/free-API voice. With Eleven v3 + language_code=vi it was
-# the most stable of the account's premade voices on MediaFlow's short-segment
-# Vietnamese benchmark. A native Vietnamese professional/library voice is still
-# preferable when the account tier permits API access.
-DEFAULT_ELEVENLABS_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"
+# Brian: premade male voice available on the ElevenLabs Free API.
+# Native Voice Library IDs (for example Tung Anh) stay selectable in Studio
+# but require a paid plan for API access.
+DEFAULT_ELEVENLABS_VOICE_ID = "nPczCjzI2devNBz1zQrb"
 
 
 def _env_float(name: str, default: float, minimum: float = 0.0, maximum: float = 1.0) -> float:

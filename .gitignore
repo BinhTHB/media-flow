@@ -76,6 +76,13 @@ results/
 review_frames/
 subtitles/generated/
 
+# Local scratch frames and debug dumps (analysis artifacts, never commit)
+_frames/
+_testout/
+
+# One-off local inspection helpers (see scripts/README.md)
+scripts/_*.py
+
 # Browser sessions are credentials: never commit a cookie jar, wherever it lives.
 sessions/
 *.session.json

@@ -23,8 +23,12 @@ from src.core.models.subtitle_event import SubtitleEvent
 from src.features.visual.processors.logo import LogoProcessor
 from src.features.visual.processors.other_text import OtherTextProcessor
 from src.features.visual.processors.watermark import WatermarkProcessor
+from src.features.translation.text_quality import is_collapsed_speech
 from src.features.visual.subtitle.processor import SubtitleProcessor
-from src.features.visual.text_classifier import promote_subtitle_rows_labeled_watermark
+from src.features.visual.text_classifier import (
+    demote_upper_credits_labeled_subtitle,
+    promote_subtitle_rows_labeled_watermark,
+)
 from src.features.visual.tracker import ClassAwareTracker
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,29 @@ LAYOUT_SPREAD_WARN_RATIO = 0.05
 #: Suppression bucket grid (5% of the frame) used to split a two-position
 #: trajectory into its dominant cluster and the leftover positions.
 LAYOUT_CLUSTER_BUCKET = 20
+
+
+def mirror_bbox(box: BBox) -> BBox:
+    """Horizontal flip of one box. Glyph drawing stays left-to-right."""
+    width = float(box.frame_width)
+    return BBox(
+        x1=width - box.x2,
+        y1=box.y1,
+        x2=width - box.x1,
+        y2=box.y2,
+        frame_width=box.frame_width,
+        frame_height=box.frame_height,
+    )
+
+
+def mirror_visual_geometry(tracks: List[Any], events: List[Any]) -> None:
+    """Move detection and caption boxes to the flipped frame."""
+    for track in tracks:
+        for detection in getattr(track, "detections", []) or []:
+            detection.bbox = mirror_bbox(detection.bbox)
+    for event in events:
+        event.anchor_bbox = mirror_bbox(event.anchor_bbox)
+        event.bbox_trajectory = [mirror_bbox(box) for box in (event.bbox_trajectory or [])]
 
 
 def _median(values: List[float]) -> float:
@@ -198,7 +225,10 @@ def _unify_twin_events(
                 continue
             v_gap = max(0.0, max(kept_plate.y1, plate.y1) - min(kept_plate.y2, plate.y2))
             h_overlap = min(kept_plate.x2, plate.x2) - max(kept_plate.x1, plate.x1)
-            if v_gap <= 24 and h_overlap >= 0.5 * min(
+            # A few pixels of overlap or a hairline gap is one caption block.
+            # A title row and the name under it (about 16px apart) are two
+            # captions; joining their plates paints one tall black slab.
+            if v_gap <= 8 and h_overlap >= 0.5 * min(
                 kept_plate.x2 - kept_plate.x1, plate.x2 - plate.x1
             ):
                 home = group
@@ -234,6 +264,73 @@ def _unify_twin_events(
             if plate is not None:
                 event_plate_boxes[kept.event_id] = plate
     return suppress_spans, twin_members
+
+
+_HANDLED_SUBTITLE_STATUSES = frozenset({
+    "READY",
+    "SOURCE_IS_TARGET",
+    "TRANSLATION_UNCHANGED",
+    "CREDIT",
+    "FRAGMENT",
+    "OCR_EMPTY",
+})
+
+
+def hold_sampled_detections(
+    dets_by_frame: Dict[int, List[Any]],
+    stride: int,
+) -> Dict[int, List[Any]]:
+    """Copy each sampled box forward across the frames YOLO skipped.
+
+    A stride of 2 detects frames 0, 2, 4. Without this hold, frame 1 would
+    show the original subtitle or logo for one frame and hide it on the next.
+    """
+    if stride <= 1 or not dets_by_frame:
+        return dets_by_frame
+    held = {index: list(dets) for index, dets in dets_by_frame.items()}
+    for frame_index, dets in dets_by_frame.items():
+        if not dets:
+            continue
+        for offset in range(1, int(stride)):
+            nxt = frame_index + offset
+            if nxt not in held:
+                held[nxt] = list(dets)
+    return held
+
+
+def replacement_outcome(subtitle_events) -> tuple[str, Optional[str]]:
+    """Status of a translate-replace pass.
+
+    A video that is already Vietnamese, plus a credit that was covered, is
+    finished: nothing was left untranslated. Zero READY events is a failure
+    only when a caption still has no replacement and was not kept on purpose.
+    """
+    if not subtitle_events:
+        return (
+            "FAILED",
+            "Subtitle tracks were detected, but no subtitle events were produced.",
+        )
+    ready_count = sum(
+        1 for ev in subtitle_events
+        if ev.replacement_status == "READY" and ev.overlay_applied
+    )
+    unresolved = [
+        ev for ev in subtitle_events
+        if ev.replacement_status not in _HANDLED_SUBTITLE_STATUSES
+    ]
+    if unresolved and ready_count == 0:
+        return (
+            "FAILED",
+            f"Detected subtitle tracks, but 0 replacement events were READY "
+            f"and {len(unresolved)} event(s) are unresolved. "
+            "Inspect visual/subtitle_events.json.",
+        )
+    if ready_count and ready_count < len(subtitle_events):
+        return (
+            "SUCCESS",
+            f"Subtitle replacement partial: {ready_count}/{len(subtitle_events)} events READY.",
+        )
+    return "SUCCESS", None
 
 
 def _build_suppress_only_map(
@@ -351,6 +448,15 @@ class VisualRequest:
     other_text_enabled: bool = True
     other_text_action: str = "blur"
     segments: Optional[List[Any]] = None
+    #: Reup: burned-in lines are translated in place. Lines with no text, and
+    #: videos with no burned-in subtitles, take their captions from speech.
+    use_speech_subtitles: bool = False
+    #: Sampled detection stride. Speech captions do not need a box on every
+    #: frame; 2 halves YOLO time and the render pass holds each box across the gap.
+    detection_stride: int = 1
+    #: Reup fingerprint. Flip the picture before captions are drawn so the
+    #: glyphs stay left-to-right. Post-render hflip is not used when this is set.
+    mirror_output: bool = False
 
 
 @dataclass
@@ -386,6 +492,8 @@ class VisualPipeline:
         self.scene_detector = scene_detector
         self.video_util = video_util
         self._region_planner = None
+        self._render_fps = 30.0
+        self._speech_blur = None
 
     def _build_events_from_segments(
         self,
@@ -396,6 +504,7 @@ class VisualPipeline:
         fps: float,
         target_language: str = "vi",
         subtitle_layout: str = "in-place",
+        allow_live_translation: bool = True,
     ) -> List[SubtitleEvent]:
         events: List[SubtitleEvent] = []
         subtitle_dets = [d for d in detections if getattr(d, "class_name", "") == "subtitle"]
@@ -405,22 +514,23 @@ class VisualPipeline:
                 start = float(seg.get("start", seg.get("start_time", 0.0)))
                 end = float(seg.get("end", seg.get("end_time", 0.0)))
                 source_text = str(seg.get("source_text", "") or "")
-                target_text = str(seg.get("target_text") or seg.get("translated_text") or seg.get("text") or "").strip()
                 seg_id = str(seg.get("id", seg.get("segment_id", f"seg_ev_{idx}")))
             else:
                 start = float(getattr(seg, "start_time", None) if getattr(seg, "start_time", None) is not None else getattr(seg, "start", 0.0))
                 end = float(getattr(seg, "end_time", None) if getattr(seg, "end_time", None) is not None else getattr(seg, "end", 0.0))
                 source_text = str(getattr(seg, "source_text", "") or "")
-                target_text = str(
-                    getattr(seg, "translated_text", None)
-                    or getattr(seg, "target_text", None)
-                    or getattr(seg, "spoken_text", None)
-                    or getattr(seg, "text", "")
-                    or ""
-                ).strip()
                 seg_id = str(getattr(seg, "segment_id", None) or getattr(seg, "id", f"seg_ev_{idx}"))
+            target_text = self._segment_text(seg)
+            if not target_text and source_text.strip() and not is_collapsed_speech(source_text):
+                target_text = source_text.strip()
 
-            if not target_text and source_text and self.subtitle_processor and getattr(self.subtitle_processor, "translation_service", None):
+            if (
+                allow_live_translation
+                and not target_text
+                and source_text
+                and self.subtitle_processor
+                and getattr(self.subtitle_processor, "translation_service", None)
+            ):
                 try:
                     res = self.subtitle_processor.translation_service.translate_texts([source_text], target_language=target_language)
                     if res and res[0]:
@@ -493,6 +603,108 @@ class VisualPipeline:
             events.append(ev)
 
         return events
+
+    @staticmethod
+    def _segment_text(segment: Any) -> str:
+        if isinstance(segment, dict):
+            return str(
+                segment.get("target_text")
+                or segment.get("translated_text")
+                or segment.get("spoken_text")
+                or segment.get("text")
+                or ""
+            ).strip()
+        return str(
+            getattr(segment, "translated_text", None)
+            or getattr(segment, "target_text", None)
+            or getattr(segment, "spoken_text", None)
+            or getattr(segment, "text", "")
+            or ""
+        ).strip()
+
+    @staticmethod
+    def _segment_bounds(segment: Any) -> tuple[float, float]:
+        if isinstance(segment, dict):
+            start = float(segment.get("start", segment.get("start_time", 0.0)))
+            end = float(segment.get("end", segment.get("end_time", 0.0)))
+        else:
+            start = float(getattr(segment, "start_time", getattr(segment, "start", 0.0)))
+            end = float(getattr(segment, "end_time", getattr(segment, "end", 0.0)))
+        return start, end
+
+    def _captions_from_speech(
+        self,
+        events: List[SubtitleEvent],
+        segments: List[Any],
+        target_language: str,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        fps: float = 30.0,
+    ) -> List[SubtitleEvent]:
+        """Always draw speech as bottom captions when the reup toggle is on.
+
+        OCR cannot reliably say whether a video already has subtitles. A brand
+        chip, a 7px sliver, or one READY line used to block this path. The
+        toggle is the decision: on means create, off means leave the detector
+        events alone. Speech text is already the caption; do not call Gemini
+        again per line.
+        """
+        if width is None or height is None:
+            width, height = 1280, 720
+            for event in events:
+                box = event.anchor_bbox
+                if box.frame_width > 0 and box.frame_height > 0:
+                    width, height = int(box.frame_width), int(box.frame_height)
+                    break
+        logger.info(
+            "Visual: creating %d caption(s) from speech (toggle on; ignoring %d detector event(s))",
+            len(segments),
+            len(events),
+        )
+        return self._build_events_from_segments(
+            segments=segments,
+            detections=[],
+            width=int(width),
+            height=int(height),
+            fps=float(fps) if fps and fps > 1.0 else 30.0,
+            target_language=target_language,
+            subtitle_layout="bottom",
+            allow_live_translation=False,
+        )
+
+    def _fill_empty_events_from_speech(self, events: List[SubtitleEvent], segments: List[Any]) -> None:
+        """Cover a detected line with the spoken translation when OCR left it blank."""
+        for event in events:
+            if (event.translated_text or "").strip() and event.replacement_status not in {"OCR_EMPTY", "TRANSLATION_EMPTY"}:
+                continue
+            best_segment = None
+            best_overlap = 0.0
+            for segment in segments:
+                start, end = self._segment_bounds(segment)
+                overlap = max(0.0, min(event.end_time, end) - max(event.start_time, start))
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_segment = segment
+            text = self._segment_text(best_segment) if best_segment is not None and best_overlap > 0.3 else ""
+            if not text:
+                continue
+            event.translated_text = text
+            event.replacement_status = "READY"
+            event.blur_applied = True
+            event.overlay_applied = True
+
+    @staticmethod
+    def _probe_video_shape(video_path: str) -> tuple[int, int, float]:
+        import cv2
+
+        cap = cv2.VideoCapture(video_path)
+        try:
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+            return width, height, fps if fps > 1.0 else 30.0
+        finally:
+            cap.release()
 
     @staticmethod
     def _validate_request(request: VisualRequest) -> None:
@@ -725,7 +937,6 @@ class VisualPipeline:
             event
             for event in events_by_frame.get(frame_index, [])
             if event.replacement_status == "READY"
-            and event.blur_applied
             and event.overlay_applied
         ]
         is_in_place = getattr(request, "subtitle_layout", "temporal") in {"temporal", "in-place"}
@@ -753,6 +964,13 @@ class VisualPipeline:
                     suppress_spans=suppress_spans,
                     twin_members=twin_members,
                 )
+                if bottom_cinema_events and hasattr(self.subtitle_processor, "render_frame_events"):
+                    frame = self.subtitle_processor.render_frame_events(
+                        frame,
+                        frame_index,
+                        self._active_cinema_events(bottom_cinema_events, frame_index),
+                        anchor_to_bbox=False,
+                    )
                 return frame
             # Keep independent lanes separate; select one semantic caption only
             # within the same spatial group.
@@ -829,35 +1047,73 @@ class VisualPipeline:
             # Render non-source cinema subtitles if any without black box
             if bottom_cinema_events and hasattr(self.subtitle_processor, "render_frame_events"):
                 frame = self.subtitle_processor.render_frame_events(
-                    frame, frame_index, bottom_cinema_events, anchor_to_bbox=False
+                    frame,
+                    frame_index,
+                    self._active_cinema_events(bottom_cinema_events, frame_index),
+                    anchor_to_bbox=False,
                 )
             return frame
 
         if ready_events:
             # Only suppress source subtitles when explicitly requested (default True).
             # When False, original subtitles remain untouched for bilingual display.
+            # Overlay-only cinema captions (speech) must not blur their own bottom band.
+            anchored = [event for event in ready_events if event.blur_applied]
+            cinema = [event for event in ready_events if not event.blur_applied]
             if hide_source:
                 suppression_regions = list(detections_by_frame.get(frame_index, []))
                 get_event_bbox = getattr(self.subtitle_processor, "get_event_bbox", None)
-                for event in ready_events:
+                for event in anchored:
                     suppression_regions.append(
                         get_event_bbox(event, frame_index)
                         if callable(get_event_bbox)
                         else event.anchor_bbox
                     )
-                if hasattr(self.subtitle_processor, "suppress_source_subtitles"):
-                    frame = self.subtitle_processor.suppress_source_subtitles(
-                        frame, suppression_regions
-                    )
-            ready_events = (
-                self.subtitle_processor.select_render_events(ready_events)
-                if hasattr(self.subtitle_processor, "select_render_events")
-                else ready_events
-            )
-            if hasattr(self.subtitle_processor, "render_frame_events"):
+                # Bottom speech captions sit on their own plate. A full-frame
+                # Telea inpaint here was the slow part of a reup render and is
+                # not required once the burned-in row is locally blurred.
+                if suppression_regions:
+                    frame = self._blur_subtitle_regions(frame, suppression_regions)
+            if anchored and hasattr(self.subtitle_processor, "select_render_events"):
+                anchored = self.subtitle_processor.select_render_events(anchored)
+            cinema = self._active_cinema_events(cinema, frame_index)
+            ready_events = list(anchored) + list(cinema)
+            if ready_events and hasattr(self.subtitle_processor, "render_frame_events"):
                 frame = self.subtitle_processor.render_frame_events(
                     frame, frame_index, ready_events
                 )
+        return frame
+
+    def _active_cinema_events(self, events: List[SubtitleEvent], frame_index: int) -> List[SubtitleEvent]:
+        """Keep the utterance that is actually being spoken on this frame.
+
+        Speech captions share one bottom band, so the duplicate-line collapse
+        used for burned-in tracks treats every line as the same caption and
+        keeps only the longest. A short line nested inside a longer one then
+        never appears. The line that started most recently wins the band.
+        """
+        if len(events) <= 1:
+            return events
+        fps = float(self._render_fps or 30.0)
+        timestamp = frame_index / fps if fps > 1.0 else float(frame_index)
+        containing = [
+            event for event in events
+            if event.start_time <= timestamp <= event.end_time
+        ]
+        pool = containing or events
+        chosen = max(pool, key=lambda event: (event.start_time, event.event_id))
+        return [chosen]
+
+    def _blur_subtitle_regions(self, frame: Any, regions: List[Any]) -> Any:
+        from src.features.visual.actions.blur import BlurAction
+
+        if self._speech_blur is None:
+            self._speech_blur = BlurAction(strength=31.0, padding_px=6)
+        for region in regions:
+            bbox = region.bbox if hasattr(region, "bbox") else region
+            if not isinstance(bbox, BBox):
+                continue
+            frame = self._speech_blur.execute(frame, bbox, padding_px=6)
         return frame
 
     def _open_frame_writer(self, output_path: str, fps: float, width: int, height: int):
@@ -897,8 +1153,11 @@ class VisualPipeline:
         # 1. YOLO 4-class Detection
         t0 = time.monotonic()
         logger.info("Visual: running YOLO detection on '%s'...", Path(request.video_path).name)
-        detections = promote_subtitle_rows_labeled_watermark(
-            self.detector.detect_video(request.video_path, stride=1)
+        detection_stride = max(1, int(getattr(request, "detection_stride", 1) or 1))
+        detections = demote_upper_credits_labeled_subtitle(
+            promote_subtitle_rows_labeled_watermark(
+                self.detector.detect_video(request.video_path, stride=detection_stride)
+            )
         )
         timings["detection"] = round(time.monotonic() - t0, 3)
 
@@ -926,12 +1185,22 @@ class VisualPipeline:
         watermark_tracks = [t for t in tracks if t.class_name == "watermark"]
         other_tracks = [t for t in tracks if t.class_name == "other_burn_in_text"]
 
+        speech_captions = bool(request.use_speech_subtitles and request.segments)
+        if speech_captions:
+            request.subtitle_layout = "bottom"
+
         self._region_planner = None
-        if request.subtitle_enabled and request.subtitle_mode == 'translate_replace' and request.subtitle_layout in {'temporal', 'in-place'}:
+        if (
+            request.subtitle_enabled
+            and request.subtitle_mode == "translate_replace"
+            and request.subtitle_layout in {"temporal", "in-place"}
+        ):
             import json
             cuts = self.scene_detector.detect_cuts(request.video_path) if self.scene_detector else []
             self._region_planner = SubtitleRegionPlanner(detections, cuts)
-            (visual_dir / 'subtitle_regions.json').write_text(json.dumps(self._region_planner.to_dict(), indent=2), encoding='utf-8')
+            (visual_dir / "subtitle_regions.json").write_text(
+                json.dumps(self._region_planner.to_dict(), indent=2), encoding="utf-8"
+            )
 
         # 3. Subtitle Processing
         t0 = time.monotonic()
@@ -941,15 +1210,18 @@ class VisualPipeline:
             and request.subtitle_mode == "translate_replace"
         ):
             if subtitle_tracks and self.subtitle_processor is not None:
+                # Burned-in lines are the caption. Speech is only for videos
+                # YOLO found no subtitle track on (job with dub used to replace
+                # these lines with ASR and left the original glyphs visible).
                 subtitle_events = self.subtitle_processor.process_tracks(
                     tracks=subtitle_tracks,
                     target_language=request.target_language,
                     video_path=request.video_path,
                 )
-                # If caller provided segments (e.g. edited translations from Web UI),
-                # enrich the YOLO events with matching user translations
                 if request.segments and subtitle_events:
                     for ev in subtitle_events:
+                        if (ev.translated_text or "").strip():
+                            continue
                         best_seg = None
                         best_overlap = 0.0
                         for seg in request.segments:
@@ -966,19 +1238,24 @@ class VisualPipeline:
                                 ev.replacement_status = "READY"
                                 ev.blur_applied = True
                                 ev.overlay_applied = True
+            elif speech_captions:
+                width, height, fps = self._probe_video_shape(request.video_path)
+                subtitle_events = self._captions_from_speech(
+                    [],
+                    request.segments,
+                    request.target_language,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                )
             elif request.segments:
-                import cv2
-                _probe_cap = cv2.VideoCapture(request.video_path)
-                _fps = _probe_cap.get(cv2.CAP_PROP_FPS) or 30.0
-                _w = int(_probe_cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
-                _h = int(_probe_cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
-                _probe_cap.release()
+                width, height, fps = self._probe_video_shape(request.video_path)
                 subtitle_events = self._build_events_from_segments(
                     segments=request.segments,
                     detections=detections,
-                    width=_w,
-                    height=_h,
-                    fps=_fps,
+                    width=width,
+                    height=height,
+                    fps=fps,
                     target_language=request.target_language,
                     subtitle_layout=request.subtitle_layout,
                 )
@@ -999,6 +1276,10 @@ class VisualPipeline:
             sum(1 for ev in subtitle_events if ev.replacement_status == "READY"),
             len(subtitle_tracks),
         )
+
+        if request.mirror_output:
+            mirror_visual_geometry(tracks, subtitle_events)
+            logger.info("Visual: scene mirrored before caption draw (reup hflip, text stays readable).")
 
         # Per-event stable layout geometry (see _stable_layout_box): the
         # median of that caption's own detections, reused for every frame it
@@ -1068,6 +1349,7 @@ class VisualPipeline:
             raise RuntimeError(f"Cannot open video for visual rendering: {request.video_path}")
 
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        self._render_fps = float(fps) if fps and fps > 1.0 else 30.0
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
@@ -1110,13 +1392,19 @@ class VisualPipeline:
             coarse_start = int(round(ev.start_time * fps))
             coarse_end = int(round(ev.end_time * fps))
             expected_frames = max(1, coarse_end - coarse_start + 1)
-            continuity = min(1.0, len(ev.bbox_trajectory) / float(expected_frames))
-            if continuity >= 0.85:
-                pre_roll, post_roll = 1, 2
-            elif continuity >= 0.60:
-                pre_roll, post_roll = 2, 3
+            # Speech captions have one synthetic box. Treating that as a sparse
+            # track added a pre/post roll that overlapped the next utterance,
+            # and the longer line then replaced the shorter one.
+            if not ev.blur_applied:
+                pre_roll, post_roll = 0, 0
             else:
-                pre_roll, post_roll = 3, 4
+                continuity = min(1.0, len(ev.bbox_trajectory) / float(expected_frames))
+                if continuity >= 0.85:
+                    pre_roll, post_roll = 1, 2
+                elif continuity >= 0.60:
+                    pre_roll, post_roll = 2, 3
+                else:
+                    pre_roll, post_roll = 3, 4
 
             start_f = max(0, coarse_start - pre_roll)
             end_f = coarse_end + post_roll
@@ -1160,19 +1448,23 @@ class VisualPipeline:
         # area, so collapse same-frame subtitle detections into one union box.
         sub_dets_by_frame = merge_same_frame_detections(sub_dets_by_frame)
         raw_sub_dets_by_frame = merge_same_frame_detections(raw_sub_dets_by_frame)
+        sub_dets_by_frame = hold_sampled_detections(sub_dets_by_frame, detection_stride)
+        raw_sub_dets_by_frame = hold_sampled_detections(raw_sub_dets_by_frame, detection_stride)
 
         try:
             while True:
                 ret, frame = cap.read()
                 if not ret or frame is None:
                     break
+                if request.mirror_output:
+                    frame = cv2.flip(frame, 1)
 
                 # A. Process non-subtitle visual processors
-                if request.logo_enabled:
+                if request.logo_enabled and logo_tracks:
                     frame = logo_proc.process_frame_tracks(frame, frame_idx, logo_tracks)
-                if request.watermark_enabled:
+                if request.watermark_enabled and watermark_tracks:
                     frame = watermark_proc.process_frame_tracks(frame, frame_idx, watermark_tracks)
-                if request.other_text_enabled:
+                if request.other_text_enabled and other_tracks:
                     frame = other_proc.process_frame_tracks(frame, frame_idx, other_tracks)
 
                 # B. Subtitle policy: preserve, blur-only, or fail-safe translation.
@@ -1215,18 +1507,9 @@ class VisualPipeline:
 
         visual_status = "SUCCESS"
         if request.subtitle_enabled and request.subtitle_mode == "translate_replace" and subtitle_tracks:
-            ready_count = sum(1 for ev in subtitle_events if ev.replacement_status == "READY" and ev.overlay_applied)
-            if ready_count == 0:
-                visual_status = "FAILED"
-                warnings.append(
-                    f"Detected {class_counts.get('subtitle', 0)} subtitle boxes across "
-                    f"{len(subtitle_tracks)} tracks, but 0 replacement events were READY; "
-                    "source pixels were preserved. Inspect visual/subtitle_events.json."
-                )
-            elif ready_count < len(subtitle_events):
-                warnings.append(
-                    f"Subtitle replacement partial: {ready_count}/{len(subtitle_events)} events READY."
-                )
+            visual_status, outcome_warning = replacement_outcome(subtitle_events)
+            if outcome_warning:
+                warnings.append(outcome_warning)
 
         return VisualResult(
             enabled=True,

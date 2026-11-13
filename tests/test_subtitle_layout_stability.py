@@ -540,6 +540,24 @@ def test_distinct_translations_in_different_lanes_still_render_both():
     assert len(processor.render_calls) == 2
 
 
+def test_title_and_name_a_line_apart_keep_separate_plates():
+    # Title y2=844 and name y1=860 are 16px apart. Joining them paints one
+    # tall black slab over the costume. Each row keeps its own plate.
+    from src.features.visual.pipeline import _unify_twin_events
+
+    title = _event([_box(682, 760, 1231, 845)], event_id="title")
+    title.start_time, title.end_time = 21.83, 29.97
+    title.translated_text = "Đô đốc Tổng bộ Hải quân"
+    name = _event([_box(888, 860, 1065, 946)], event_id="name")
+    name.start_time, name.end_time = 21.83, 24.70
+    name.translated_text = "Aokiji"
+    plates = {e.event_id: _layout_boxes_for_event(e)[1] for e in (title, name)}
+    _spans, twins = _unify_twin_events([title, name], plates, 30.0)
+    assert twins == {}
+    assert plates["title"].y2 < 860
+    assert plates["name"].y1 > 844
+
+
 def test_twin_rows_suppress_union_plate_through_longer_span():
     # Real case (12.6-12.9s): the Chinese row's event ended at 12.63 while
     # '眼神柔和' stayed on screen until 12.87 — per-event suppression let the

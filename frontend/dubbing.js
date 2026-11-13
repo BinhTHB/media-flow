@@ -454,7 +454,7 @@
             label: "Speaker " + String(nextIdx).padStart(2, "0"),
             short: "S" + nextIdx,
             count: 0,
-            voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+            voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb",
           });
         }
 
@@ -569,7 +569,7 @@
       state.plan = {
         ready: true,
         duration: duration,
-        speakers: [{ id: "S01", label: "Speaker 01", short: "S1", count: 1, voice_id: (el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL") }],
+        speakers: [{ id: "S01", label: "Speaker 01", short: "S1", count: 1, voice_id: (el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb") }],
         segments: [],
       };
     }
@@ -1113,7 +1113,7 @@
           dub_audio: Boolean(state.dubAudio),
           source_language: el.sourceLanguage ? el.sourceLanguage.value : "auto",
           target_language: el.targetLanguage ? el.targetLanguage.value : "vi",
-          voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+          voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb",
           speaker_mode: el.speakerMode ? el.speakerMode.value : "single",
           fit_policy: "fit",
           preserve_ambience: true,
@@ -1127,7 +1127,7 @@
         state.plan = {
           ready: true,
           duration: dur,
-          speakers: [{ id: "S01", label: "Speaker 01", short: "S1", count: 0, voice_id: (el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL") }],
+          speakers: [{ id: "S01", label: "Speaker 01", short: "S1", count: 0, voice_id: (el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb") }],
           segments: [],
           stages: [
             { id: "ingest", label: "Nạp và kiểm tra media", status: "ready" },
@@ -1219,7 +1219,7 @@
         overwrite: true,
         source_language: el.sourceLanguage ? el.sourceLanguage.value : "auto",
         target_language: el.targetLanguage ? el.targetLanguage.value : "vi",
-        voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:EXAVITQu4vr4xnSDxMaL",
+        voice_id: el.voiceSelect ? el.voiceSelect.value : "elevenlabs:nPczCjzI2devNBz1zQrb",
         speaker_mode: isMulti ? "auto" : "single",
         preserve_ambience: true,
         mix_original_volume: 0.20,

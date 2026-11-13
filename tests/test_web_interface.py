@@ -198,6 +198,67 @@ def test_create_job_accepts_flow_preset_with_feature_fields(monkeypatch: pytest.
     assert job["extra_text_action"] == "blur"
 
 
+def test_create_job_reup_keeps_the_ticked_stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from unittest.mock import MagicMock
+    from src.interfaces.web.server import create_job
+    import src.interfaces.web.server as web_server
+
+    dummy_video = tmp_path / "test.mp4"
+    dummy_video.write_bytes(b"dummy")
+    monkeypatch.setattr(web_server, "resolve_project_video", lambda p: dummy_video)
+    monkeypatch.setattr(web_server, "dubbing_capabilities", lambda: {"ready": True})
+    monkeypatch.setattr(web_server, "OUTPUT_ROOT", tmp_path / "outputs")
+    monkeypatch.setattr(web_server.threading, "Thread", MagicMock())
+
+    visual = create_job({
+        "input_path": str(dummy_video),
+        "preset": "reup",
+        "subtitle_action": "translate",
+        "dub_audio": False,
+        "extra_text_action": "blur",
+        "target_language": "vi",
+        "variation_level": "off",
+    })
+    assert visual["preset"] == "yolo-4class"
+    assert visual["reup_contract"] is True
+    assert visual["subtitle_action"] == "translate"
+    assert visual["dub_audio"] is False
+    assert visual["extra_text_action"] == "blur"
+    assert visual["preserve_ambience"] is True
+    options = build_job_options(visual)
+    assert options.reup_contract is True
+    assert options.dub_audio is False
+    assert options.variation_level == "off"
+
+    audio = create_job({
+        "input_path": str(dummy_video),
+        "output_name": "audio-only.mp4",
+        "preset": "reup",
+        "subtitle_action": "preserve",
+        "dub_audio": True,
+        "extra_text_action": "preserve",
+        "source_language": "ja",
+        "target_language": "vi",
+        "voice_id": "vi-VN-HoaiMyNeural",
+    })
+    assert audio["reup_contract"] is True
+    assert audio["subtitle_action"] == "preserve"
+    assert audio["dub_audio"] is True
+    assert audio["preserve_ambience"] is False
+    assert audio["mix_original_volume"] == 0.0
+    assert audio["max_tts_speedup"] == 1.8
+
+    with pytest.raises(RequestError, match="hình, tiếng"):
+        create_job({
+            "input_path": str(dummy_video),
+            "output_name": "empty.mp4",
+            "preset": "reup",
+            "subtitle_action": "preserve",
+            "dub_audio": False,
+            "extra_text_action": "preserve",
+        })
+
+
 def test_local_server_serves_health_and_frontend() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", 0), MediaFlowHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -225,7 +286,7 @@ def test_local_server_serves_health_and_frontend() -> None:
         thread.join(timeout=2)
 
     assert health["status"] == "ok"
-    assert set(health["presets"]) == {"yolo-4class", "yolo-text"}
+    assert set(health["presets"]) == {"yolo-4class", "yolo-text", "reup"}
     assert set(health["subtitle_actions"]) == {"translate", "blur", "preserve"}
     assert set(health["extra_text_actions"]) == {"blur", "preserve"}
     assert "MediaFlow" in html
@@ -233,6 +294,12 @@ def test_local_server_serves_health_and_frontend() -> None:
     # Legacy routes (/index.html, /dubbing.html) intentionally serve the unified studio page.
     assert dubbing_html == studio_html == cleanup_html
     assert "MediaFlow CLI Studio" in studio_html
+    assert 'data-preset="reup"' in studio_html
+    assert 'id="reupVisualCheck"' in studio_html
+    assert 'id="reupAudioCheck" checked' in studio_html
+    assert 'id="sourceSection"' in studio_html
+    assert 'id="publishSection"' in studio_html
+    assert 'id="variationSelect"' in studio_html
     # studio.js is the CLI-runner GUI; it probes runtime status via /api/health.
     assert "/api/health" in studio_js
     assert capabilities["status"] in {"partial", "ready"}
@@ -448,6 +515,80 @@ def test_list_jobs_prefers_live_state_over_store(monkeypatch: pytest.MonkeyPatch
     assert len(jobs) == 1
     assert jobs[0]["progress"] == 65
     assert jobs[0]["logs"] == ["live line"]
+
+
+def test_list_jobs_keeps_the_live_job_when_history_fills_the_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A running studio job stays listed after thirty older jobs are on disk.
+
+    Web jobs stamp ``created_at`` as an ISO string. Those used to sort as zero
+    and fall off the thirty-item page, so the progress dock attached to a stale
+    store row instead of the job actually rendering.
+    """
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    for index in range(30):
+        store.save_state(
+            f"old_{index}",
+            {
+                "id": f"old_{index}",
+                "status": "SUCCESS",
+                "created_at": float(index + 1),
+                "updated_at": float(index + 1),
+            },
+        )
+    monkeypatch.setattr(web_server, "_JOBS", {
+        "web_live": {
+            "id": "web_live",
+            "status": "running",
+            "progress": 72,
+            "message": "Visual: rendering 1800/2491 frames (72%)",
+            "created_at": web_server.utc_now(),
+            "logs": ["[18:07:25] [PIPELINE] Visual: rendering 1800/2491 frames (72%)"],
+        },
+    })
+
+    jobs = web_server.list_jobs()
+
+    assert jobs[0]["id"] == "web_live"
+    assert jobs[0]["logs"]
+
+
+def test_failed_job_keeps_its_error_after_the_process_restarts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A refresh must still show why the run died.
+
+    The store leaves ``stage`` on the last checkpoint (``processing``). The
+    failure sentence is on ``error``. Projecting the stage made the dock say
+    the job was still processing.
+    """
+    web_server, store = _isolated_store(monkeypatch, tmp_path)
+    failure = (
+        "All translation providers failed. gemini: "
+        "provider returned an empty translation batch"
+    )
+    store.save_state("web_failed", {
+        "id": "web_failed",
+        "status": "FAILED",
+        "progress": 100,
+        "stage": "processing",
+        "created_at": 10.0,
+        "updated_at": 20.0,
+        "error": {"code": "internal_error", "message": failure},
+        "events": [
+            {"type": "progress", "stage": "processing", "progress": 40, "message": "Processing media"},
+            {"type": "failed", "stage": "failed", "progress": 100, "message": failure},
+        ],
+        "request": {},
+    })
+    monkeypatch.setattr(web_server, "_JOBS", {})
+
+    job = next(item for item in web_server.list_jobs() if item["id"] == "web_failed")
+
+    assert job["status"] == "failed"
+    assert job["message"] == failure
+    assert job["logs"][-1] == failure
 
 
 def test_list_jobs_orders_newest_first(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

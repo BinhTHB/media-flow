@@ -19,7 +19,7 @@ from src.core.models.speech_segment import SpeechSegment
 from src.infrastructure.gemini.client import GeminiClient
 from src.infrastructure.gemini.contracts import GeminiRequest
 from src.infrastructure.gemini.request_scheduler import RequestScheduler
-from src.infrastructure.gemini.structured_output import parse_json
+from src.infrastructure.gemini.structured_output import parse_json_recovering
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ class GeminiAudioASRAdapter(ASRPort):
         self,
         api_key: str | None = None,
         model: str = "gemini-3.5-flash-lite",
-        chunk_seconds: int = 900,
+        chunk_seconds: int = 60,
     ) -> None:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.model = model
@@ -63,12 +63,20 @@ class GeminiAudioASRAdapter(ASRPort):
             next_index = 0
             for chunk_index, chunk in enumerate(chunks):
                 offset = float(chunk_index * self.chunk_seconds)
-                chunk_segments = self._transcribe_chunk(
-                    chunk,
-                    language=language,
-                    offset=offset,
-                    index_base=next_index,
-                )
+                try:
+                    chunk_segments = self._transcribe_chunk(
+                        chunk,
+                        language=language,
+                        offset=offset,
+                        index_base=next_index,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Gemini ASR chunk %d failed; keeping the other chunks: %s",
+                        chunk_index,
+                        exc,
+                    )
+                    continue
                 segments.extend(chunk_segments)
                 next_index += len(chunk_segments)
 
@@ -130,7 +138,12 @@ class GeminiAudioASRAdapter(ASRPort):
             "6. Return JSON only in this exact shape:\n"
             '{"detected_language":"xx","segments":[{"start":0.0,"end":1.2,"text":"...","speaker_id":null}]}'
         )
-        client = GeminiClient(api_key=self.api_key, model=self.model, scheduler=RequestScheduler())
+        client = GeminiClient(
+            api_key=self.api_key,
+            model=self.model,
+            timeout=45.0,
+            scheduler=RequestScheduler(max_retries=2, backoff_max_seconds=8.0),
+        )
         response = client.generate_content(
             GeminiRequest(
                 contents=[{
@@ -147,7 +160,7 @@ class GeminiAudioASRAdapter(ASRPort):
             ),
             use_cache=False,
         )
-        payload = parse_json(response.text)
+        payload = parse_json_recovering(response.text)
         if isinstance(payload, list):
             raw_segments: Any = payload
             detected_language = language

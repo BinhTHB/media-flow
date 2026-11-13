@@ -119,6 +119,14 @@ def test_salvage_ignores_out_of_range_indices():
     assert out == [""]
 
 
+def test_subtitle_single_line_reasoning_is_not_a_translation():
+    # Bare-line salvage is spoken-only. A one-line subtitle chunk that comes back
+    # as chain-of-thought prose must stay empty so router validation fails the
+    # chunk instead of burning reasoning text onto the video.
+    out = parse("*   Constraint 3: Fluent, concise.", ["眼神柔和"])
+    assert out == [""]
+
+
 def test_bullet_backtick_numbered_line_parses():
     content = "*   `0: Ánh mắt dịu dàng`"
     out = parse(content, ["眼神柔和"])

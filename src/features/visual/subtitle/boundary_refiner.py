@@ -70,17 +70,16 @@ class SubtitleBoundaryRefiner:
 
     def _refine_start(self, cap: cv2.VideoCapture, event: SubtitleEvent, start_frame: int, fps: float) -> int:
         ref_bbox = self._boundary_bbox(event, first=True)
-        ref = self._normalized_crop(cap, start_frame, ref_bbox)
+        max_scan = max(1, int(round(self.config.scan_back_seconds * fps)))
+        window_start = max(0, start_frame - max_scan)
+        crops = self._read_crop_window(cap, window_start, start_frame, ref_bbox)
+        ref = crops.get(start_frame)
         if ref is None:
             return start_frame
-        max_scan = max(1, int(round(self.config.scan_back_seconds * fps)))
         earliest = start_frame
         absent_run = 0
-        for frame_index in range(start_frame - 1, max(-1, start_frame - max_scan - 1), -1):
-            if frame_index < 0:
-                break
-            candidate = self._normalized_crop(cap, frame_index, ref_bbox)
-            score = self._similarity(ref, candidate)
+        for frame_index in range(start_frame - 1, window_start - 1, -1):
+            score = self._similarity(ref, crops.get(frame_index))
             if score >= self.config.present_threshold:
                 earliest = frame_index
                 absent_run = 0
@@ -99,16 +98,16 @@ class SubtitleBoundaryRefiner:
         total_frames: int,
     ) -> int:
         ref_bbox = self._boundary_bbox(event, first=False)
-        ref = self._normalized_crop(cap, end_frame, ref_bbox)
+        max_scan = max(1, int(round(self.config.scan_forward_seconds * fps)))
+        upper = min(total_frames - 1, end_frame + max_scan)
+        crops = self._read_crop_window(cap, end_frame, upper, ref_bbox)
+        ref = crops.get(end_frame)
         if ref is None:
             return end_frame
-        max_scan = max(1, int(round(self.config.scan_forward_seconds * fps)))
         latest = end_frame
         absent_run = 0
-        upper = min(total_frames - 1, end_frame + max_scan)
         for frame_index in range(end_frame + 1, upper + 1):
-            candidate = self._normalized_crop(cap, frame_index, ref_bbox)
-            score = self._similarity(ref, candidate)
+            score = self._similarity(ref, crops.get(frame_index))
             if score >= self.config.present_threshold:
                 latest = frame_index
                 absent_run = 0
@@ -124,17 +123,33 @@ class SubtitleBoundaryRefiner:
             return event.bbox_trajectory[0 if first else -1]
         return event.anchor_bbox
 
-    def _normalized_crop(
+    def _read_crop_window(
         self,
         cap: cv2.VideoCapture,
-        frame_index: int,
+        start_frame: int,
+        end_frame: int,
+        bbox: BBox,
+    ) -> dict[int, Tuple[np.ndarray, np.ndarray]]:
+        """One seek, then sequential reads. Random CAP_PROP_POS_FRAMES per
+        neighbor is the slow path on long GOP MP4s at 1080p."""
+        crops: dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+        if end_frame < start_frame:
+            return crops
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_frame))
+        for frame_index in range(start_frame, end_frame + 1):
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                break
+            crop = self._normalized_crop_from_frame(frame, bbox)
+            if crop is not None:
+                crops[frame_index] = crop
+        return crops
+
+    def _normalized_crop_from_frame(
+        self,
+        frame: np.ndarray,
         bbox: BBox,
     ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            return None
-
         pad_x = max(8, int(round(bbox.width * self.config.bbox_pad_ratio_x)))
         pad_y = max(6, int(round(bbox.height * self.config.bbox_pad_ratio_y)))
         x1, y1, x2, y2 = bbox.xyxy_int()

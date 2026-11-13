@@ -16,6 +16,8 @@ def wire_visual_caches(root, cache_dir, detector, ocr, translation, detector_con
                       "src/infrastructure/detection/yolo_detector.py",
                       "src/infrastructure/detection/yolo_proposal_provider.py"],
         "ocr": ["src/infrastructure/ocr/gemini_ocr.py",
+                "src/infrastructure/ocr/rapid_ocr.py",
+                "src/infrastructure/ocr/router.py",
                 "src/infrastructure/gemini/client.py"],
         "translation": ["src/infrastructure/translation/gemini_translation.py",
                         "src/infrastructure/translation/openrouter_translation.py",

@@ -102,6 +102,29 @@ def test_fixed_profile_overrides_the_level() -> None:
     assert VariationPolicy(level="off", fixed_profile=fixed).profile_for("x", 1) is fixed
 
 
+def test_render_mirror_keeps_crop_and_speed_for_the_ffmpeg_pass() -> None:
+    from src.features.publishing.variation import post_render_profile
+
+    profile = VariationProfile(mirror=True, crop_ratio=0.02, speed=1.03, rotate_degrees=0.4, label="balanced")
+    post = post_render_profile(profile, mirrored_during_render=True, drawn_captions=True)
+    assert post.mirror is False
+    assert post.crop_ratio == 0.02
+    assert post.speed == 1.03
+    assert post.rotate_degrees == 0.4
+    assert profile.mirror is True
+
+
+def test_drawn_captions_drop_post_render_mirror() -> None:
+    from src.features.publishing.variation import keep_overlay_text_readable
+
+    profile = VariationProfile(mirror=True, crop_ratio=0.02, speed=1.03, label="balanced")
+    safe = keep_overlay_text_readable(profile, drawn_captions=True)
+    assert safe.mirror is False
+    assert safe.crop_ratio == 0.02
+    assert safe.speed == 1.03
+    assert keep_overlay_text_readable(profile, drawn_captions=False).mirror is True
+
+
 def test_unknown_level_is_rejected() -> None:
     with pytest.raises(ValueError, match="variation level"):
         VariationPolicy(level="nonsense")

@@ -308,6 +308,26 @@ def test_service_publishes_the_varied_file_when_policy_is_set(tmp_path):
     assert target.payloads == [b"VARIANT"]
 
 
+def test_service_uploads_a_processed_file_without_a_second_variation(tmp_path):
+    from src.features.publishing.variation import VariationPolicy
+
+    video = _video(tmp_path)
+    sidecar = tmp_path / "clip.variation.json"
+    sidecar.write_text('{"speed": 1.02, "crop_ratio": 0.02, "label": "balanced"}', encoding="utf-8")
+    variation = _RecordingVariation()
+    target = _CapturingTarget()
+    service = PublishService(
+        targets=[target],
+        variation_policy=VariationPolicy(level="balanced"),
+        variation_provider=variation,
+    )
+
+    service.publish_file(video)
+
+    assert variation.profiles == []
+    assert target.payloads == [b"fake-video-bytes"]
+
+
 def test_service_publishes_master_when_policy_is_off(tmp_path):
     from src.features.publishing.variation import VariationPolicy
 
@@ -436,3 +456,11 @@ def test_metadata_generator_falls_back_on_model_error(tmp_path):
         _video(tmp_path, "clip_xy.mp4")
     )
     assert meta.title == "clip_xy"
+
+    spoken = GeminiMetadataGenerator(runtime=_BrokenRuntime()).generate(
+        _video(tmp_path, "clip_xy.mp4"),
+        {"transcript": "Tranh nhau cây cảnh | Bonsai Việt Nam"},
+    )
+    assert spoken.title == "Tranh nhau cây cảnh"
+    assert "Bonsai Việt Nam" in spoken.description
+    assert "vietnam" in spoken.tags

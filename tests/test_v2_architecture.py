@@ -236,11 +236,8 @@ def test_translate_replace_suppresses_and_overlays_only_ready_events():
         {0: [ready]},
     )
 
-    assert processor.blur_action.calls == []
-    assert len(processor.suppression_calls) == 1
-    assert len(processor.suppression_calls[0]) == 2
-    assert processor.suppression_calls[0][0].bbox == ready.anchor_bbox
-    assert processor.suppression_calls[0][1] == ready.anchor_bbox
+    # Source glyphs are covered by VisualPipeline's local blur, not the
+    # processor's Telea inpaint path. Overlay still goes through the processor.
     assert processor.render_calls == [(0, [ready])]
 
 

@@ -72,15 +72,18 @@ OUTPUT_ROOT = PROJECT_ROOT / "outputs"
 UPLOAD_ROOT = PROJECT_ROOT / "input" / "uploads"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 PRESETS = {"yolo-4class", "yolo-text"}
+SELECTABLE_PRESETS = PRESETS | {"reup"}
 SUBTITLE_ACTIONS = {"translate", "blur", "preserve"}
 EXTRA_TEXT_ACTIONS = {"blur", "preserve"}
 DEVICES = {"auto", "cuda", "cpu"}
 DUBBING_LANGUAGES = {"auto", "zh", "en", "ja", "ko", "vi"}
 DUBBING_SPEAKER_MODES = {"single", "auto"}
 DUBBING_FIT_POLICIES = {"fit"}
+DEFAULT_WEB_VOICE = "elevenlabs:nPczCjzI2devNBz1zQrb"
 DUBBING_VOICES = {
+    DEFAULT_WEB_VOICE: "ElevenLabs v3 · Brian · Nam · Free API",
+    "elevenlabs:cKxI7IOUsPeiDfNgV1cE": "ElevenLabs · Tung Anh · Nam · tiếng Việt (cần gói trả phí)",
     "elevenlabs:EXAVITQu4vr4xnSDxMaL": "ElevenLabs v3 · Sarah · Nữ · Free API shortlist #1",
-    "elevenlabs:nPczCjzI2devNBz1zQrb": "ElevenLabs v3 · Brian · Nam · Free API shortlist #2",
     "elevenlabs:pNInz6obpgDQGcFmaJgB": "ElevenLabs v3 · Adam · Nam · Free API",
     "elevenlabs:env": "ElevenLabs v3 · Voice ID từ .env",
     "fish:28902432d87243f08638ba59a1569781": "Fish · Nam trẻ tự nhiên · experimental",
@@ -268,7 +271,7 @@ def build_dubbing_plan(payload: dict[str, Any]) -> dict[str, Any]:
     target_language = str(payload.get("target_language", "vi"))
     speaker_mode = str(payload.get("speaker_mode", "single"))
     fit_policy = str(payload.get("fit_policy", "fit"))
-    voice_id = str(payload.get("voice_id", "elevenlabs:EXAVITQu4vr4xnSDxMaL"))
+    voice_id = str(payload.get("voice_id", DEFAULT_WEB_VOICE))
 
     if source_language not in DUBBING_LANGUAGES:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Ngôn ngữ nguồn không được hỗ trợ.")
@@ -492,6 +495,8 @@ def build_job_options(job: dict[str, Any]) -> JobOptions:
     '''Map the validated web job to the shared Python execution contract.'''
     # Resolve here so persisted jobs created before the flow-preset refactor
     # (and hand-built job dicts) normalize exactly like fresh API calls.
+    requested = str(job.get("preset", "yolo-4class"))
+    reup_contract = requested.removesuffix("-generic") == "reup" or bool(job.get("reup_contract"))
     try:
         preset, subtitle_action, dub_audio, extra_text_action = resolve_preset(
             str(job.get("preset", "yolo-4class")),
@@ -532,6 +537,10 @@ def build_job_options(job: dict[str, Any]) -> JobOptions:
         speaker_mode=str(job.get("speaker_mode", "single")),
         preserve_ambience=bool(job.get("preserve_ambience", True)),
         mix_original_volume=float(job.get("mix_original_volume", 0.20)),
+        max_tts_speedup=float(job.get("max_tts_speedup", 1.30)),
+        reup_contract=reup_contract,
+        variation_level=str(job.get("variation_level") or "balanced"),
+        create_missing_subtitles=bool(job.get("create_missing_subtitles", True)),
     )
 
 
@@ -551,6 +560,37 @@ _STORE_STATUS_TO_WEB = {
     "BLOCKED": "failed",
     "RUNNING": "running",
 }
+
+
+def _store_job_message(state: dict[str, Any]) -> str:
+    """Text the dock should show after a refresh.
+
+    A failed run leaves ``stage`` on the last progress checkpoint, so the
+    failure sentence lives on ``error`` and the last event, not on ``stage``.
+    """
+    error = state.get("error")
+    if isinstance(error, dict) and str(error.get("message") or "").strip():
+        return str(error["message"]).strip()
+    explicit = str(state.get("message") or "").strip()
+    if explicit:
+        return explicit
+    events = state.get("events") or []
+    if events and isinstance(events[-1], dict):
+        last = str(events[-1].get("message") or "").strip()
+        if last:
+            return last
+    return str(state.get("stage") or "")
+
+
+def _store_job_logs(state: dict[str, Any]) -> list[str]:
+    logs: list[str] = []
+    for event in (state.get("events") or [])[-8:]:
+        if not isinstance(event, dict):
+            continue
+        text = str(event.get("message") or "").strip()
+        if text:
+            logs.append(text)
+    return logs
 
 
 def _web_job_from_store(state: dict[str, Any]) -> dict[str, Any]:
@@ -575,7 +615,7 @@ def _web_job_from_store(state: dict[str, Any]) -> dict[str, Any]:
         "id": str(state.get("id", "")),
         "status": _STORE_STATUS_TO_WEB.get(str(state.get("status", "")), "failed"),
         "progress": int(state.get("progress") or 0),
-        "message": str(state.get("message") or state.get("stage") or ""),
+        "message": _store_job_message(state),
         "stage": str(state.get("stage") or ""),
         "input_path": input_path,
         "input_relative": relative_project_path(Path(input_path)) if input_path else "",
@@ -589,7 +629,7 @@ def _web_job_from_store(state: dict[str, Any]) -> dict[str, Any]:
         "duration_seconds": metrics.get("duration_seconds"),
         "error": state.get("error"),
         "events": state.get("events", []),
-        "logs": [],
+        "logs": _store_job_logs(state),
         "persisted": True,
     }
 
@@ -614,10 +654,19 @@ def list_jobs(limit: int = 30) -> list[dict[str, Any]]:
             value = item.get(field)
             if isinstance(value, (int, float)):
                 return float(value)
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    continue
         return 0.0
 
     jobs = sorted(merged.values(), key=_sort_key, reverse=True)
-    return jobs[:limit]
+    # In-memory jobs carry the live log. A full history page must not push
+    # them off the list: their timestamps are ISO strings, which used to sort as 0.
+    live_jobs = [job for job in jobs if not job.get("persisted")]
+    history = [job for job in jobs if job.get("persisted")]
+    return (live_jobs + history)[:limit]
 
 
 def get_job(job_id: str) -> dict[str, Any]:
@@ -833,14 +882,22 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         or (isinstance(raw_presets, list) and "blur-all" in raw_presets)
     )
     subtitle_action = str(payload.get("subtitle_action", ""))
-    dub_audio = bool(payload.get("dub_audio", False))
+    reup_requested = requested_preset.removesuffix("-generic") == "reup"
+    if "create_missing_subtitles" in payload:
+        create_missing_subtitles = bool(payload.get("create_missing_subtitles"))
+    else:
+        create_missing_subtitles = True
+    if reup_requested and "dub_audio" not in payload:
+        dub_audio = True
+    else:
+        dub_audio = bool(payload.get("dub_audio", False))
     extra_text_action = str(payload.get("extra_text_action", ""))
     try:
         preset, subtitle_action, dub_audio, extra_text_action = resolve_preset(
             requested_preset,
             subtitle_action or "translate",
             dub_audio,
-            extra_text_action or ("blur" if blur_extra else "preserve"),
+            extra_text_action or ("blur" if blur_extra or reup_requested else "preserve"),
             blur_extra=blur_extra,
         )
     except ValueError as exc:
@@ -850,7 +907,7 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
     overwrite = bool(payload.get("overwrite", False))
     source_language = str(payload.get("source_language", "auto"))
     target_language = str(payload.get("target_language", "vi"))
-    voice_id = str(payload.get("voice_id", "elevenlabs:EXAVITQu4vr4xnSDxMaL"))
+    voice_id = str(payload.get("voice_id", DEFAULT_WEB_VOICE))
     asr_provider = str(payload.get("asr_provider", "auto"))
     translation_provider = str(payload.get("translation_provider", "auto"))
     tts_provider = str(payload.get("tts_provider", "auto"))
@@ -860,12 +917,17 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Preset không hợp lệ.")
     if subtitle_action not in SUBTITLE_ACTIONS:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Hành động phụ đề không hợp lệ.")
+    if requested_preset.removesuffix("-generic") == "reup" and subtitle_action == "preserve" and not dub_audio:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Chọn xử lý hình, tiếng, hoặc cả hai.")
     if extra_text_action not in EXTRA_TEXT_ACTIONS:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Hành động text khác không hợp lệ.")
     if profile not in {"quality", "balanced", "fast"}:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Runtime profile không hợp lệ.")
     if device not in DEVICES:
         raise RequestError(HTTPStatus.BAD_REQUEST, "Thiết bị xử lý không hợp lệ.")
+    variation_level = str(payload.get("variation_level") or "balanced")
+    if variation_level not in {"off", "light", "balanced", "aggressive"}:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Mức biến thể không hợp lệ.")
     if subtitle_action == "translate":
         if target_language not in DUBBING_LANGUAGES or target_language == "auto":
             raise RequestError(HTTPStatus.BAD_REQUEST, "Ngôn ngữ đích không hợp lệ.")
@@ -911,10 +973,13 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         "output_relative": relative_project_path(output_path),
         "output_name": output_name,
         "preset": preset,
+        "reup_contract": requested_preset.removesuffix("-generic") == "reup",
+        "create_missing_subtitles": create_missing_subtitles,
         "subtitle_action": subtitle_action,
         "dub_audio": dub_audio,
         "extra_text_action": extra_text_action,
         "profile": profile,
+        "variation_level": variation_level,
         "device": device,
         "overwrite": overwrite,
         "source_language": source_language,
@@ -929,8 +994,9 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         "speaker_voices": payload.get("speaker_voices") if isinstance(payload.get("speaker_voices"), dict) else {},
         "blur_extra": blur_extra,
         "speaker_mode": str(payload.get("speaker_mode", "single")),
-        "preserve_ambience": bool(payload.get("preserve_ambience", True)),
-        "mix_original_volume": float(payload.get("mix_original_volume", 0.20)),
+        "preserve_ambience": False if requested_preset.removesuffix("-generic") == "reup" and dub_audio else bool(payload.get("preserve_ambience", True)),
+        "mix_original_volume": 0.0 if requested_preset.removesuffix("-generic") == "reup" and dub_audio else float(payload.get("mix_original_volume", 0.20)),
+        "max_tts_speedup": 1.8 if requested_preset.removesuffix("-generic") == "reup" and dub_audio else float(payload.get("max_tts_speedup", 1.30)),
         "dubbing_engine": str(payload.get("dubbing_engine", "quality-auto")),
         "created_at": utc_now(),
         "started_at": None,
@@ -976,6 +1042,235 @@ def list_project_videos() -> list[dict[str, Any]]:
             if len(items) >= 150:
                 return items
     return items
+
+
+ZERNIO_STORE_PATH = PROJECT_ROOT / "secrets" / "zernio_accounts.json"
+SOURCES_PATH = PROJECT_ROOT / "input" / "sources.txt"
+_INGEST_LOCK = threading.Lock()
+_INGEST_STATE: dict[str, Any] = {"status": "idle", "message": "", "exit_code": None, "log": []}
+
+
+def zernio_store():
+    from src.infrastructure.publishing.zernio_store import ZernioAccountStore
+
+    return ZernioAccountStore(ZERNIO_STORE_PATH)
+
+
+def ingest_status() -> dict[str, Any]:
+    with _INGEST_LOCK:
+        return dict(_INGEST_STATE)
+
+
+def start_source_poll(text: str, limit: int, then_process: bool) -> dict[str, Any]:
+    from src.features.ingest.watch import parse_watch_text
+
+    body = (text or "").strip()
+    if not body:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Chưa có nguồn.")
+    try:
+        parse_watch_text(body)
+    except ValueError as exc:
+        raise RequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+    if limit < 1 or limit > 50:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Giới hạn mỗi nguồn từ 1 đến 50.")
+    with _INGEST_LOCK:
+        if _INGEST_STATE["status"] == "running":
+            raise RequestError(HTTPStatus.CONFLICT, "Đang tải nguồn.")
+        _INGEST_STATE.update({
+            "status": "running",
+            "message": "Đang xem nguồn mới.",
+            "exit_code": None,
+            "log": [],
+        })
+    threading.Thread(
+        target=_run_source_poll,
+        args=(body, limit, then_process),
+        daemon=True,
+    ).start()
+    return ingest_status()
+
+
+def _run_source_poll(text: str, limit: int, then_process: bool) -> None:
+    import io
+    from argparse import Namespace
+    from contextlib import redirect_stdout
+
+    from src.features.ingest.service import IngestService
+    from src.infrastructure.ingest.yt_dlp import YtDlpDownloader
+    from src.interfaces.ingest import _poll_once
+
+    SOURCES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SOURCES_PATH.write_text(text + "\n", encoding="utf-8")
+    args = Namespace(
+        url=[],
+        urls_file=None,
+        sources=str(SOURCES_PATH),
+        out=str(PROJECT_ROOT / "input" / "downloads"),
+        quality="1080",
+        trim=0.0,
+        subtitles=False,
+        overwrite=False,
+        limit=limit,
+        interval=0,
+        json=False,
+        then_process=then_process,
+        preset="reup",
+        subtitle_action="translate",
+        extra_text_action="blur",
+        dub_audio=True,
+        device="auto",
+        max_attempts=3,
+        backoff_base=5.0,
+    )
+    downloader = YtDlpDownloader()
+    service = IngestService(downloader)
+    buffer = io.StringIO()
+    code = 1
+    try:
+        with redirect_stdout(buffer):
+            code = _poll_once(args, downloader, service)
+        message = "Đã tải nguồn mới." if code == 0 else "Tải nguồn có lỗi."
+        status = "succeeded" if code == 0 else "failed"
+    except Exception as exc:
+        message = str(exc)
+        status = "failed"
+    with _INGEST_LOCK:
+        _INGEST_STATE.update({
+            "status": status,
+            "message": message,
+            "exit_code": code,
+            "log": buffer.getvalue().splitlines()[-80:],
+        })
+
+
+def add_zernio_account(payload: dict[str, Any]) -> dict[str, str]:
+    try:
+        return zernio_store().add(
+            label=str(payload.get("label") or ""),
+            platform=str(payload.get("platform") or ""),
+            api_key=str(payload.get("api_key") or ""),
+        )
+    except ValueError as exc:
+        raise RequestError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+
+def check_zernio_account(account_id: str) -> dict[str, Any]:
+    from src.infrastructure.publishing.zernio import ZernioClient, ZernioError
+
+    row = zernio_store().get(account_id)
+    if row is None:
+        raise RequestError(HTTPStatus.NOT_FOUND, "Không thấy API key.")
+    try:
+        connected = ZernioClient(row["api_key"]).list_accounts()
+    except ZernioError as exc:
+        raise RequestError(HTTPStatus.BAD_GATEWAY, str(exc)) from exc
+    matched = [item for item in connected if item["platform"] == row["platform"]]
+    return {
+        "id": account_id,
+        "platform": row["platform"],
+        "connected": connected,
+        "matched": matched,
+    }
+
+
+def spoken_lines_for_video(video: Path, jobs_root: Path | None = None) -> list[str]:
+    """Collect spoken/translated lines from the job that produced ``video``."""
+    root = jobs_root or default_jobs_dir()
+    if not root.is_dir():
+        return []
+    target = str(video.resolve())
+    for job_dir in sorted(root.iterdir(), reverse=True):
+        result_path = job_dir / "result.json"
+        segments_path = job_dir / "audio" / "segments.json"
+        if not result_path.is_file() or not segments_path.is_file():
+            continue
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        output = str(result.get("output_video_path") or "")
+        if output and Path(output).resolve() != Path(target):
+            continue
+        try:
+            rows = json.loads(segments_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        lines: list[str] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                text = str(row.get("spoken_text") or row.get("translated_text") or row.get("source_text") or "").strip()
+                if text:
+                    lines.append(text)
+        return lines
+    return []
+
+
+def suggest_publish_metadata(video_path: str) -> dict[str, Any]:
+    from src.infrastructure.publishing.gemini_metadata import GeminiMetadataGenerator
+
+    video = resolve_project_video(video_path)
+    lines = spoken_lines_for_video(video)
+    transcript = " | ".join(lines[:40])
+    metadata = GeminiMetadataGenerator().generate(
+        str(video),
+        {"transcript": transcript} if transcript else {},
+    )
+    payload = {
+        "title": metadata.title,
+        "description": metadata.description,
+        "tags": list(metadata.tags),
+        "language": metadata.language,
+    }
+    sidecar = video.with_suffix(".publish.json")
+    try:
+        sidecar.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+    return payload
+
+
+def publish_zernio(payload: dict[str, Any]) -> dict[str, Any]:
+    from src.infrastructure.publishing.zernio import ZernioClient, ZernioError
+
+    video = resolve_project_video(str(payload.get("video_path") or ""))
+    account_ids = payload.get("account_ids")
+    if not isinstance(account_ids, list) or not account_ids:
+        raise RequestError(HTTPStatus.BAD_REQUEST, "Chọn ít nhất một API key.")
+    title = str(payload.get("title") or "")
+    content = str(payload.get("content") or "")
+    raw_tags = payload.get("tags")
+    if isinstance(raw_tags, str):
+        tags = [part.strip() for part in raw_tags.replace("#", " ").split(",") if part.strip()]
+    elif isinstance(raw_tags, list):
+        tags = [str(tag).strip() for tag in raw_tags if str(tag).strip()]
+    else:
+        tags = []
+    if not title.strip() or not content.strip() or not tags:
+        suggested = suggest_publish_metadata(str(video))
+        title = title.strip() or str(suggested.get("title") or "")
+        content = content.strip() or str(suggested.get("description") or "")
+        if not tags:
+            tags = [str(tag) for tag in suggested.get("tags") or []]
+    results: list[dict[str, Any]] = []
+    for account_id in account_ids:
+        row = zernio_store().get(str(account_id))
+        if row is None:
+            results.append({"id": str(account_id), "ok": False, "error": "Không thấy API key."})
+            continue
+        try:
+            published = ZernioClient(row["api_key"]).publish_video(
+                video_path=str(video),
+                platform=row["platform"],
+                title=title,
+                content=content,
+                tags=tags,
+            )
+            results.append({"id": row["id"], "label": row["label"], "ok": True, **published})
+        except ZernioError as exc:
+            results.append({"id": row["id"], "label": row["label"], "ok": False, "error": str(exc)})
+    return {"results": results, "title": title, "content": content, "tags": tags}
 
 
 class MediaFlowHandler(BaseHTTPRequestHandler):
@@ -1084,7 +1379,7 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
                     {
                         "status": "ok",
                         "project": "MediaFlow",
-                        "presets": sorted(PRESETS),
+                        "presets": sorted(SELECTABLE_PRESETS),
                         "subtitle_actions": sorted(SUBTITLE_ACTIONS),
                         "extra_text_actions": sorted(EXTRA_TEXT_ACTIONS),
                         "devices": ["auto", "cuda", "cpu"],
@@ -1098,6 +1393,14 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
 
             if path == "/api/jobs":
                 self._send_json({"jobs": list_jobs(limit=30)})
+                return
+
+            if path == "/api/ingest":
+                self._send_json(ingest_status())
+                return
+
+            if path == "/api/zernio/accounts":
+                self._send_json({"accounts": zernio_store().list_public()})
                 return
 
             if path.startswith("/api/jobs/"):
@@ -1150,6 +1453,36 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
                 self._send_json(job, HTTPStatus.ACCEPTED)
                 return
 
+            if parsed.path == "/api/ingest":
+                payload = self._read_json()
+                try:
+                    limit = int(payload.get("limit") or 10)
+                except (TypeError, ValueError) as exc:
+                    raise RequestError(HTTPStatus.BAD_REQUEST, "Giới hạn không hợp lệ.") from exc
+                self._send_json(start_source_poll(
+                    str(payload.get("sources") or ""),
+                    limit,
+                    bool(payload.get("then_process", True)),
+                ), HTTPStatus.ACCEPTED)
+                return
+
+            if parsed.path == "/api/zernio/accounts":
+                self._send_json(add_zernio_account(self._read_json()), HTTPStatus.CREATED)
+                return
+
+            if parsed.path == "/api/zernio/publish":
+                self._send_json(publish_zernio(self._read_json()))
+                return
+
+            if parsed.path == "/api/publish/suggest":
+                self._send_json(suggest_publish_metadata(str(self._read_json().get("video_path") or "")))
+                return
+
+            if parsed.path.startswith("/api/zernio/accounts/") and parsed.path.endswith("/check"):
+                account_id = parsed.path.split("/")[4]
+                self._send_json(check_zernio_account(account_id))
+                return
+
             if parsed.path == "/api/uploads":
                 self._handle_upload()
                 return
@@ -1168,6 +1501,13 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
                 if not job_id:
                     raise RequestError(HTTPStatus.BAD_REQUEST, "Thiếu job id.")
                 self._send_json(cancel_job(job_id), HTTPStatus.ACCEPTED)
+                return
+
+            if parsed.path.startswith("/api/zernio/accounts/"):
+                account_id = parsed.path.split("/")[4] if len(parsed.path.split("/")) > 4 else ""
+                if not account_id or not zernio_store().remove(account_id):
+                    raise RequestError(HTTPStatus.NOT_FOUND, "Không thấy API key.")
+                self._send_json({"deleted": account_id})
                 return
 
             if parsed.path == "/api/files":
@@ -1209,7 +1549,7 @@ class MediaFlowHandler(BaseHTTPRequestHandler):
 
     def _handle_voice_preview(self) -> None:
         payload = self._read_json()
-        voice_id = str(payload.get("voice_id") or "elevenlabs:EXAVITQu4vr4xnSDxMaL").strip()
+        voice_id = str(payload.get("voice_id") or DEFAULT_WEB_VOICE).strip()
         if voice_id not in DUBBING_VOICES:
             raise RequestError(HTTPStatus.BAD_REQUEST, "Voice preview không hợp lệ.")
         raw_text = payload.get("text")
@@ -1303,6 +1643,16 @@ def main() -> None:
         raise SystemExit(f"Frontend directory not found: {FRONTEND_ROOT}")
 
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # A crashed run leaves state RUNNING forever. Reconcile before serving so
+    # the UI can offer a clean rerun instead of showing a stuck "đang xử lý".
+    try:
+        interrupted = JOB_STORE.reconcile_interrupted()
+    except OSError as exc:
+        print(f"MediaFlow web: job reconcile skipped ({exc})")
+    else:
+        if interrupted:
+            print(f"MediaFlow web: marked {len(interrupted)} interrupted job(s) as failed")
 
     # Job workspaces accumulate one folder per run; without this the directory
     # only ever grows. Only terminal, unclaimed jobs are removed.

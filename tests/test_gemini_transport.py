@@ -71,3 +71,8 @@ def test_client_retries_wrapped_transient_errors():
 
     assert resp.text == "ok"
     assert transport.attempts == 3
+
+
+def test_retry_after_cannot_stall_a_dub_for_an_hour():
+    scheduler = RequestScheduler(backoff_max_seconds=60.0, random_source=lambda: 0.0)
+    assert scheduler.compute_retry_delay(0, retry_after=3600) == 60.0

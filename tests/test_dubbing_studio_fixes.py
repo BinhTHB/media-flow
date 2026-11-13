@@ -310,6 +310,118 @@ def test_visual_pipeline_applies_subtitle_layout_inplace_and_bottom():
     mock_proc.render_region_events.assert_not_called()
 
 
+def test_overlay_only_speech_captions_are_drawn_on_reup_layout():
+    import numpy as np
+    from types import SimpleNamespace
+    from src.core.models.bbox import BBox
+    from src.core.models.subtitle_event import SubtitleEvent
+    from src.features.visual.pipeline import VisualPipeline, VisualRequest
+
+    mock_proc = MagicMock()
+    mock_proc.render_frame_events.side_effect = lambda frame, idx, events, **kwargs: "rendered_speech"
+    mock_proc.render_region_events.side_effect = lambda frame, events, region, **kwargs: "rendered_inplace"
+    mock_proc.select_render_events.side_effect = lambda evs: evs
+
+    pipeline = VisualPipeline(subtitle_processor=mock_proc)
+    ev = SubtitleEvent(
+        event_id="speech-1",
+        track_id="track_seg_0",
+        start_time=0.0,
+        end_time=6.6,
+        anchor_bbox=BBox(57, 604, 662, 684, 720, 720),
+        source_text="Những gốc cây cảnh",
+        translated_text="Những gốc cây cảnh",
+        replacement_status="READY",
+        blur_applied=False,
+        overlay_applied=True,
+        split_reason="no_source_sub",
+    )
+    frame = np.zeros((720, 720, 3), dtype=np.uint8)
+    frame[640:644, 80:200] = 255
+    request = VisualRequest(
+        enabled=True,
+        subtitle_enabled=True,
+        subtitle_mode="translate_replace",
+        subtitle_layout="temporal",
+    )
+    source = SimpleNamespace(bbox=BBox(70, 610, 220, 680, 720, 720))
+
+    result = pipeline._apply_subtitle_actions(
+        frame=frame,
+        frame_index=12,
+        request=request,
+        detections_by_frame={12: [source]},
+        events_by_frame={12: [ev]},
+    )
+
+    assert result == "rendered_speech"
+    mock_proc.render_frame_events.assert_called_once()
+    mock_proc.render_region_events.assert_not_called()
+    mock_proc.suppress_source_subtitles.assert_not_called()
+    assert int(frame[641, 120].max()) < 200
+
+
+def test_overlapping_speech_captions_keep_the_line_that_just_started():
+    import numpy as np
+    from src.core.models.bbox import BBox
+    from src.core.models.subtitle_event import SubtitleEvent
+    from src.features.visual.pipeline import VisualPipeline, VisualRequest
+    from src.features.visual.subtitle.processor import SubtitleProcessor
+
+    seen = {}
+
+    def capture(frame, idx, events, **kwargs):
+        seen["ids"] = [event.event_id for event in events]
+        return "rendered_speech"
+
+    processor = SubtitleProcessor()
+    processor.render_frame_events = capture
+    pipeline = VisualPipeline(subtitle_processor=processor)
+    pipeline._render_fps = 10.0
+    box = BBox(57, 604, 662, 684, 720, 720)
+
+    def line(event_id, start, end):
+        return SubtitleEvent(
+            event_id=event_id,
+            track_id=event_id,
+            start_time=start,
+            end_time=end,
+            anchor_bbox=box,
+            source_text=event_id,
+            translated_text=event_id,
+            replacement_status="READY",
+            blur_applied=False,
+            overlay_applied=True,
+        )
+
+    request = VisualRequest(
+        enabled=True,
+        subtitle_enabled=True,
+        subtitle_mode="translate_replace",
+        subtitle_layout="bottom",
+    )
+    result = pipeline._apply_subtitle_actions(
+        frame=np.zeros((720, 720, 3), dtype=np.uint8),
+        frame_index=25,
+        request=request,
+        detections_by_frame={},
+        events_by_frame={25: [line("early", 0.0, 4.0), line("late", 2.0, 3.0)]},
+    )
+
+    assert result == "rendered_speech"
+    assert seen["ids"] == ["late"]
+
+
+def test_sampled_subtitle_boxes_cover_the_skipped_frame():
+    from src.features.visual.pipeline import hold_sampled_detections
+
+    sampled = object()
+    held = hold_sampled_detections({0: [sampled], 2: ["next"]}, 2)
+
+    assert held[1] == [sampled]
+    assert held[2] == ["next"]
+
+
 def test_visual_pipeline_extracts_bbox_from_segment_dict():
     from src.features.visual.pipeline import VisualPipeline
 

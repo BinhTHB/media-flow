@@ -37,6 +37,7 @@ def _options(tmp_path: Path, job_id: str = "p2-job") -> JobOptions:
         job_id=job_id,
         overwrite=True,
         no_visual_cache=True,
+        variation_level="off",
     )
 
 
@@ -56,7 +57,7 @@ def test_runner_persists_safe_provenance_and_metrics(tmp_path, monkeypatch) -> N
     assert state["provenance"] == {
         "profile": "balanced",
         "device": "cpu",
-        "providers": {"asr": "mock", "translation": "mock", "tts": "auto"},
+        "providers": {"asr": "auto", "translation": "auto", "tts": "auto"},
     }
     assert state["metrics"]["detections"] == {"subtitle": 2}
     assert state["metrics"]["tracks"] == {"subtitle": 1}

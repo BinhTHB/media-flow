@@ -66,6 +66,13 @@ CAPTION_ROW_OVERLAP_RATIO = 0.45
 #: before the model also emits the subtitle class.
 SAME_LINE_FRAME_WINDOW = 30
 SAME_LINE_VERTICAL_OVERLAP = 0.50
+#: A short bottom line (for example 大将们) is still a caption when it sits
+#: on the same glyphs as a subtitle. A face credit is thin, narrow, and
+#: above the caption band.
+BOTTOM_LINE_CENTER_Y = 0.72
+CREDIT_MAX_WIDTH_RATIO = 0.15
+CREDIT_MAX_HEIGHT_RATIO = 0.06
+CREDIT_MAX_CENTER_Y_RATIO = 0.70
 
 
 class TextClassifyingDetector(DetectorPort):
@@ -82,11 +89,13 @@ class TextClassifyingDetector(DetectorPort):
 
 
 def promote_subtitle_rows_labeled_watermark(detections: List[Detection]) -> List[Detection]:
-    """Re-label a wide watermark that is really a caption line.
+    """Re-label a watermark that is really a caption line.
 
     The 4-class model sometimes calls a caption watermark: the second line
     under a subtitle, or the same line for up to a second before it also
-    emits the subtitle class. A corner mark stays a watermark.
+    emits the subtitle class. A wide second row qualifies on width. A short
+    bottom line qualifies when it shares glyphs with a nearby subtitle.
+    A corner mark stays a watermark.
     """
     by_frame: Dict[int, List[Detection]] = {}
     for det in detections:
@@ -98,12 +107,18 @@ def promote_subtitle_rows_labeled_watermark(detections: List[Detection]) -> List
             continue
         frame_w = float(det.bbox.frame_width)
         frame_h = float(det.bbox.frame_height)
-        if det.bbox.width < CAPTION_ROW_MIN_WIDTH_RATIO * frame_w:
+        wide = det.bbox.width >= CAPTION_ROW_MIN_WIDTH_RATIO * frame_w
+        center_y = (det.bbox.y1 + det.bbox.y2) / 2.0
+        bottom_line = center_y >= BOTTOM_LINE_CENTER_Y * frame_h
+        if not wide and not bottom_line:
             promoted.append(det)
             continue
         matched = False
         for other in _nearby_subtitles(by_frame, det.frame_index):
-            if _is_second_caption_row(det, other, frame_h) or _is_same_caption_line(det, other):
+            if wide and _is_second_caption_row(det, other, frame_h):
+                matched = True
+                break
+            if (wide or bottom_line) and _is_same_caption_line(det, other):
                 matched = True
                 break
         if not matched:
@@ -111,6 +126,31 @@ def promote_subtitle_rows_labeled_watermark(detections: List[Detection]) -> List
             continue
         promoted.append(replace(det, class_id=CLASS_IDS["subtitle"], class_name="subtitle"))
     return promoted
+
+
+def demote_upper_credits_labeled_subtitle(detections: List[Detection]) -> List[Detection]:
+    """Re-label a thin subtitle box above the caption band as a watermark.
+
+    Face credits such as 西瓜君AI制作 are a narrow, short box on the face.
+    A name on the costume is taller or sits in the lower band and stays a
+    subtitle, so the translated name is still drawn.
+    """
+    demoted: List[Detection] = []
+    for det in detections:
+        if det.class_name != "subtitle":
+            demoted.append(det)
+            continue
+        frame_w = float(det.bbox.frame_width)
+        frame_h = float(det.bbox.frame_height)
+        center_y = (det.bbox.y1 + det.bbox.y2) / 2.0
+        thin = det.bbox.height < CREDIT_MAX_HEIGHT_RATIO * frame_h
+        narrow = det.bbox.width < CREDIT_MAX_WIDTH_RATIO * frame_w
+        high = center_y < CREDIT_MAX_CENTER_Y_RATIO * frame_h
+        if thin and narrow and high:
+            demoted.append(replace(det, class_id=CLASS_IDS["watermark"], class_name="watermark"))
+            continue
+        demoted.append(det)
+    return demoted
 
 
 def _nearby_subtitles(by_frame: Dict[int, List[Detection]], frame_index: int) -> List[Detection]:

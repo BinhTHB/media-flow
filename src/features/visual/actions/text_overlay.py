@@ -200,22 +200,23 @@ class TextOverlayAction:
         tx = max(18, min(fw - text_w - 18, tx))
         ty = max(18, min(fh - text_h - 18, ty))
 
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).convert("RGBA")
-
+        # Draw the caption on a patch the size of the line, then composite
+        # that patch. Converting the whole frame to PIL on every frame was
+        # most of the reup render time once OCR was no longer in the way.
+        stroke = max(3, self.stroke_width)
+        margin = stroke + 4
+        left = tx - margin
+        top = ty - margin
+        right = tx + text_w + margin
+        bottom = ty + text_h + margin + 2
+        bg_rect = None
         if self.bg_box:
-            # Caption backing. When anchored to the source box, the panel must
-            # cover the WHOLE source region — not just the new text — otherwise
-            # the original caption's background (a yellow band, a coloured
-            # banner) and any glyph the suppression pass missed stay visible
-            # around the replacement, which reads as two overlapping captions.
             text_pad_x = max(12, int(font_size * 0.30))
             text_pad_y = max(7, int(font_size * 0.18))
-
-            bx1 = max(0, tx - text_pad_x)
-            by1 = max(0, ty - text_pad_y)
-            bx2 = min(fw, tx + text_w + text_pad_x)
-            by2 = min(fh, ty + text_h + text_pad_y)
-
+            bx1 = tx - text_pad_x
+            by1 = ty - text_pad_y
+            bx2 = tx + text_w + text_pad_x
+            by2 = ty + text_h + text_pad_y
             if self.anchor_to_bbox:
                 source_w = max(1, x2 - x1)
                 text_span = text_w + 2 * text_pad_x
@@ -224,33 +225,48 @@ class TextOverlayAction:
                 # onto it paints a black bar across the scene.
                 cover_source = source_w <= max(text_span * 2.2, int(fw * 0.62))
                 if cover_source:
-                    # A few pixels past the detected glyphs covers the stroke.
-                    # A larger pad paints an empty black margin around the line.
                     source_pad = 4
-                    bx1 = max(0, min(bx1, x1 - source_pad))
-                    by1 = max(0, min(by1, y1 - source_pad))
-                    bx2 = min(fw, max(bx2, x2 + source_pad))
-                    by2 = min(fh, max(by2, y2 + source_pad))
-                    bx1 = max(0, min(bx1, x1))
-                    by1 = max(0, min(by1, y1))
-                    bx2 = min(fw, max(bx2, x2))
-                    by2 = min(fh, max(by2, y2))
+                    bx1 = min(bx1, x1 - source_pad)
+                    by1 = min(by1, y1 - source_pad)
+                    bx2 = max(bx2, x2 + source_pad)
+                    by2 = max(by2, y2 + source_pad)
+                    bx1 = min(bx1, x1)
+                    by1 = min(by1, y1)
+                    bx2 = max(bx2, x2)
+                    by2 = max(by2, y2)
+            bg_rect = (bx1, by1, bx2, by2)
+            left = min(left, bx1)
+            top = min(top, by1)
+            right = max(right, bx2)
+            bottom = max(bottom, by2)
 
-            overlay = Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
-            draw_overlay = ImageDraw.Draw(overlay)
-            radius = max(10, min(18, int((by2 - by1) * 0.22)))
-            radius = min(radius, max(0, (bx2 - bx1) // 2), max(0, (by2 - by1) // 2))
-            draw_overlay.rounded_rectangle(
-                [bx1, by1, bx2, by2],
+        left = max(0, int(left))
+        top = max(0, int(top))
+        right = min(int(fw), int(right))
+        bottom = min(int(fh), int(bottom))
+        if right <= left or bottom <= top:
+            return frame
+
+        patch = Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(patch)
+        if bg_rect is not None:
+            bx1, by1, bx2, by2 = bg_rect
+            px1 = max(0, bx1 - left)
+            py1 = max(0, by1 - top)
+            px2 = min(right - left, bx2 - left)
+            py2 = min(bottom - top, by2 - top)
+            radius = max(10, min(18, int((py2 - py1) * 0.22)))
+            radius = min(radius, max(0, (px2 - px1) // 2), max(0, (py2 - py1) // 2))
+            draw.rounded_rectangle(
+                [px1, py1, px2, py2],
                 radius=radius,
                 fill=self.bg_color,
             )
-            pil_img = Image.alpha_composite(pil_img, overlay)
-
-        draw = ImageDraw.Draw(pil_img)
         spacing = max(4, font_size // 7)
+        local_tx = tx - left
+        local_ty = ty - top
         draw.multiline_text(
-            (tx + 1, ty + 2),
+            (local_tx + 1, local_ty + 2),
             wrapped_text,
             font=font,
             fill=(0, 0, 0, 155),
@@ -260,14 +276,22 @@ class TextOverlayAction:
             spacing=spacing,
         )
         draw.multiline_text(
-            (tx, ty),
+            (local_tx, local_ty),
             wrapped_text,
             font=font,
             fill=(255, 255, 255, 255),
-            stroke_width=max(3, self.stroke_width),
+            stroke_width=stroke,
             stroke_fill=(0, 0, 0, 255),
             align="center",
             spacing=spacing,
         )
 
-        return cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+        roi = frame[top:bottom, left:right]
+        if roi.size == 0:
+            return frame
+        base = Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)).convert("RGBA")
+        merged = Image.alpha_composite(base, patch)
+        frame[top:bottom, left:right] = cv2.cvtColor(
+            np.array(merged.convert("RGB")), cv2.COLOR_RGB2BGR
+        )
+        return frame

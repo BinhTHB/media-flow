@@ -32,7 +32,7 @@ read_subtitle(crops / subtitle event evidence, options) → source text result
 
 For V2 subtitle processing, YOLO already supplies the visual region. OCR should read supplied crops/evidence rather than rediscovering the global subtitle bbox as a second detector.
 
-A Gemini Vision OCR adapter may still use multiple representative crops/temporal evidence to improve text reliability.
+Subtitle OCR is local RapidOCR (ONNX PP-OCR) only. Gemini is not called to read crops. Translation stays on its own provider.
 
 ### TranslationPort
 

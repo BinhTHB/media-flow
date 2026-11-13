@@ -25,6 +25,7 @@ from src.interfaces.composition.config import load_provider_config
 from src.interfaces.composition.providers import (
     build_asr_corrector,
     build_asr_provider,
+    build_ocr_provider,
     build_spoken_rewriter,
     build_translation_service,
     build_tts_provider,
@@ -34,6 +35,11 @@ from src.interfaces.composition.providers import (
 from src.interfaces.jobs.store import JobStore
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _live_provider(choice: str) -> str:
+    """The yaml file still says mock. Jobs run the live auto selection."""
+    return "auto" if choice == "mock" else choice
 ProgressCallback = Callable[["JobEvent"], None]
 JobProfile = Literal["quality", "balanced", "fast"]
 
@@ -95,6 +101,10 @@ def resolve_preset(
     base = preset.removesuffix("-generic")
     if base in YOLO_FLOW_PRESETS:
         return base, subtitle_action, bool(dub_audio), extra_text_action
+    # Reup keeps the caller's visual and audio choices. A ticked stage runs.
+    # An unticked stage stays off. Frame shape does not decide either one.
+    if base == "reup":
+        return "yolo-4class", subtitle_action, bool(dub_audio), extra_text_action
     features = LEGACY_PRESET_FEATURES.get(base)
     if features is None:
         raise ValueError(f"Unsupported preset: {preset}")
@@ -108,8 +118,10 @@ def _normalize_preset(options: "JobOptions") -> None:
     """Resolve deprecated presets onto the flow preset + feature fields.
 
     Mutates ``options``. New-style flow presets are left untouched — their
-    feature fields are authoritative.
+    feature fields are authoritative. A reup job drops the original speech
+    bed only when the audio option is on.
     """
+    requested = options.preset.removesuffix("-generic")
     (
         options.preset,
         options.subtitle_action,
@@ -122,6 +134,17 @@ def _normalize_preset(options: "JobOptions") -> None:
         options.extra_text_action,
         blur_extra=options.blur_extra,
     )
+    if requested == "reup":
+        options.reup_contract = True
+        if options.dub_audio:
+            apply_reup_delivery(options)
+
+
+def apply_reup_delivery(options: "JobOptions") -> None:
+    """Drop the original speech bed and keep lines that need a wider TTS fit."""
+    options.preserve_ambience = False
+    options.mix_original_volume = 0.0
+    options.max_tts_speedup = max(float(options.max_tts_speedup), 1.8)
 
 
 @dataclass(frozen=True)
@@ -180,6 +203,12 @@ class JobOptions:
     speaker_mode: str = "single"
     preserve_ambience: bool = True
     mix_original_volume: float = 0.20
+    #: Set when the caller asked for the reup contract.
+    reup_contract: bool = False
+    #: Reup: draw bottom captions from speech. Off = only translate detector text.
+    create_missing_subtitles: bool = True
+    #: Delivery variation baked into the finished file. "off" leaves the mux unchanged.
+    variation_level: str = "balanced"
 
 
 class JobError(RuntimeError):
@@ -203,10 +232,12 @@ class JobRunner:
         use_case_factory: Callable[[JobOptions, ProcessingRequest], tuple[Any, dict[str, Any]]] | None = None,
         job_store: JobStore | None = None,
         cancel_requested: Callable[[], bool] | None = None,
+        variation_port: Any | None = None,
     ) -> None:
         self._use_case_factory = use_case_factory or self._compose
         self._job_store = job_store or JobStore(default_jobs_dir())
         self._cancel_requested = cancel_requested or (lambda: False)
+        self._variation_port = variation_port
 
     def run(self, options: JobOptions, on_event: ProgressCallback | None = None) -> ProcessingResult:
         callback = on_event or (lambda event: None)
@@ -258,14 +289,23 @@ class JobRunner:
             use_case, caches = self._use_case_factory(normalized, request)
             checkpoint()
             emit(JobEvent("progress", "processing", 40, "Processing media"))
+            if normalized.variation_level != "off" and request.visual.enabled:
+                from src.features.publishing.variation import VariationPolicy
+
+                request.visual.mirror_output = VariationPolicy(
+                    level=normalized.variation_level
+                ).profile_for(request.job_id, attempt=1).mirror
             result = use_case.execute(request)
             checkpoint()
+            variation_profile: dict[str, Any] | None = None
             if result.output_video_path and Path(result.output_video_path).is_file():
                 try:
                     from src.infrastructure.video.ffmpeg import ensure_web_compatible_video
                     ensure_web_compatible_video(result.output_video_path)
                 except Exception:
                     pass
+                if normalized.variation_level != "off":
+                    variation_profile = self._apply_delivery_variation(normalized, result)
             emit(JobEvent("progress", "finalizing", 92, "Finalizing output", {"detections": dict(result.detections_summary)}))
             details = {"result": result.to_dict(), "caches": self._cache_stats(caches)}
             self._job_store.save_result(request.job_id, result.to_dict())
@@ -280,6 +320,7 @@ class JobRunner:
                     "detections": dict(result.detections_summary),
                     "tracks": dict(result.tracks_summary),
                     "cache": self._cache_stats(caches),
+                    "variation": variation_profile,
                 },
             })
             self._job_store.save_state(request.job_id, state)
@@ -305,6 +346,52 @@ class JobRunner:
             if claimed_job_id:
                 self._job_store.release(claimed_job_id)
 
+    def _apply_delivery_variation(self, options: JobOptions, result: ProcessingResult) -> dict[str, Any]:
+        """Bake speed, crop, mirror, and pitch into the finished file.
+
+        The file at ``output_video_path`` becomes the upload. A sidecar records
+        the profile so a later publish does not vary the same pixels again,
+        and the quality gate can read the same profile from the job record.
+        """
+        from src.features.publishing.variation import VariationPolicy, post_render_profile
+
+        policy = VariationPolicy(level=options.variation_level)
+        identity = result.job_id or options.job_id or Path(result.output_video_path).stem
+        full = policy.profile_for(identity, attempt=1)
+        visual_ran = not (
+            options.subtitle_action == "preserve" and options.extra_text_action == "preserve"
+        )
+        profile = post_render_profile(
+            full,
+            mirrored_during_render=visual_ran and full.mirror,
+            drawn_captions=options.subtitle_action == "translate",
+        )
+        output = Path(result.output_video_path)
+        if not profile.is_identity:
+            port = self._variation_port
+            if port is None:
+                from src.infrastructure.video.variation import FFmpegVariationAdapter
+
+                port = FFmpegVariationAdapter()
+            temporary = output.with_name(f"{output.stem}.delivery.mp4")
+            try:
+                port.apply(str(output), profile, str(temporary))
+                temporary.replace(output)
+            finally:
+                temporary.unlink(missing_ok=True)
+        payload = full.to_dict()
+        sidecar = output.with_name(f"{output.stem}.variation.json")
+        sidecar.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        if result.workspace_dir:
+            job_json = Path(result.workspace_dir) / "job.json"
+            if job_json.is_file():
+                record = json.loads(job_json.read_text(encoding="utf-8"))
+                if isinstance(record, dict):
+                    record["variation"] = payload
+                    job_json.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        result.provenance = {**(result.provenance or {}), "variation": payload}
+        return payload
+
     def prepare(self, options: JobOptions) -> tuple[JobOptions, ProcessingRequest]:
         if options.preset not in YOLO_FLOW_PRESETS:
             _normalize_preset(options)
@@ -316,6 +403,8 @@ class JobRunner:
             raise ValidationError(f"Unsupported profile: {options.profile}")
         if options.device not in {"auto", "cuda", "cpu"}:
             raise ValidationError(f"Unsupported device: {options.device}")
+        if options.variation_level not in {"off", "light", "balanced", "aggressive"}:
+            raise ValidationError(f"Unsupported variation_level: {options.variation_level}")
 
         input_path = Path(options.input_path).resolve()
         if not input_path.is_file():
@@ -325,8 +414,8 @@ class JobRunner:
             raise ValidationError(f"Output video already exists: {output_path}")
 
         config = load_provider_config()
-        options.asr_provider = config.resolve("speech", options.asr_provider)
-        options.translation_provider = config.resolve("translation", options.translation_provider)
+        options.asr_provider = _live_provider(config.resolve("speech", options.asr_provider))
+        options.translation_provider = _live_provider(config.resolve("translation", options.translation_provider))
         options.tts_provider = config.resolve("tts", options.tts_provider)
         if (
             options.preset == "yolo-text"
@@ -337,6 +426,8 @@ class JobRunner:
         options.device = effective_device
         options.input_path = str(input_path)
         options.output_path = str(output_path)
+        if options.reup_contract and options.dub_audio:
+            apply_reup_delivery(options)
         needs_dubbing = bool(options.dub_audio)
         parsed_segments = None
         if options.segments:
@@ -467,11 +558,28 @@ class JobRunner:
             "blur": "blur",
             "preserve": "preserve",
         }[options.subtitle_action]
-        return VisualRequest(enabled=True, subtitle_enabled=True, subtitle_mode=subtitle_mode,
-                             logo_enabled=True, logo_action=options.extra_text_action,
-                             watermark_enabled=True, watermark_action=options.extra_text_action,
-                             other_text_enabled=True, other_text_action=options.extra_text_action,
-                             **common)
+        speech_captions = bool(
+            options.reup_contract
+            and options.subtitle_action == "translate"
+            and options.dub_audio
+            and options.create_missing_subtitles
+        )
+        return VisualRequest(
+            enabled=True,
+            subtitle_enabled=True,
+            subtitle_mode=subtitle_mode,
+            logo_enabled=True,
+            logo_action=options.extra_text_action,
+            watermark_enabled=True,
+            watermark_action=options.extra_text_action,
+            other_text_enabled=True,
+            other_text_action=options.extra_text_action,
+            use_speech_subtitles=speech_captions,
+            # Speech captions are the text. YOLO only has to find logos and
+            # the burned-in lines worth hiding, so every other frame is enough.
+            detection_stride=2 if speech_captions else 1,
+            **common,
+        )
 
     @staticmethod
     def _compose(options: JobOptions, request: ProcessingRequest) -> tuple[ProcessVideoUseCase, dict[str, Any]]:
@@ -531,9 +639,7 @@ class JobRunner:
             )
         ocr_provider = None
         if request.visual.enabled and request.visual.subtitle_mode == "translate_replace":
-            from src.infrastructure.ocr.gemini_ocr import GeminiOCRAdapter
-
-            ocr_provider = GeminiOCRAdapter()
+            ocr_provider = build_ocr_provider(os.getenv("MEDIAFLOW_OCR_PROVIDER", "auto"))
         caches: dict[str, Any] = {}
         if request.visual.enabled and not options.no_visual_cache:
             from src.infrastructure.visual_cache_wiring import wire_visual_caches
@@ -551,7 +657,11 @@ class JobRunner:
 
         visual_pipeline = VisualPipeline(
             detector=detector,
-            subtitle_processor=SubtitleProcessor(ocr_provider=ocr_provider, translation_service=visual_translation),
+            subtitle_processor=SubtitleProcessor(
+                ocr_provider=ocr_provider,
+                translation_service=visual_translation,
+                ocr_retry_rounds=0,
+            ),
             scene_detector=scene_detector,
             video_util=video_util,
         )

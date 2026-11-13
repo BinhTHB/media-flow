@@ -16,7 +16,7 @@ trivially testable and has no I/O.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from src.core.models.variation import VariationProfile
@@ -81,6 +81,33 @@ class VariationPolicy:
             mirror=mirror,
             label=self.level,
         )
+
+
+def post_render_profile(
+    profile: VariationProfile,
+    *,
+    mirrored_during_render: bool,
+    drawn_captions: bool,
+) -> VariationProfile:
+    """FFmpeg pass after the visual render.
+
+    Mirror is already in the pixels when the visual pass flipped each frame
+    before drawing text. This pass still applies crop, speed, rotate, and pitch.
+    """
+    if mirrored_during_render:
+        return replace(profile, mirror=False)
+    return keep_overlay_text_readable(profile, drawn_captions=drawn_captions)
+
+
+def keep_overlay_text_readable(profile: VariationProfile, *, drawn_captions: bool) -> VariationProfile:
+    """Post-render hflip mirrors drawn captions and makes them unreadable.
+
+    Crop/speed/rotate stay. Mirror is only skipped when replacement text was
+    painted onto the frames.
+    """
+    if drawn_captions and profile.mirror:
+        return replace(profile, mirror=False)
+    return profile
 
 
 def _seed(item_id: str, attempt: int) -> bytes:

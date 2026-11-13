@@ -297,3 +297,167 @@ def test_find_subtitle_picks_sidecar(tmp_path) -> None:
     (tmp_path / "abc.vi.srt").write_text("1", encoding="utf-8")
 
     assert _find_subtitle(video).endswith(".srt")
+
+
+def test_watch_file_keeps_visual_and_audio_flags() -> None:
+    from src.features.ingest.watch import parse_watch_text
+
+    sources = parse_watch_text(
+        "\n".join([
+            "# channel, picture only",
+            "https://www.youtube.com/@name/videos visual=1 audio=0",
+            "https://www.youtube.com/playlist?list=PL visual=0 audio=1",
+            "https://youtu.be/abc",
+        ])
+    )
+
+    assert [(item.visual, item.audio) for item in sources] == [(True, False), (False, True), (None, None)]
+
+
+def test_watch_file_rejects_a_bad_flag() -> None:
+    from src.features.ingest.watch import parse_watch_text
+
+    with pytest.raises(ValueError, match="không hợp lệ"):
+        parse_watch_text("https://youtu.be/abc visual=maybe")
+
+
+def test_plan_downloads_skips_urls_already_on_disk() -> None:
+    from src.features.ingest.watch import plan_downloads
+
+    planned = plan_downloads(
+        [
+            "https://youtu.be/old",
+            "https://youtu.be/new",
+            "https://youtu.be/new",
+        ],
+        ["https://youtu.be/old"],
+        quality="720",
+        note="https://www.youtube.com/@name/videos",
+    )
+
+    assert [item.url for item in planned] == ["https://youtu.be/new"]
+    assert planned[0].quality == "720"
+    assert planned[0].note.endswith("/videos")
+
+
+def test_known_ok_urls_ignore_a_missing_file(tmp_path) -> None:
+    service = _service(_FakeDownloader())
+    service.ingest_one(SourceSpec("https://youtu.be/abc"), str(tmp_path))
+    assert service.known_ok_urls(str(tmp_path)) == {"https://youtu.be/abc"}
+    (tmp_path / "video.mp4").unlink()
+    assert service.known_ok_urls(str(tmp_path)) == set()
+
+
+def test_flat_playlist_ids_become_watch_urls() -> None:
+    from src.infrastructure.ingest.yt_dlp import entry_urls
+
+    info = {
+        "entries": [
+            {"id": "aaa"},
+            {"webpage_url": "https://www.youtube.com/watch?v=bbb"},
+            {"id": "ccc"},
+        ]
+    }
+    assert entry_urls(info, "https://www.youtube.com/@name/videos", limit=2) == [
+        "https://www.youtube.com/watch?v=aaa",
+        "https://www.youtube.com/watch?v=bbb",
+    ]
+
+
+def test_source_line_sets_reup_stages() -> None:
+    from argparse import Namespace
+
+    from src.features.ingest.watch import WatchSource
+    from src.interfaces.ingest import _actions
+
+    args = Namespace(subtitle_action="blur", extra_text_action="preserve", dub_audio=False)
+    assert _actions(WatchSource("https://youtu.be/a", visual=True, audio=False), args) == (
+        "translate", "blur", False,
+    )
+    assert _actions(WatchSource("https://youtu.be/b", visual=False, audio=True), args) == (
+        "preserve", "preserve", True,
+    )
+    assert _actions(WatchSource("https://youtu.be/c"), args) == ("blur", "preserve", False)
+    reup = Namespace(preset="reup", subtitle_action="blur", extra_text_action="preserve", dub_audio=False)
+    assert _actions(WatchSource("https://youtu.be/d"), reup) == ("translate", "blur", True)
+    assert _actions(WatchSource("https://youtu.be/e", visual=False, audio=False), reup) == (
+        "preserve", "preserve", False,
+    )
+
+
+def test_then_process_still_plans_a_video_the_manifest_already_has(tmp_path) -> None:
+    from argparse import Namespace
+
+    from src.interfaces.ingest import _collect_plans
+
+    source = tmp_path / "sources.txt"
+    source.write_text("https://www.youtube.com/shorts/aaa visual=1 audio=0\n", encoding="utf-8")
+    watch_url = "https://www.youtube.com/watch?v=aaa"
+
+    class Catalog:
+        def list_entries(self, url, *, limit):
+            return [watch_url]
+
+    class Ledger:
+        def known_ok_urls(self, output_dir):
+            return {watch_url}
+
+    args = Namespace(
+        url=[],
+        urls_file=None,
+        sources=str(source),
+        limit=1,
+        overwrite=False,
+        then_process=True,
+        quality="1080",
+        subtitles=False,
+        trim=0.0,
+    )
+    plans = _collect_plans(args, Catalog(), Ledger())
+    assert [spec.url for spec, _watch in plans] == [watch_url]
+
+
+def test_then_process_keeps_watch_flags_and_retries_a_skipped_file(tmp_path, monkeypatch) -> None:
+    from argparse import Namespace
+
+    from src.core.models.ingest import IngestBatch, IngestResult, SourceSpec
+    from src.interfaces.ingest import _process_downloads
+    from src.interfaces.jobs import runner as runner_module
+
+    fresh = tmp_path / "fresh.mp4"
+    skipped = tmp_path / "skipped.mp4"
+    fresh.write_bytes(b"mp4")
+    skipped.write_bytes(b"mp4")
+    seen: list = []
+
+    class FakeRunner:
+        def run(self, options, on_event=None):
+            seen.append((
+                options.input_path,
+                options.subtitle_action,
+                options.extra_text_action,
+                options.dub_audio,
+                options.output_path.replace("\\", "/"),
+            ))
+
+    monkeypatch.setattr(runner_module, "JobRunner", FakeRunner)
+    args = Namespace(preset="reup", subtitle_action="translate", dub_audio=False, device="cpu", overwrite=False)
+    fresh_url = "https://www.youtube.com/watch?v=fresh"
+    skipped_url = "https://www.youtube.com/watch?v=skipped"
+    batch = IngestBatch(results=[
+        IngestResult(source=SourceSpec(url=fresh_url), status="OK", video_path=str(fresh)),
+        IngestResult(source=SourceSpec(url=skipped_url), status="SKIPPED", video_path=str(skipped)),
+    ])
+    code = _process_downloads(batch, args, {
+        fresh_url: ("translate", "blur", False),
+        skipped_url: ("translate", "blur", False),
+    })
+
+    assert code == 0
+    assert [item[:4] for item in seen] == [
+        (str(fresh), "translate", "blur", False),
+        (str(skipped), "translate", "blur", False),
+    ]
+    assert seen[0][4].endswith("outputs/cli/fresh-reup.mp4")
+    assert seen[1][4].endswith("outputs/cli/skipped-reup.mp4")
+    assert str(tmp_path).replace("\\", "/") not in seen[0][4]

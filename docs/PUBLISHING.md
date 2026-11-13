@@ -50,10 +50,18 @@ publish, worker render một **variant** khác bản master:
 
 Mức: `--variation off|light|balanced|aggressive` (mặc định `balanced`).
 
+Job xử lý ghi biến thể này vào chính file output. Cổng chất lượng đọc `variation` trong `job.json` và chấm file đó. Sidecar `<tên>.variation.json` nằm cạnh file. Worker thấy sidecar thì đăng nguyên file, không biến đổi lần hai. File bỏ thẳng vào hàng chờ, không có sidecar, vẫn được worker biến đổi lúc đăng.
+
 **Deterministic**: profile = f(item_id, attempt). Retry cùng attempt cho ra
 đúng cùng bytes; attempt mới cho variant mới. Master file không bao giờ bị sửa.
 
 Variant là artifact tạm — xóa ngay sau khi upload xong.
+
+## Zernio
+
+Studio tab **Đăng Zernio** lưu mỗi nền tảng một API key tại `secrets/zernio_accounts.json`. Key không hiện đầy đủ trên màn hình. Bấm kiểm tra gọi `GET /v1/accounts` của key đó. Đăng một file đã xử lý thì mỗi key tải video lên `POST /v1/media/presign` rồi `POST /v1/posts` với `publishNow` tới tài khoản cùng nền tảng.
+
+Hai tài khoản kết nối đầu của một team Zernio là miễn phí. Key thứ ba trở đi do Zernio tính phí.
 
 ## Cách dùng
 

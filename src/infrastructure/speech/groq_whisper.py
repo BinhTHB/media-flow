@@ -90,6 +90,7 @@ class GroqWhisperASRAdapter(ASRPort):
                     end = max(start + 0.05, float(item.get("end", start + 0.1)))
                 except (TypeError, ValueError):
                     continue
+                logprob = item.get("avg_logprob")
                 result.append(
                     SpeechSegment.normalized_timing(
                         segment_id=f"S{len(result):05d}",
@@ -98,6 +99,7 @@ class GroqWhisperASRAdapter(ASRPort):
                         source_text=text,
                         source_language=detected_language,
                         minimum_duration=0.05,
+                        asr_logprob=float(logprob) if logprob is not None else None,
                     )
                 )
 

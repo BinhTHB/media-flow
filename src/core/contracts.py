@@ -204,5 +204,18 @@ class DownloaderPort(ABC):
         pass
 
 
+class SourceCatalogPort(ABC):
+    """Lists video URLs inside a channel, playlist, or single video page.
+
+    The result is newest-first and capped by ``limit``. A single video URL
+    comes back as that one URL. Implementations must not download media.
+    """
+
+    @abstractmethod
+    def list_entries(self, url: str, *, limit: int) -> List[str]:
+        """Return up to ``limit`` video URLs for ``url``."""
+        pass
+
+
 class TransientIngestError(RuntimeError):
     """Ingest failed in a way worth retrying (network, rate limit, 5xx)."""

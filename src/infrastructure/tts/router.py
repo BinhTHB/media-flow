@@ -14,6 +14,7 @@ class FallbackTTSAdapter(TTSPort):
     def __init__(self, providers: Sequence[Tuple[str, TTSPort]]) -> None:
         self.providers = [(name, provider) for name, provider in providers if provider is not None]
         self.last_provider_name = ""
+        self._exhausted: set[str] = set()
 
     def synthesize(self, text: str, output_path: str, voice: str = "vi-VN-HoaiMyNeural") -> str:
         if not self.providers:
@@ -39,6 +40,9 @@ class FallbackTTSAdapter(TTSPort):
                 key=lambda item: 0 if "gemini" in item[0].lower() and "live" in item[0].lower() else 1,
             )
         for name, provider in providers:
+            if name in self._exhausted:
+                errors.append(f"{name}: skipped after the account ran out of credits")
+                continue
             try:
                 provider_voice = voice
                 lowered_name = name.lower()
@@ -57,6 +61,17 @@ class FallbackTTSAdapter(TTSPort):
                 self.last_provider_name = name
                 return result
             except Exception as exc:
+                if _account_is_empty(exc):
+                    self._exhausted.add(name)
                 logger.warning("TTS provider %s failed; trying fallback: %s", name, exc)
                 errors.append(f"{name}: {str(exc)[:240]}")
         raise RuntimeError("All TTS providers failed. " + " | ".join(errors))
+
+
+def _account_is_empty(exc: Exception) -> bool:
+    """True when the provider itself reports that zero credits remain.
+
+    A line that needs more credits than the balance still leaves a shorter
+    line speakable, so that failure must not disable the provider.
+    """
+    return "0 credits remaining" in str(exc).lower()

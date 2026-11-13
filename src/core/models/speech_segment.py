@@ -22,6 +22,7 @@ class SpeechSegment:
     translated_text: str = ""
     spoken_text: str = ""
     bbox: Optional[Dict[str, Any]] = None
+    asr_logprob: Optional[float] = None
 
     def __post_init__(self):
         self.start_time = float(self.start_time)
@@ -72,6 +73,8 @@ class SpeechSegment:
         }
         if self.bbox is not None:
             data["bbox"] = self.bbox
+        if self.asr_logprob is not None:
+            data["asr_logprob"] = self.asr_logprob
         return data
 
     @classmethod
@@ -93,4 +96,5 @@ class SpeechSegment:
             translated_text=trans,
             spoken_text=spoken,
             bbox=data.get("bbox"),
+            asr_logprob=float(data["asr_logprob"]) if data.get("asr_logprob") is not None else None,
         )

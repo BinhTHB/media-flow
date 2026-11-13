@@ -50,49 +50,61 @@ class GeminiTranslationAdapter(TranslationPort):
             res = self.provider.translate(segs, target_language=target_language)
             return [getattr(s, "translated_text", getattr(s, "text", "")) for s in res]
 
-        chunk_size = 100
+        # Spoken lines used to be one HTTP call each. Fifty lines then cost
+        # about fifty round-trips, which is most of a reup dub. A short batch
+        # stays inside the 70s cap. If that batch fails, each line is retried
+        # alone so one timeout does not blank its neighbours.
+        chunk_size = 8 if self.purpose == "spoken" else 100
         translated_texts: List[str] = []
         for i in range(0, len(texts), chunk_size):
             chunk = texts[i : i + chunk_size]
-            chunk_translations = self._translate_chunk(chunk, target_language)
+            try:
+                chunk_translations = self._translate_chunk(chunk, target_language)
+            except RuntimeError as exc:
+                if self.purpose != "spoken":
+                    raise
+                if len(chunk) == 1:
+                    logger.warning("Spoken line translation failed; leaving it undubbed: %s", exc)
+                    chunk_translations = [""]
+                else:
+                    logger.warning("Spoken batch failed; retrying each line: %s", exc)
+                    chunk_translations = []
+                    for line in chunk:
+                        try:
+                            chunk_translations.extend(self._translate_chunk([line], target_language))
+                        except RuntimeError as line_exc:
+                            logger.warning(
+                                "Spoken line translation failed; leaving it undubbed: %s",
+                                line_exc,
+                            )
+                            chunk_translations.append("")
             translated_texts.extend(chunk_translations)
 
         return translated_texts
 
     def _translate_chunk(self, texts: List[str], target_language: str) -> List[str]:
         numbered_lines = "\n".join(f"{index}: {text}" for index, text in enumerate(texts))
-        if self.purpose == "spoken":
-            guidelines = (
-                "1. These are consecutive speech segments from one video scene; use surrounding lines as context.\n"
-                "2. Preserve every meaning-bearing detail, including short utterances, greetings, names, numbers, negation, objects, and meaningful repetition.\n"
-                "3. Make the result natural when spoken aloud and concise enough for dubbing, but never omit content merely to shorten it.\n"
-                "4. Do not merge or split numbered segments.\n"
-            )
-            prompt = (
-                f"Translate each numbered video line into natural, conversational {target_language}.\n"
-                "Translation guidelines:\n"
-                f"{guidelines}"
-                "7. Preserve every line number using the exact format 'i: translated_text'.\n"
-                "8. Return only translated numbered lines with no explanations or extra quotes.\n\n"
-                f"{numbered_lines}"
-            )
-        else:
-            # Compact prompt with a worked example. Long rule-list prompts push
-            # gemma-4-26b into "describe mode" (it annotates each line instead
-            # of translating); a short instruction plus one example keeps it in
-            # translation mode. Domain-quality guards live in the router
-            # validator, not in the prompt.
-            prompt = (
-                f"Translate each numbered video subtitle line into natural, conversational {target_language}.\n"
-                "Keep each line's meaning only, keep numbers, keep proper names.\n"
-                "A line may contain the same caption twice (Chinese row plus its English translation): translate that meaning ONCE, as a single line.\n"
-                "Output ONLY numbered lines in the format 'i: translation'.\n\n"
-                "Example:\n0: 第一条: 要温柔\n0: Thứ nhất: Hãy dịu dàng\n\n"
-                f"{numbered_lines}"
-            )
+        # Compact prompt with a worked example. Long rule-list prompts push
+        # the model into "describe mode" (it annotates each line instead of
+        # translating); a short instruction plus one example keeps it in
+        # translation mode. Domain-quality guards live in the router
+        # validator, not in the prompt.
+        prompt = (
+            f"Translate each numbered video line into natural, conversational {target_language}.\n"
+            "Keep each line's meaning only, keep numbers, keep proper names.\n"
+            "A line may contain the same caption twice (Chinese row plus its English translation): translate that meaning ONCE, as a single line.\n"
+            "Output ONLY numbered lines in the format 'i: translation'.\n\n"
+            "Example:\n0: 第一条: 要温柔\n0: Thứ nhất: Hãy dịu dàng\n\n"
+            f"{numbered_lines}"
+        )
 
         try:
             client = self._runtime.get_client(model=self.model)
+            if self.purpose == "spoken":
+                client._timeout = 70.0
+                scheduler = getattr(self._runtime, "_scheduler", None)
+                if scheduler is not None and hasattr(scheduler, "max_retries"):
+                    scheduler.max_retries = 1
             response = client.generate_content(
                 GeminiRequest(
                     contents=[{"parts": [{"text": prompt}]}],
@@ -100,7 +112,11 @@ class GeminiTranslationAdapter(TranslationPort):
                     source_kind="translation",
                 )
             )
-            return self._parse_numbered_lines(response.text.strip(), texts)
+            return self._parse_numbered_lines(
+                response.text.strip(),
+                texts,
+                allow_bare_line=self.purpose == "spoken",
+            )
         except GeminiAuthError as exc:
             logger.error("GEMINI_API_KEY environment variable is not set.")
             raise RuntimeError("GEMINI_API_KEY environment variable is not set.") from exc
@@ -138,7 +154,12 @@ class GeminiTranslationAdapter(TranslationPort):
         return value
 
     @classmethod
-    def _parse_numbered_lines(cls, content: str, original_texts: List[str]) -> List[str]:
+    def _parse_numbered_lines(
+        cls,
+        content: str,
+        original_texts: List[str],
+        allow_bare_line: bool = False,
+    ) -> List[str]:
         translated: Dict[int, str] = {}
         for raw_line in content.splitlines():
             # Strip bullet markers and wrapping backticks that chatty models put
@@ -200,4 +221,19 @@ class GeminiTranslationAdapter(TranslationPort):
         # original-language captions (with literal "\n") as if they were
         # translations. An empty value lets the router validation fail the
         # chunk so the fail-safe pass suppresses the source pixels instead.
+        # A one-line spoken call often comes back as the sentence alone, with
+        # no "0:" marker. That answer is the translation. Only a bare,
+        # single-line answer is accepted: reasoning responses (constraint lists,
+        # bullet summaries) are not translations and must stay empty. Subtitle
+        # chunks never take this path.
+        if allow_bare_line and len(original_texts) == 1 and not translated.get(0):
+            lines = [line.strip() for line in content.splitlines() if line.strip()]
+            if len(lines) == 1:
+                candidate = cls._sanitize_value(re.sub(r"^[\*\s`\-]+", "", lines[0]))
+                if candidate and not re.search(
+                    r"translated_text|preserve (?:the )?line numbers?",
+                    candidate,
+                    re.IGNORECASE,
+                ):
+                    translated[0] = candidate
         return [translated.get(index, "") for index in range(len(original_texts))]

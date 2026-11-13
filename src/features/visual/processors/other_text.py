@@ -12,6 +12,7 @@ from typing import Any, List, Optional
 from src.core.models.bbox import BBox
 from src.core.models.track import Track
 from src.features.visual.actions.blur import BlurAction
+from src.features.visual.mark_span import bbox_at_frame
 from src.features.visual.actions.preserve import PreserveAction
 from src.features.visual.actions.solid_cover import SolidCoverAction
 
@@ -54,17 +55,11 @@ class OtherTextProcessor:
             if not track.detections:
                 continue
 
-            det = next((d for d in track.detections if d.frame_index == frame_index), None)
-            if not det:
-                first_f = track.detections[0].frame_index
-                last_f = track.detections[-1].frame_index
-                if first_f <= frame_index <= last_f:
-                    det = min(track.detections, key=lambda d: abs(d.frame_index - frame_index))
-
-            if not det:
+            box = bbox_at_frame(track.detections, frame_index)
+            if box is None:
                 continue
 
-            supp_bbox = _get_suppression_bbox(det.bbox)
+            supp_bbox = _get_suppression_bbox(box)
 
             if self.action_name == "blur":
                 frame = self.blur_action.execute(frame, supp_bbox, padding_px=0)

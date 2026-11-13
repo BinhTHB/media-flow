@@ -118,6 +118,57 @@ class JobStore:
                 state["result"] = result
             return state
 
+    def reconcile_interrupted(self, *, now: float | None = None) -> list[str]:
+        """Mark RUNNING jobs with no active claim in this process as FAILED.
+
+        A crashed worker or server restart leaves state.json in RUNNING forever.
+        Claims are process-local, so on a fresh process any persisted RUNNING
+        job without a live claim is orphaned and can never complete.
+        """
+        current_time = time.time() if now is None else now
+        reconciled: list[str] = []
+        if not self.base_dir.is_dir():
+            return reconciled
+        for directory in self.base_dir.iterdir():
+            if not directory.is_dir():
+                continue
+            with self._lock:
+                state = self._read(directory / "state.json")
+                if not isinstance(state, dict):
+                    continue
+                job_id = str(state.get("id") or directory.name)
+                if str(state.get("status", "")).upper() != "RUNNING":
+                    continue
+                if self.is_claimed(job_id):
+                    continue
+                state.update(
+                    {
+                        "id": job_id,
+                        "status": "FAILED",
+                        "progress": 100,
+                        "updated_at": current_time,
+                        "error": {
+                            "code": "interrupted",
+                            "message": "Job bị gián đoạn trước khi hoàn tất. Hãy chạy lại video này.",
+                        },
+                    }
+                )
+                self._atomic_write(directory / "state.json", state)
+                events = self._read(directory / "events.json", [])
+                if isinstance(events, list):
+                    events.append(
+                        {
+                            "type": "failed",
+                            "stage": "failed",
+                            "progress": 100,
+                            "message": "Job bị gián đoạn trước khi hoàn tất. Hãy chạy lại video này.",
+                            "details": {"error": state["error"]},
+                        }
+                    )
+                    self._atomic_write(directory / "events.json", events[-self.max_events :])
+            reconciled.append(job_id)
+        return reconciled
+
     def list(self) -> list[dict[str, Any]]:
         if not self.base_dir.is_dir():
             return []

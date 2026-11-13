@@ -20,7 +20,13 @@ PyYAML>=6.0
 ultralytics>=8.4,<9
 
 # --- External providers ----------------------------------------------------
-# Gemini OCR / translation fallback / ASR fallback / gemini-live TTS.
+# Local subtitle OCR (PP-OCRv6 via ONNX). Install RapidOCR without replacing
+# OpenCV: pip install onnxruntime rapidocr --no-deps
+# plus pyclipper shapely omegaconf colorlog tqdm. Do not install
+# opencv-python-headless; this project already uses opencv-python.
+onnxruntime>=1.17
+rapidocr>=3.4
+# Gemini OCR fallback / translation fallback / ASR fallback / gemini-live TTS.
 google-genai>=2.22,<3
 # Edge TTS is the always-available TTS fallback.
 edge-tts>=7.2,<8

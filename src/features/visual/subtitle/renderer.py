@@ -28,7 +28,10 @@ class SubtitleRenderer:
         overlay_action = TextOverlayAction(
             text=event.translated_text,
             stroke_width=3,
-            bg_box=False,
+            # Burned-in replacements sit on the source plate. A speech caption
+            # has no source plate, so it needs its own panel or the line
+            # disappears into the picture.
+            bg_box=not anchor_to_bbox,
             anchor_to_bbox=anchor_to_bbox,
         )
         return overlay_action.execute(frame, bbox)

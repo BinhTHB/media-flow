@@ -14,11 +14,13 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from src.core.models.ingest import SourceSpec
 from src.features.ingest.service import IngestService
+from src.features.ingest.watch import WatchSource, parse_watch_text, plan_downloads
 from src.infrastructure.ingest.yt_dlp import YtDlpDownloader
 
 logger = logging.getLogger("src.interfaces.ingest")
@@ -35,6 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Source URL (repeatable)")
     parser.add_argument("--urls-file", default=None,
                         help="Text file with one URL per line ('#' comments allowed)")
+    parser.add_argument("--sources", default=None,
+                        help="Watch file: one channel, playlist, or video URL per line. "
+                             "Optional visual=1|0 and audio=1|0.")
+    parser.add_argument("--limit", type=int, default=10,
+                        help="Newest entries to inspect per source (default: 10)")
+    parser.add_argument("--interval", type=int, default=0,
+                        help="Poll again after this many seconds (0 = once)")
     parser.add_argument("--out", default=DEFAULT_OUT_DIR,
                         help=f"Download directory (default: {DEFAULT_OUT_DIR})")
     parser.add_argument("--quality", default="1080",
@@ -61,6 +70,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Pipeline preset for --then-process")
     parser.add_argument("--subtitle-action", default="translate",
                         help="Subtitle action for --then-process")
+    parser.add_argument("--extra-text-action", default="preserve",
+                        choices=["blur", "preserve"],
+                        help="Watermark action for --then-process when a source line omits visual=")
     parser.add_argument("--dub-audio", action="store_true",
                         help="Enable dubbing for --then-process")
     parser.add_argument("--device", default="auto")
@@ -94,15 +106,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    args = build_parser().parse_args(argv)
+    from src.interfaces.web.server import load_project_env
 
-    try:
-        urls = read_urls(args)
-    except FileNotFoundError as exc:
-        logger.error("URLs file not found: %s", exc)
+    load_project_env()
+    args = build_parser().parse_args(argv)
+    if args.limit < 1:
+        logger.error("--limit must be at least 1.")
         return 2
-    if not urls:
-        logger.error("No URLs given. Use --url or --urls-file.")
+    if args.interval < 0:
+        logger.error("--interval must not be negative.")
         return 2
 
     downloader = YtDlpDownloader(
@@ -116,56 +128,161 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         backoff_base_seconds=args.backoff_base,
     )
 
-    sources = [
-        SourceSpec(
-            url=url,
-            quality=args.quality,
-            fetch_subtitles=args.subtitles,
-            trim_seconds=args.trim,
-        )
-        for url in urls
-    ]
-    batch = service.ingest_many(sources, args.out, overwrite=args.overwrite)
+    while True:
+        code = _poll_once(args, downloader, service)
+        if args.interval <= 0 or code == 2:
+            return code
+        logger.info("Ingest: next poll in %ss.", args.interval)
+        time.sleep(args.interval)
 
-    if args.json:
-        print(json.dumps(batch.to_dict(), ensure_ascii=False, indent=2))
-    else:
-        for result in batch.results:
-            if result.ok:
-                print(f"OK      {result.video_path}  ({result.width}x{result.height}, "
-                      f"{result.duration_seconds:.1f}s)")
-            elif result.status == "SKIPPED":
-                print(f"SKIPPED {result.video_path}")
-            else:
-                print(f"FAILED  {result.source.url}: {result.error}")
-        print(f"\n{batch.ok_count}/{len(batch.results)} downloaded, {batch.failed_count} failed")
+
+def _poll_once(args: argparse.Namespace, downloader: YtDlpDownloader, service: IngestService) -> int:
+    try:
+        plans = _collect_plans(args, downloader, service)
+    except FileNotFoundError as exc:
+        logger.error("Source file not found: %s", exc)
+        return 2
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 2
+    except RuntimeError as exc:
+        logger.error("Ingest: %s", exc)
+        return 1
+    if plans is None:
+        logger.error("No URLs given. Use --url, --urls-file, or --sources.")
+        return 2
+
+    batch = service.ingest_many([spec for spec, _watch in plans], args.out, overwrite=args.overwrite)
+    _print_batch(batch, json_output=args.json)
 
     if args.then_process:
-        return _process_downloads(batch, args)
-
+        actions = {spec.url: _actions(watch, args) for spec, watch in plans}
+        return _process_downloads(batch, args, actions)
     return 1 if batch.failed_count else 0
 
 
-def _process_downloads(batch, args: argparse.Namespace) -> int:
+def _collect_plans(args, downloader: YtDlpDownloader, service: IngestService):
+    """Return ``(SourceSpec, WatchSource)`` pairs, or None when nothing was asked."""
+    plans: List[tuple[SourceSpec, WatchSource]] = []
+    direct = read_urls(args)
+    for url in direct:
+        plans.append((
+            SourceSpec(
+                url=url,
+                quality=args.quality,
+                fetch_subtitles=args.subtitles,
+                trim_seconds=args.trim,
+            ),
+            WatchSource(url=url),
+        ))
+
+    if not args.sources:
+        return plans or None
+
+    watches = parse_watch_text(Path(args.sources).read_text(encoding="utf-8"))
+    if not watches and not plans:
+        return None
+    # A process retry must still see videos the manifest already holds.
+    # Download itself stays skipped; only a missing output file is rendered.
+    known = set() if args.overwrite or args.then_process else service.known_ok_urls(args.out)
+    list_errors = 0
+    for watch in watches:
+        try:
+            entries = downloader.list_entries(watch.url, limit=args.limit)
+        except Exception as exc:
+            list_errors += 1
+            logger.error("Ingest: could not list %s: %s", watch.url, exc)
+            continue
+        for spec in plan_downloads(
+            entries,
+            known,
+            quality=args.quality,
+            fetch_subtitles=args.subtitles,
+            trim_seconds=args.trim,
+            note=watch.url,
+        ):
+            plans.append((spec, watch))
+    if not plans and list_errors:
+        raise RuntimeError(f"{list_errors} source(s) could not be listed")
+    return plans
+
+
+def _rendered_output(source: Path, preset: str) -> Path:
+    """Finished videos go to outputs/cli, not next to the downloaded source."""
+    from src.interfaces.cli import DEFAULT_OUTPUT_DIR
+
+    return DEFAULT_OUTPUT_DIR / f"{source.stem}-{preset}.mp4"
+
+
+def _actions(watch: WatchSource, args: argparse.Namespace) -> tuple[str, str, bool]:
+    reup = str(getattr(args, "preset", "")).removesuffix("-generic") == "reup"
+    if watch.visual is True or (watch.visual is None and reup):
+        subtitle, extra = "translate", "blur"
+    elif watch.visual is False:
+        subtitle, extra = "preserve", "preserve"
+    else:
+        subtitle, extra = args.subtitle_action, args.extra_text_action
+    if watch.audio is None:
+        audio = True if reup else bool(args.dub_audio)
+    else:
+        audio = watch.audio
+    return subtitle, extra, bool(audio)
+
+
+def _print_batch(batch, *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(batch.to_dict(), ensure_ascii=False, indent=2))
+        return
+    for result in batch.results:
+        if result.ok:
+            print(f"OK      {result.video_path}  ({result.width}x{result.height}, "
+                  f"{result.duration_seconds:.1f}s)")
+        elif result.status == "SKIPPED":
+            print(f"SKIPPED {result.video_path}")
+        else:
+            print(f"FAILED  {result.source.url}: {result.error}")
+    print(f"\n{batch.ok_count}/{len(batch.results)} downloaded, {batch.failed_count} failed")
+
+
+def _should_process(result, args: argparse.Namespace) -> bool:
+    """Process a fresh download, or a skipped one whose output is not on disk yet."""
+    if not result.video_path or result.status not in {"OK", "SKIPPED"}:
+        return False
+    if result.status != "SKIPPED":
+        return True
+    source = Path(result.video_path)
+    output = _rendered_output(source, args.preset)
+    return args.overwrite or not output.is_file()
+
+
+def _process_downloads(batch, args: argparse.Namespace, actions: dict[str, tuple[str, str, bool]]) -> int:
     """Chain downloaded files into the standard pipeline."""
     from src.interfaces.jobs.runner import JobOptions, JobRunner, format_event
 
-    videos = [r.video_path for r in batch.results if r.ok and r.video_path]
+    videos = [r for r in batch.results if _should_process(r, args)]
     if not videos:
         logger.error("Nothing downloaded; skipping --then-process.")
         return 1
 
     runner = JobRunner()
     failures = 0
-    for video in videos:
-        source = Path(video)
-        output = source.with_name(f"{source.stem}-{args.preset}.mp4")
+    for result in videos:
+        source = Path(result.video_path)
+        output = _rendered_output(source, args.preset)
+        chosen = actions.get(result.source.url)
+        if chosen is None:
+            subtitle = args.subtitle_action
+            extra = args.extra_text_action
+            dub = bool(args.dub_audio)
+        else:
+            subtitle, extra, dub = chosen
         options = JobOptions(
             input_path=str(source),
             output_path=str(output),
             preset=args.preset,
-            subtitle_action=args.subtitle_action,
-            dub_audio=bool(args.dub_audio),
+            subtitle_action=subtitle,
+            extra_text_action=extra,
+            dub_audio=dub,
             device=args.device,
             overwrite=True,
         )
@@ -173,7 +290,7 @@ def _process_downloads(batch, args: argparse.Namespace) -> int:
             runner.run(options, on_event=lambda event: print(format_event(event), flush=True))
         except Exception as exc:
             failures += 1
-            logger.error("Pipeline failed for %s: %s", video, exc)
+            logger.error("Pipeline failed for %s: %s", result.video_path, exc)
     return 1 if failures else 0
 
 

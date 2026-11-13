@@ -32,12 +32,35 @@ python -m src.interfaces.ingest --url "..." --cookies-from-browser chrome
 python -m src.interfaces.ingest --url "..." --cookie-file secrets/cookies.txt
 ```
 
+## Theo dõi nguồn
+
+Một file, mỗi dòng một kênh, playlist, hoặc video. Dòng `#` là ghi chú.
+
+```text
+# kênh: chỉ hình
+https://www.youtube.com/@TenKenh/videos visual=1 audio=0
+# playlist: hình và tiếng
+https://www.youtube.com/playlist?list=PLxxxx visual=1 audio=1
+```
+
+```bash
+python -m src.interfaces.ingest --sources sources.txt --limit 10 --preset reup --then-process
+
+# Lặp mỗi giờ. Video đã có trong manifest thì bỏ qua.
+python -m src.interfaces.ingest --sources sources.txt --limit 10 --interval 3600 --preset reup --then-process
+```
+
+`--limit` là số video mới nhất được xem trên mỗi nguồn, mặc định 10. `visual=1` dịch phụ đề và làm mờ chữ khác. `visual=0` giữ hình. `audio=1` lồng tiếng. Với `--preset reup`, dòng không ghi cờ thì bật cả hình và tiếng. File đã xử lý ghi vào `outputs/cli`, không ghi vào thư mục tải.
+
 ## Flags
 
 | Flag | Chức năng |
 |---|---|
 | `--url` | URL nguồn (lặp lại được) |
 | `--urls-file` | File danh sách URL |
+| `--sources` | File kênh, playlist, hoặc video. Có thể ghi `visual=1|0` và `audio=1|0` |
+| `--limit` | Số video mới nhất xem trên mỗi nguồn (mặc định 10) |
+| `--interval` | Số giây giữa hai lần poll (0 = chạy một lần) |
 | `--out` | Thư mục tải (mặc định `input/downloads`) |
 | `--quality` | `best` \| `1080` (mặc định) \| `720` \| `480` |
 | `--trim` | Chỉ giữ N giây đầu (0 = cả video) |

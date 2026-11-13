@@ -187,7 +187,7 @@ class FFmpegFrameWriter:
     """
 
     def __init__(self, output_path: str, fps: float, width: int, height: int,
-                 crf: int = 20, preset: str = "fast") -> None:
+                 crf: int = 20, preset: str = "veryfast") -> None:
         self._path = Path(output_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [

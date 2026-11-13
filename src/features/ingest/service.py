@@ -115,6 +115,10 @@ class IngestService:
             batch.add(self.ingest_one(source, output_dir, overwrite=overwrite))
         return batch
 
+    def known_ok_urls(self, output_dir: str) -> set[str]:
+        """Video URLs this directory already holds."""
+        return _Manifest(Path(output_dir) / MANIFEST_NAME).ok_urls()
+
 
 class _Manifest:
     """Small JSON ledger of what this ingest directory already contains.
@@ -145,6 +149,15 @@ class _Manifest:
 
     def lookup(self, url: str) -> Optional[Dict[str, Any]]:
         return self._entries.get(url)
+
+    def ok_urls(self) -> set[str]:
+        """URLs whose file is still on disk."""
+        found: set[str] = set()
+        for url, entry in self._entries.items():
+            path = entry.get("video_path")
+            if entry.get("status") == "OK" and path and Path(str(path)).is_file():
+                found.add(url)
+        return found
 
     def record(self, result: IngestResult) -> None:
         self._entries[result.source.url] = result.to_dict()

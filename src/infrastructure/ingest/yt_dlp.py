@@ -18,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from src.core.contracts import DownloaderPort, TransientIngestError
+from src.core.contracts import DownloaderPort, SourceCatalogPort, TransientIngestError
 from src.core.models.ingest import IngestResult, SourceSpec
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ _PERMANENT_MARKERS = (
 )
 
 
-class YtDlpDownloader(DownloaderPort):
+class YtDlpDownloader(DownloaderPort, SourceCatalogPort):
     def __init__(
         self,
         *,
@@ -167,6 +167,84 @@ class YtDlpDownloader(DownloaderPort):
             height=int(info.get("height") or 0),
             content_id=str(info.get("id") or ""),
         )
+
+    def list_entries(self, url: str, *, limit: int) -> list[str]:
+        """List video URLs for a channel, playlist, or single video. No download."""
+        try:
+            from yt_dlp import YoutubeDL
+            from yt_dlp.utils import DownloadError
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "yt-dlp is required for ingest. Install it with `pip install yt-dlp`."
+            ) from exc
+
+        options: Dict[str, Any] = {
+            "extract_flat": "in_playlist",
+            "playlistend": max(1, int(limit)),
+            "quiet": self._quiet,
+            "no_warnings": self._quiet,
+            "skip_download": True,
+            "socket_timeout": self._socket_timeout,
+        }
+        if self._cookie_file:
+            options["cookiefile"] = self._cookie_file
+        if self._cookies_from_browser:
+            options["cookiesfrombrowser"] = (self._cookies_from_browser,)
+        if self._proxy:
+            options["proxy"] = self._proxy
+        try:
+            with YoutubeDL(options) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except DownloadError as exc:
+            raise _map_download_error(url, str(exc)) from exc
+        return entry_urls(info, url, max(1, int(limit)))
+
+
+def entry_urls(info: Optional[Dict[str, Any]], page_url: str, limit: int) -> list[str]:
+    """Pull video URLs out of a yt-dlp info dict, newest first, capped.
+
+    A flat playlist entry often carries only an id. YouTube and Bilibili ids
+    become watch URLs. Anything else is kept only when the entry already has
+    an http URL, so a bare id is never guessed into the wrong site.
+    """
+    if not info or limit <= 0:
+        return []
+    entries = info.get("entries")
+    if not entries:
+        single = _http_url(info.get("webpage_url") or info.get("original_url") or page_url)
+        return [single] if single else []
+    found: list[str] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        url = _entry_url(entry, page_url)
+        if url and url not in found:
+            found.append(url)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def _entry_url(entry: Dict[str, Any], page_url: str) -> Optional[str]:
+    direct = _http_url(entry.get("webpage_url") or entry.get("url"))
+    if direct:
+        return direct
+    video_id = str(entry.get("id") or "").strip()
+    if not video_id:
+        return None
+    host = page_url.lower()
+    if "youtube.com" in host or "youtu.be" in host:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    if "bilibili.com" in host:
+        return f"https://www.bilibili.com/video/{video_id}"
+    return None
+
+
+def _http_url(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    if text.startswith(("http://", "https://")):
+        return text
+    return None
 
 
 def _first_seconds(seconds: float):

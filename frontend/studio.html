@@ -42,16 +42,6 @@
         </div>
       </a>
 
-      <!-- Menu chuyển đổi công cụ -->
-      <nav class="yup-nav" aria-label="Main Navigation">
-        <button class="yup-nav-link is-active" type="button" data-nav-tool="video">
-          <span>⚡ Xử lý Video (CLI)</span>
-        </button>
-        <button class="yup-nav-link" type="button" data-nav-tool="tts">
-          <span>🎙️ Thử giọng đọc AI</span>
-        </button>
-      </nav>
-
       <!-- Hành động bên phải -->
       <div class="yup-header-actions">
         <div class="yup-runtime-badge ready" id="runtimeState" title="Trạng thái kết nối local backend">
@@ -65,6 +55,12 @@
         </button>
       </div>
     </div>
+    <nav class="yup-nav" aria-label="Main Navigation">
+      <button class="yup-nav-link is-active" type="button" data-nav-tool="video">Video</button>
+      <button class="yup-nav-link" type="button" data-nav-tool="sources">Nguồn</button>
+      <button class="yup-nav-link" type="button" data-nav-tool="publish">Đăng Zernio</button>
+      <button class="yup-nav-link" type="button" data-nav-tool="tts">Thử giọng</button>
+    </nav>
   </header>
 
   <!-- Main Container -->
@@ -73,6 +69,47 @@
       
       <!-- TAB 1: XỬ LÝ VIDEO PIPELINE (CLI GUI RUNNER) -->
       <div class="tool-section is-active" id="videoSection">
+        <div class="live-dock" id="jobMonitoringSection" hidden>
+          <div class="live-hero">
+            <span class="live-dot" id="jobLiveDot" aria-hidden="true"></span>
+            <div class="live-copy">
+              <div class="live-kicker">
+                <span id="jobStatusText">ĐANG CHẠY</span>
+                <span id="jobFrameLine"></span>
+              </div>
+              <p class="live-stage" id="jobStageTitle">Đang khởi tạo tiến trình…</p>
+            </div>
+            <b class="live-percent" id="jobProgressPercent">0%</b>
+          </div>
+          <div class="progress-bar-track" aria-hidden="true">
+            <div class="progress-bar-fill" id="progressFill"></div>
+          </div>
+          <div class="metrics-grid" id="jobMetrics" hidden>
+            <div class="metric-card">
+              <span>Phụ đề nhận diện</span>
+              <b id="metricSubtitle">0</b>
+            </div>
+            <div class="metric-card">
+              <span>Watermark</span>
+              <b id="metricWatermark">0</b>
+            </div>
+            <div class="metric-card">
+              <span>Logo</span>
+              <b id="metricLogo">0</b>
+            </div>
+            <div class="metric-card">
+              <span>Chữ cháy / Text khác</span>
+              <b id="metricOther">0</b>
+            </div>
+          </div>
+          <div class="terminal-box" id="jobLogsBox" hidden>
+            <div class="terminal-topbar">
+              <span class="terminal-title">NHẬT KÝ</span>
+              <span class="terminal-live-tag">● TRỰC TIẾP</span>
+            </div>
+            <pre class="terminal-content" id="jobLogsArea">Đang chờ tín hiệu từ backend…</pre>
+          </div>
+        </div>
         <div class="runner-card">
           
           <!-- BƯỚC 1: CHỌN VIDEO ĐẦU VÀO -->
@@ -81,58 +118,50 @@
               <span class="step-num">1</span>
               <div>
                 <h2 class="step-title">Video đầu vào (--input-path)</h2>
-                <p class="step-desc">Chọn file video có sẵn trong thư mục dự án hoặc tải lên video mới.</p>
+                <p class="step-desc">Tải video mới, hoặc bấm Hiện khi cần file có sẵn. Nút Ẩn chỉ gỡ danh sách trên màn hình.</p>
               </div>
             </div>
 
-            <!-- Banner Video Đang Chọn -->
-            <div class="selected-video-banner" id="selectedVideoBanner">
-              <div class="banner-icon">▣</div>
-              <div class="banner-info">
-                <strong id="currentMediaPath">Chưa chọn video</strong>
-                <span id="currentMediaMeta">Vui lòng bấm chọn một file từ danh sách bên dưới</span>
-              </div>
-              <span class="banner-badge" id="videoStatusBadge">CHỜ VIDEO</span>
-            </div>
-
-            <!-- Khung Xem Trước Video Đầu Vào (Video Preview) -->
-            <div class="video-preview-panel" id="videoPreviewPanel">
-              <div class="video-preview-screen" id="videoPreviewScreen">
-                <video id="sourceVideoPlayer" controls preload="metadata" playsinline hidden></video>
-                <div class="video-preview-placeholder" id="videoPreviewPlaceholder">
-                  <div class="video-preview-icon">
-                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                    </svg>
+            <div class="input-picker">
+              <div class="input-picker-main">
+                <label class="yup-dropzone yup-dropzone-primary" id="dropZone" for="fileInput" tabindex="0" role="button" aria-label="Kéo thả hoặc bấm để chọn video tải lên">
+                  <input id="fileInput" type="file" accept="video/*" aria-label="Chọn file video tải lên" hidden>
+                  <div class="yup-drop-text">
+                    <strong>Tải video mới</strong>
+                    <small>Kéo thả hoặc bấm. MP4, MOV, MKV, WEBM vào input/uploads/</small>
                   </div>
-                  <span class="video-preview-text">Bấm chọn một video để xem trước màn hình phát</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="source-layout-grid">
-              <!-- Vùng Dropzone Upload -->
-              <label class="yup-dropzone" id="dropZone" for="fileInput" tabindex="0" role="button" aria-label="Kéo thả hoặc bấm để chọn video tải lên">
-                <input id="fileInput" type="file" accept="video/*" aria-label="Chọn file video tải lên" hidden>
-                <div class="yup-drop-icon">⇧</div>
-                <div class="yup-drop-text">
-                  <strong>Kéo thả video vào đây để tải lên</strong>
-                  <small>MP4, MOV, MKV, AVI, WEBM (Tự động lưu vào input/uploads/)</small>
-                </div>
-                <span class="yup-upload-progress" id="uploadProgress" hidden><i></i></span>
-              </label>
-
-              <!-- Danh sách video trong dự án -->
-              <div class="yup-file-selector">
-                <div class="yup-file-selector-header">
-                  <span class="yup-label">DANH SÁCH VIDEO DỰ ÁN</span>
-                  <div class="selector-actions">
-                    <button class="yup-btn-sm" id="refreshFiles" type="button" title="Quét lại file" aria-label="Quét lại file">↻ Làm mới</button>
-                    <button class="yup-btn-sm danger" id="clearFilesBtn" type="button" title="Xóa toàn bộ file tải lên và kết quả cũ" aria-label="Dọn dẹp lịch sử file">Dọn dẹp</button>
+                  <span class="yup-upload-progress" id="uploadProgress" hidden><i></i></span>
+                </label>
+                <div class="yup-file-selector">
+                  <div class="yup-file-selector-header">
+                    <span class="yup-label">FILE CÓ SẴN</span>
+                    <div class="selector-actions">
+                      <button class="yup-btn-sm" id="refreshFiles" type="button" title="Hiện video trong thư mục dự án" aria-label="Hiện file có sẵn">Hiện</button>
+                      <button class="yup-btn-sm" id="clearFilesBtn" type="button" title="Chỉ ẩn danh sách trên màn hình. Không xóa file trên đĩa." aria-label="Ẩn danh sách trên màn hình, không xóa file">Ẩn</button>
+                    </div>
+                  </div>
+                  <input id="fileFilter" class="file-filter" type="search" placeholder="Lọc theo tên file…" aria-label="Lọc danh sách video" hidden>
+                  <div class="source-list yup-files-scroll" id="sourceList" hidden>
+                    <div class="empty-state">Danh sách file cũ đang ẩn.</div>
                   </div>
                 </div>
-                <div class="source-list yup-files-scroll" id="sourceList">
-                  <div class="empty-state">Đang tải danh sách video…</div>
+              </div>
+
+              <div class="input-picker-side">
+                <div class="selected-video-banner" id="selectedVideoBanner">
+                  <div class="banner-info">
+                    <strong id="currentMediaPath">Chưa chọn video</strong>
+                    <span id="currentMediaMeta">Tải video mới, hoặc bấm Hiện</span>
+                  </div>
+                  <span class="banner-badge" id="videoStatusBadge">CHỜ</span>
+                </div>
+                <div class="video-preview-panel" id="videoPreviewPanel">
+                  <div class="video-preview-screen" id="videoPreviewScreen">
+                    <video id="sourceVideoPlayer" controls preload="metadata" playsinline hidden></video>
+                    <div class="video-preview-placeholder" id="videoPreviewPlaceholder">
+                      <span class="video-preview-text">Xem trước</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -149,10 +178,10 @@
             </div>
 
             <div class="preset-cards-grid" id="presetGrid" role="group" aria-label="Tùy chọn preset xử lý">
-              <button class="preset-option-card is-active" type="button" data-preset="yolo-4class">
+              <button class="preset-option-card" type="button" data-preset="yolo-4class">
                 <div class="preset-card-top">
                   <span class="preset-name">yolo-4class</span>
-                  <span class="preset-tag recommended">KHUYÊN DÙNG</span>
+                  <span class="preset-tag">FLOW</span>
                 </div>
                 <strong class="preset-heading">YOLO 4 lớp (tự train)</strong>
                 <p class="preset-summary">Model tự train phân biệt sẵn phụ đề / watermark / logo / text khác. Phù hợp video có layout cố định.</p>
@@ -166,13 +195,46 @@
                 <strong class="preset-heading">YOLO11n-text (1 lớp + phân loại)</strong>
                 <p class="preset-summary">Model text generic 1 lớp "text", tự phân loại thành sub/watermark/logo theo hình học. Linh hoạt với layout lạ. Cần weights tại models/yolo/text/best.pt.</p>
               </button>
+
+              <button class="preset-option-card is-active" type="button" data-preset="reup">
+                <div class="preset-card-top">
+                  <span class="preset-name">reup</span>
+                  <span class="preset-tag recommended">KHUYÊN DÙNG</span>
+                </div>
+                <strong class="preset-heading">Reup YouTube / TikTok</strong>
+                <p class="preset-summary">Mặc định chạy cả hình và tiếng. Có phụ đề thì dịch và đè lên. Chưa có thì tạo phụ đề từ lời thoại.</p>
+              </button>
             </div>
 
-            <div class="runner-step-section" style="margin-top: 18px;">
+            <div class="runner-step-section" id="reupOptions" style="margin-top: 18px;">
               <div class="step-header">
                 <span class="step-num">2b</span>
                 <div>
-                  <h2 class="step-title">Tuỳ chọn xử lý (áp dụng cho cả 2 preset)</h2>
+                  <h2 class="step-title">Chọn phần chạy</h2>
+                  <p class="step-desc">Cả hai đang bật. Bỏ ô nào thì phần đó giữ nguyên.</p>
+                </div>
+              </div>
+              <div class="runner-grid">
+                <label class="check-inline" for="reupVisualCheck" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="reupVisualCheck" checked>
+                  <span>Hình — dịch chữ đọc được trên video, làm mờ watermark</span>
+                </label>
+                <label class="check-inline" for="reupAudioCheck" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="reupAudioCheck" checked>
+                  <span>Tiếng — lồng tiếng Việt, tắt lời gốc</span>
+                </label>
+                <label class="check-inline" for="reupSpeechCaptionCheck" style="display:flex;align-items:center;gap:8px;">
+                  <input type="checkbox" id="reupSpeechCaptionCheck" checked>
+                  <span>Luôn tạo phụ đề từ lời thoại (tắt thì chỉ dịch chữ YOLO đọc được)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="runner-step-section" id="genericProcessOptions" style="margin-top: 18px;" hidden>
+              <div class="step-header">
+                <span class="step-num">2b</span>
+                <div>
+                  <h2 class="step-title">Tuỳ chọn xử lý</h2>
                   <p class="step-desc">Chọn pipeline làm gì với phụ đề, âm thanh và text khác trên video.</p>
                 </div>
               </div>
@@ -200,6 +262,15 @@
                   </select>
                 </div>
               </div>
+            </div>
+            <div class="runner-field" style="margin-top: 18px; max-width: 420px;">
+              <label for="variationSelect">Biến thể file cuối</label>
+              <select id="variationSelect">
+                <option value="balanced" selected>balanced — tốc độ, mép, lật, cao độ</option>
+                <option value="light">light</option>
+                <option value="aggressive">aggressive</option>
+                <option value="off">off — giữ file xử lý nguyên</option>
+              </select>
             </div>
           </div>
 
@@ -240,8 +311,9 @@
                 </div>
                 <select id="voiceSelect" class="param-select">
                   <optgroup label="ElevenLabs v3 · Tiếng Việt tự nhiên">
-                    <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL" selected>Sarah · Nữ (ElevenLabs v3)</option>
-                    <option value="elevenlabs:nPczCjzI2devNBz1zQrb">Brian · Nam (ElevenLabs v3)</option>
+                    <option value="elevenlabs:nPczCjzI2devNBz1zQrb" selected>Brian · Nam (ElevenLabs v3 · Free)</option>
+                    <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL">Sarah · Nữ (ElevenLabs v3)</option>
+                    <option value="elevenlabs:cKxI7IOUsPeiDfNgV1cE">Tung Anh · Nam (ElevenLabs · cần gói trả phí)</option>
                     <option value="elevenlabs:pNInz6obpgDQGcFmaJgB">Adam · Nam chuẩn (ElevenLabs)</option>
                     <option value="elevenlabs:env">Voice ID từ .env cấu hình</option>
                   </optgroup>
@@ -310,7 +382,7 @@
           <div class="runner-step-section action-section">
             <div class="cli-preview-card">
               <span class="cli-preview-label">LỆNH CLI TƯƠNG ĐƯƠNG SẼ CHẠY:</span>
-              <code class="cli-preview-code" id="cliCommandPreview">python -m src.interfaces.cli --input "input/video.mp4" --preset yolo-4class --subtitle-action translate --dub-audio --target-language vi --voice-id elevenlabs:EXAVITQu4vr4xnSDxMaL --device auto --overwrite</code>
+              <code class="cli-preview-code" id="cliCommandPreview">python -m src.interfaces.cli --input "&lt;chọn-video-đầu-vào&gt;" --preset reup --subtitle-action translate --dub-audio --extra-text-action blur --source-language vi --target-language vi --subtitle-layout in-place --voice-id elevenlabs:nPczCjzI2devNBz1zQrb --hide-source-subtitle --overwrite</code>
             </div>
 
             <div class="run-button-row">
@@ -327,60 +399,7 @@
             <p class="yup-msg" id="videoFormMessage" role="status" aria-live="polite"></p>
           </div>
 
-          <!-- BƯỚC 5: GIÁM SÁT TIẾN TRÌNH & TERMINAL CONSOLE LOGS -->
-          <div class="runner-step-section" id="jobMonitoringSection" hidden>
-            <div class="step-header">
-              <span class="step-num">⚡</span>
-              <div>
-                <h2 class="step-title">Tiến trình &amp; Nhật ký Thực thi (Terminal Logs)</h2>
-                <p class="step-desc" id="jobStageTitle">Đang khởi tạo tiến trình backend…</p>
-              </div>
-            </div>
-
-            <div class="progress-container">
-              <div class="progress-bar-head">
-                <span class="progress-status-text" id="jobStatusText">RUNNING</span>
-                <span class="progress-percent" id="jobProgressPercent">0%</span>
-              </div>
-              <div class="progress-bar-track">
-                <div class="progress-bar-fill" id="progressFill"></div>
-              </div>
-            </div>
-
-            <!-- Detections Metrics Grid -->
-            <div class="metrics-grid" id="jobMetrics">
-              <div class="metric-card">
-                <span>Phụ đề nhận diện</span>
-                <b id="metricSubtitle">0</b>
-              </div>
-              <div class="metric-card">
-                <span>Watermark</span>
-                <b id="metricWatermark">0</b>
-              </div>
-              <div class="metric-card">
-                <span>Logo</span>
-                <b id="metricLogo">0</b>
-              </div>
-              <div class="metric-card">
-                <span>Chữ cháy / Text khác</span>
-                <b id="metricOther">0</b>
-              </div>
-            </div>
-
-            <!-- Khung Terminal Console Monospace -->
-            <div class="terminal-box" id="jobLogsBox">
-              <div class="terminal-topbar">
-                <div class="terminal-dots">
-                  <i></i><i></i><i></i>
-                </div>
-                <span class="terminal-title">TERMINAL LOGS (STDOUT / STDERR)</span>
-                <span class="terminal-live-tag">● LIVE STREAM</span>
-              </div>
-              <pre class="terminal-content" id="jobLogsArea">Đang chờ tín hiệu từ backend process…</pre>
-            </div>
-          </div>
-
-          <!-- BƯỚC 6: KẾT QUẢ OUTPUT ARTIFACT -->
+          <!-- KẾT QUẢ OUTPUT ARTIFACT -->
           <div class="runner-step-section result-section" id="jobResultSection" hidden>
             <div class="result-card">
               <div class="result-icon">✓</div>
@@ -396,6 +415,102 @@
             </div>
           </div>
 
+        </div>
+      </div>
+
+      <div class="tool-section" id="sourceSection" hidden>
+        <div class="runner-card">
+          <div class="runner-step-section">
+            <div class="step-header">
+              <span class="step-num">1</span>
+              <div>
+                <h2 class="step-title">Nguồn tự động</h2>
+                <p class="step-desc">Mỗi dòng một kênh, playlist hoặc video. Lần chạy sau bỏ qua video đã có trong manifest.</p>
+              </div>
+            </div>
+            <label class="param-label" for="sourcesText">sources.txt</label>
+            <textarea id="sourcesText" rows="8" class="param-select" style="width:100%;min-height:160px;font-family:inherit;" placeholder="https://www.youtube.com/@TenKenh/videos visual=1 audio=0"></textarea>
+            <div class="runner-grid" style="margin-top:12px;">
+              <label class="param-label" for="sourceLimit">Video mới nhất mỗi nguồn
+                <input id="sourceLimit" type="number" min="1" max="50" value="10">
+              </label>
+              <label class="check-inline" for="sourceThenProcess" style="display:flex;align-items:center;gap:8px;">
+                <input id="sourceThenProcess" type="checkbox" checked>
+                <span>Tải xong chạy preset reup theo visual/audio của từng dòng</span>
+              </label>
+            </div>
+            <div class="runner-actions" style="margin-top:12px;">
+              <button id="sourcePollBtn" class="run-btn" type="button">Tải video mới</button>
+            </div>
+            <p id="sourcePollMessage" class="yup-msg form-message"></p>
+            <pre id="sourcePollLog" class="terminal-content">Chưa chạy.</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="tool-section" id="publishSection" hidden>
+        <div class="runner-card">
+          <div class="runner-step-section">
+            <div class="step-header">
+              <span class="step-num">1</span>
+              <div>
+                <h2 class="step-title">API key theo nền tảng</h2>
+                <p class="step-desc">Mỗi dòng là một key Zernio cho một nền tảng. Key lưu trong secrets/, màn hình chỉ hiện 4 ký tự cuối.</p>
+              </div>
+            </div>
+            <div class="runner-grid">
+              <label class="param-label" for="zernioLabel">Tên
+                <input id="zernioLabel" type="text" placeholder="YouTube chính">
+              </label>
+              <label class="param-label" for="zernioPlatform">Nền tảng
+                <select id="zernioPlatform" class="param-select">
+                  <option value="youtube">youtube</option>
+                  <option value="tiktok">tiktok</option>
+                  <option value="instagram">instagram</option>
+                  <option value="facebook">facebook</option>
+                  <option value="twitter">twitter</option>
+                  <option value="linkedin">linkedin</option>
+                  <option value="pinterest">pinterest</option>
+                  <option value="threads">threads</option>
+                  <option value="bluesky">bluesky</option>
+                  <option value="reddit">reddit</option>
+                </select>
+              </label>
+              <label class="param-label" for="zernioKey">API key
+                <input id="zernioKey" type="password" autocomplete="off" placeholder="Bearer key">
+              </label>
+            </div>
+            <div class="runner-actions" style="margin-top:12px;">
+              <button id="zernioAddBtn" class="run-btn" type="button">Thêm key</button>
+            </div>
+            <div id="zernioAccountList" style="margin-top:12px;"></div>
+            <p id="zernioMessage" class="yup-msg form-message"></p>
+          </div>
+          <div class="runner-step-section">
+            <div class="step-header">
+              <span class="step-num">2</span>
+              <div>
+                <h2 class="step-title">Đăng file đã xử lý</h2>
+                <p class="step-desc">Chọn các key. Mỗi key đăng lên đúng nền tảng của nó.</p>
+              </div>
+            </div>
+            <label class="param-label" for="publishVideoPath">Đường dẫn video trong dự án
+              <input id="publishVideoPath" type="text" placeholder="outputs/ten-video.mp4">
+            </label>
+            <label class="param-label" for="publishTitle">Tiêu đề
+              <input id="publishTitle" type="text" placeholder="Tự điền từ lời thoại khi job xong">
+            </label>
+            <label class="param-label" for="publishContent">Mô tả
+              <textarea id="publishContent" rows="3" class="param-select" style="width:100%;" placeholder="Tự điền mô tả và hashtag"></textarea>
+            </label>
+            <label class="param-label" for="publishTags">Tag
+              <input id="publishTags" type="text" placeholder="bonsai, caycanh, vietnam">
+            </label>
+            <div class="runner-actions" style="margin-top:12px;">
+              <button id="publishSuggestBtn" class="run-btn" type="button">Tự điền tiêu đề / mô tả / tag</button>
+              <button id="zernioPublishBtn" class="run-btn" type="button">Đăng các key đã chọn</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -420,8 +535,9 @@
                 <label class="param-label" for="ttsVoiceSelect">CHỌN MODEL GIỌNG ĐỌC</label>
                 <select id="ttsVoiceSelect" class="param-select">
                   <optgroup label="ElevenLabs v3 · Tiếng Việt tự nhiên">
-                    <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL" selected>Sarah · Nữ (ElevenLabs v3)</option>
-                    <option value="elevenlabs:nPczCjzI2devNBz1zQrb">Brian · Nam (ElevenLabs v3)</option>
+                    <option value="elevenlabs:nPczCjzI2devNBz1zQrb" selected>Brian · Nam (ElevenLabs v3 · Free)</option>
+                    <option value="elevenlabs:EXAVITQu4vr4xnSDxMaL">Sarah · Nữ (ElevenLabs v3)</option>
+                    <option value="elevenlabs:cKxI7IOUsPeiDfNgV1cE">Tung Anh · Nam (ElevenLabs · cần gói trả phí)</option>
                     <option value="elevenlabs:pNInz6obpgDQGcFmaJgB">Adam · Nam chuẩn (ElevenLabs)</option>
                     <option value="elevenlabs:env">Voice ID từ .env cấu hình</option>
                   </optgroup>

@@ -15,8 +15,29 @@ from src.core.models.detection import Detection
 from src.core.models.track import Track
 
 
+# A face credit keeps moving after the detector drops it. 90 frames is 3s
+# at 30 fps: long enough for the 2s hole on a slow pan, short of a shot cut.
+_DRIFT_GAP_FRAMES = 90
+_DRIFT_CENTER_RATIO = 0.08
+
+
 def _box_iou(a: BBox, b: BBox) -> float:
     return a.iou(b)
+
+
+def _slow_same_mark(a: BBox, b: BBox) -> bool:
+    """True when two small boxes are the same mark that slid a short way."""
+    if a.frame_width != b.frame_width or a.frame_height != b.frame_height:
+        return False
+    dx = abs((a.x1 + a.x2) - (b.x1 + b.x2)) / 2.0
+    dy = abs((a.y1 + a.y2) - (b.y1 + b.y2)) / 2.0
+    if dx > _DRIFT_CENTER_RATIO * a.frame_width or dy > _DRIFT_CENTER_RATIO * a.frame_height:
+        return False
+    if min(a.width, b.width) <= 0 or min(a.height, b.height) <= 0:
+        return False
+    width_ratio = a.width / b.width
+    height_ratio = a.height / b.height
+    return 0.6 <= width_ratio <= 1.7 and 0.6 <= height_ratio <= 1.7
 
 
 def _union_bbox(boxes: Sequence[BBox]) -> BBox:
@@ -98,7 +119,14 @@ class ClassAwareTracker:
                 m_rep_box = m.detections[len(m.detections) // 2].bbox
                 iou = _box_iou(t_rep_box, m_rep_box)
                 gap = t.start_frame - m.end_frame
-                if iou >= iou_thresh and 0 <= gap <= max_gap_frames:
+                same_class = t.class_name == m.class_name
+                static_match = iou >= iou_thresh and 0 <= gap <= max_gap_frames
+                drifting_mark = (
+                    same_class
+                    and 0 < gap <= _DRIFT_GAP_FRAMES
+                    and _slow_same_mark(t_rep_box, m_rep_box)
+                )
+                if static_match or drifting_mark:
                     m.detections.extend(t.detections)
                     m.detections.sort(key=lambda d: d.frame_index)
                     matched = True

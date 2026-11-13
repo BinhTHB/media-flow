@@ -56,12 +56,12 @@ def build_asr_provider(provider_choice: str):
         provider_choice = "auto"
 
     if provider_choice == "groq":
-        return GroqWhisperASRAdapter(model="whisper-large-v3")
+        return GroqWhisperASRAdapter(model="whisper-large-v3", timeout_seconds=45)
     if provider_choice == "gemini":
         return GeminiAudioASRAdapter()
     providers = []
     if os.getenv("GROQ_API_KEY"):
-        providers.append(("groq-whisper-large-v3", GroqWhisperASRAdapter(model="whisper-large-v3")))
+        providers.append(("groq-whisper-large-v3", GroqWhisperASRAdapter(model="whisper-large-v3", timeout_seconds=45)))
     if os.getenv("GEMINI_API_KEY"):
         providers.append(("gemini-audio", GeminiAudioASRAdapter()))
     if not providers:
@@ -72,21 +72,30 @@ def build_asr_provider(provider_choice: str):
 def build_asr_corrector(provider_choice: str, asr_provider_choice: str):
     if provider_choice == "off":
         return None
-    if provider_choice in {"auto", "openrouter"} and has_openrouter_keys():
-        from src.infrastructure.speech.openrouter_corrector import OpenRouterASRCorrector
+    if provider_choice not in {"auto", "openrouter"}:
+        return None
+    # providers.yaml still labels speech as "mock". The ASR factory treats that
+    # label as auto and calls Groq, so the repair path must do the same.
+    effective_asr = "auto" if asr_provider_choice == "mock" else asr_provider_choice
+    primary_is_groq = effective_asr == "groq" or (
+        effective_asr == "auto" and bool(os.getenv("GROQ_API_KEY"))
+    )
+    secondary_provider = None
+    if primary_is_groq and os.getenv("GEMINI_API_KEY"):
+        from src.infrastructure.speech.gemini_audio import GeminiAudioASRAdapter
 
-        secondary_provider = None
-        primary_is_groq = asr_provider_choice == "groq" or (
-            asr_provider_choice == "auto" and bool(os.getenv("GROQ_API_KEY"))
-        )
-        if primary_is_groq and os.getenv("GEMINI_API_KEY"):
-            from src.infrastructure.speech.gemini_audio import GeminiAudioASRAdapter
-
-            secondary_provider = GeminiAudioASRAdapter()
-        return OpenRouterASRCorrector(secondary_provider=secondary_provider)
-    if provider_choice == "openrouter":
+        secondary_provider = GeminiAudioASRAdapter()
+    openrouter_ready = has_openrouter_keys()
+    if provider_choice == "openrouter" and not openrouter_ready:
         raise RuntimeError("OpenRouter key pool is required for ASR correction.")
-    return None
+    if not openrouter_ready and secondary_provider is None:
+        return None
+    from src.infrastructure.speech.openrouter_corrector import OpenRouterASRCorrector
+
+    return OpenRouterASRCorrector(
+        api_keys=None if openrouter_ready else [],
+        secondary_provider=secondary_provider,
+    )
 
 
 def build_spoken_rewriter(provider_choice: str):
@@ -99,6 +108,19 @@ def build_spoken_rewriter(provider_choice: str):
     if provider_choice == "openrouter":
         raise RuntimeError("OpenRouter key pool is required for duration rewrite.")
     return None
+
+
+def build_ocr_provider(provider_choice: str = "auto"):
+    """Wire OCRPort to local RapidOCR only.
+
+    Gemini is not an OCR provider. Translation still uses its own service.
+    """
+    del provider_choice
+    from src.infrastructure.ocr.rapid_ocr import RapidOCRAdapter, rapidocr_available
+
+    if not rapidocr_available():
+        raise RuntimeError("RapidOCR is not installed. pip install rapidocr onnxruntime")
+    return RapidOCRAdapter()
 
 
 def build_tts_provider(provider_choice: str):

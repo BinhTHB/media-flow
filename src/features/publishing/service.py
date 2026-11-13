@@ -87,6 +87,9 @@ class PublishService:
         """
         if self.variation_policy is None or self.variation_provider is None:
             return None, None
+        delivered = self._delivered_profile(video_path)
+        if delivered is not None:
+            return None, delivered
         profile = self.variation_policy.profile_for(item_id, attempt)
         if profile.is_identity:
             return None, profile.to_dict()
@@ -106,6 +109,22 @@ class PublishService:
             )
             return None, profile.to_dict()
 
+    @staticmethod
+    def _delivered_profile(video_path: str) -> Optional[dict]:
+        """Return the profile already baked into a processed file, if any.
+
+        The processing job writes ``<stem>.variation.json`` beside the finished
+        video. That file is the upload, so publishing it again would stack a
+        second speed and crop change on top of the checked result.
+        """
+        sidecar = Path(video_path).with_name(f"{Path(video_path).stem}.variation.json")
+        if not sidecar.is_file():
+            return None
+        try:
+            payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return payload if isinstance(payload, dict) else None
 
     def _metadata_for(self, video_path: str, hints: Optional[Dict[str, Any]]) -> VideoMetadata:
         sidecar = self._read_sidecar(video_path)

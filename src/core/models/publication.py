@@ -33,10 +33,18 @@ def item_id_for(video_path: str) -> str:
     return digest[:16]
 
 
-def fallback_metadata(video_path: str) -> "VideoMetadata":
-    """Filename-derived metadata: the safe default when no generator runs."""
+def fallback_metadata(video_path: str, transcript: str = "") -> "VideoMetadata":
+    """Filename-derived metadata: the safe default when no generator runs.
+
+    A spoken transcript, when present, is a better title/description than the
+    output filename (``DDapV_Tz3RY-reup-translate-dub``).
+    """
     stem = Path(video_path).stem
-    return VideoMetadata(title=stem[:100], description=stem, tags=[])
+    lines = [part.strip() for part in (transcript or "").split("|") if part.strip()]
+    title = (lines[0] if lines else stem)[:100]
+    description = (" ".join(lines) if lines else stem)[:5000]
+    tags = ["vietnam"] if lines else []
+    return VideoMetadata(title=title, description=description, tags=tags)
 
 
 @dataclass

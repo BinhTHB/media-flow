@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from src.core.models.speech_segment import SpeechSegment
 from src.features.audio.composer import AudioComposer
 from src.features.audio.models import TTSClip
 from src.infrastructure.speech.groq_whisper import GroqWhisperASRAdapter
@@ -110,6 +111,96 @@ def test_gemini_audio_asr_parses_canonical_segments_without_network(tmp_path: Pa
     assert result[1].end_time == pytest.approx(7.0)
     assert result[0].source_language == "zh"
     assert result[0].source_text == "你好"
+
+
+def test_gemini_audio_asr_keeps_complete_segments_when_json_is_cut_off(tmp_path: Path, monkeypatch):
+    from src.infrastructure.speech import gemini_audio
+
+    fake_audio = tmp_path / "chunk.mp3"
+    fake_audio.write_bytes(b"fake-audio")
+
+    class FakeResponse:
+        text = (
+            '{"detected_language":"vi","segments":['
+            '{"start":64.8,"end":81.0,"text":"Ông mang cà chua ra phơi đến khi đỏ rực."},'
+            '{"start":81.0,"end":83.0,"text":"đỏ rực'
+        )
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def generate_content(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(gemini_audio, "GeminiClient", FakeClient)
+    result = gemini_audio.GeminiAudioASRAdapter(api_key="test")._transcribe_chunk(
+        fake_audio, language="vi", offset=0.0, index_base=0
+    )
+    assert len(result) == 1
+    assert result[0].source_text == "Ông mang cà chua ra phơi đến khi đỏ rực."
+    assert result[0].start_time == pytest.approx(64.8)
+
+
+def test_gemini_audio_asr_keeps_segments_before_a_missing_comma(tmp_path: Path, monkeypatch):
+    from src.infrastructure.speech import gemini_audio
+
+    fake_audio = tmp_path / "chunk.mp3"
+    fake_audio.write_bytes(b"fake-audio")
+
+    class FakeResponse:
+        text = (
+            '{"detected_language":"vi","segments":['
+            '{"start":64.8,"end":70.0,"text":"Ông bán ánh nắng."}'
+            ' {"start":70.2,"end":81.0,"text":"cánh đồng'
+        )
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def generate_content(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(gemini_audio, "GeminiClient", FakeClient)
+    result = gemini_audio.GeminiAudioASRAdapter(api_key="test")._transcribe_chunk(
+        fake_audio, language="vi", offset=0.0, index_base=0
+    )
+    assert [segment.source_text for segment in result] == ["Ông bán ánh nắng."]
+    assert result[0].start_time == pytest.approx(64.8)
+
+
+def test_packed_repair_becomes_one_caption_per_sentence():
+    from src.features.audio.pipeline import split_packed_speech
+
+    packed = (
+        "Vụ thứ hai, ông không bán cà chua nữa, ông bán ánh nắng. "
+        "Ngay giữa đồng, cà vừa hái là bổ đôi. "
+        "Một tuần sau, cả cánh đồng thành một tấm thảm đỏ rực."
+    )
+    segments = [
+        SpeechSegment(
+            "S00013",
+            58.98,
+            64.8,
+            "biến cái khô cằn nóng bức thành lợi thế. Vụ thứ hai, ông không bán cà chua nữa,",
+            "vi",
+        ),
+        SpeechSegment("S00014", 64.8, 81.07, packed, "vi"),
+        SpeechSegment("S00015", 81.07, 82.95, "đỏ rực. Mười cân cả tươi,", "vi"),
+        SpeechSegment("S00016", 83.53, 84.85, "tươi, phơi xong chưa đầy một cân,", "vi"),
+    ]
+    lines = split_packed_speech(segments)
+    texts = [segment.source_text for segment in lines]
+    assert texts[0].endswith("cà chua nữa,")
+    assert texts[1] == "ông bán ánh nắng."
+    assert texts[2] == "Ngay giữa đồng, cà vừa hái là bổ đôi."
+    assert texts[3].startswith("Một tuần sau")
+    assert texts[4] == "Mười cân cả tươi,"
+    assert texts[5] == "tươi, phơi xong chưa đầy một cân,"
+    assert lines[1].start_time == pytest.approx(64.8)
+    assert lines[-1].end_time == pytest.approx(84.85)
+    assert all(segment.end_time - segment.start_time < 16 for segment in lines[1:])
 
 
 def test_groq_multipart_contains_model_and_audio(tmp_path: Path):

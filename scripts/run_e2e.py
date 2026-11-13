@@ -162,19 +162,26 @@ def _build_asr_provider(provider_choice: str):
 def _build_asr_corrector(provider_choice: str, asr_provider_choice: str):
     if provider_choice == "off":
         return None
-    if provider_choice in {"auto", "openrouter"} and _has_openrouter_keys():
-        from src.infrastructure.speech.openrouter_corrector import OpenRouterASRCorrector
-        secondary_provider = None
-        primary_is_groq = asr_provider_choice == "groq" or (
-            asr_provider_choice == "auto" and bool(os.getenv("GROQ_API_KEY"))
-        )
-        if primary_is_groq and os.getenv("GEMINI_API_KEY"):
-            from src.infrastructure.speech.gemini_audio import GeminiAudioASRAdapter
-            secondary_provider = GeminiAudioASRAdapter()
-        return OpenRouterASRCorrector(secondary_provider=secondary_provider)
-    if provider_choice == "openrouter":
+    if provider_choice not in {"auto", "openrouter"}:
+        return None
+    effective_asr = "auto" if asr_provider_choice == "mock" else asr_provider_choice
+    primary_is_groq = effective_asr == "groq" or (
+        effective_asr == "auto" and bool(os.getenv("GROQ_API_KEY"))
+    )
+    secondary_provider = None
+    if primary_is_groq and os.getenv("GEMINI_API_KEY"):
+        from src.infrastructure.speech.gemini_audio import GeminiAudioASRAdapter
+        secondary_provider = GeminiAudioASRAdapter()
+    openrouter_ready = _has_openrouter_keys()
+    if provider_choice == "openrouter" and not openrouter_ready:
         raise RuntimeError("OpenRouter key pool is required for --asr-correction openrouter.")
-    return None
+    if not openrouter_ready and secondary_provider is None:
+        return None
+    from src.infrastructure.speech.openrouter_corrector import OpenRouterASRCorrector
+    return OpenRouterASRCorrector(
+        api_keys=None if openrouter_ready else [],
+        secondary_provider=secondary_provider,
+    )
 
 
 def _build_spoken_rewriter(provider_choice: str):
@@ -237,7 +244,7 @@ def parse_args():
     parser.add_argument(
         "--preset",
         choices=[
-            "yolo-4class", "yolo-text",
+            "yolo-4class", "yolo-text", "reup",
             # Deprecated feature-combination presets (plus the -generic
             # suffix); they map onto the flow preset + feature flags.
             "blur-all", "translate-subtitle", "preserve-all", "dub-audio",
@@ -560,8 +567,8 @@ def main():
         detector = TextClassifyingDetector(detector)
     ocr_provider = None
     if visual_req.enabled and visual_req.subtitle_mode == "translate_replace":
-        from src.infrastructure.ocr.gemini_ocr import GeminiOCRAdapter
-        ocr_provider = GeminiOCRAdapter()
+        from src.interfaces.composition.providers import build_ocr_provider
+        ocr_provider = build_ocr_provider(os.getenv("MEDIAFLOW_OCR_PROVIDER", "auto"))
     visual_caches = {}
     if visual_req.enabled and not args.no_visual_cache:
         if use_text_flow:
@@ -576,6 +583,7 @@ def main():
     subtitle_processor = SubtitleProcessor(
         ocr_provider=ocr_provider,
         translation_service=visual_translation_service,
+        ocr_retry_rounds=0,
     )
     from src.infrastructure.video.scene_boundaries import FrameDifferenceSceneDetector
     visual_pipeline = VisualPipeline(detector=detector, subtitle_processor=subtitle_processor,
@@ -620,6 +628,7 @@ def main():
 
 def run_job(args, *, runner: JobRunner | None = None):
     """CLI adapter over the same structured runner used by the local web."""
+    requested = str(args.preset).removesuffix("-generic")
     _resolve_args_preset(args)
     selected_runner = runner or JobRunner()
     options = JobOptions(
@@ -654,6 +663,8 @@ def run_job(args, *, runner: JobRunner | None = None):
         subtitle_layout=args.subtitle_layout,
         blur_extra=getattr(args, "blur_extra", False),
     )
+    if requested == "reup":
+        options.reup_contract = True
     return selected_runner.run(options, lambda event: print(format_event(event), flush=True))
 
 

@@ -30,13 +30,19 @@ class GeminiMetadataGenerator(MetadataGenerationPort):
 
     def generate(self, video_path: str, hints: Optional[Dict[str, Any]] = None) -> VideoMetadata:
         stem = Path(video_path).stem
-        hint_text = " ".join(f"{k}: {v}" for k, v in (hints or {}).items() if v)
+        hints = hints or {}
+        transcript = str(hints.get("transcript") or "").strip()
+        hint_text = " ".join(
+            f"{k}: {v}" for k, v in hints.items() if v and k != "transcript"
+        )
         prompt = (
-            "You write YouTube metadata in Vietnamese. From this video filename"
-            f" ('{stem}') and hints ({hint_text or 'none'}), return STRICT JSON only:\n"
+            "You write YouTube/TikTok metadata in Vietnamese. "
+            f"Filename: '{stem}'. Extra hints: {hint_text or 'none'}.\n"
+            f"Spoken transcript: {transcript or 'none'}.\n"
+            "Return STRICT JSON only:\n"
             '{"title": "<max 95 chars, catchy, no clickbait>", '
-            '"description": "<2-3 sentences>", '
-            '"tags": ["<8 lowercase tags>"]}\n'
+            '"description": "<2-3 sentences, Vietnamese>", '
+            '"tags": ["<8 short Vietnamese or lowercase tags without #>"]}\n'
             "No markdown, no commentary."
         )
         try:
@@ -48,16 +54,16 @@ class GeminiMetadataGenerator(MetadataGenerationPort):
                     source_kind="publish_metadata",
                 )
             )
-            return self._parse(response.text, video_path)
+            return self._parse(response.text, video_path, transcript=transcript)
         except Exception as exc:
             logger.warning(
                 "Publish: metadata generation failed (%s); using filename fallback for %s.",
                 exc, stem,
             )
-            return fallback_metadata(video_path)
+            return fallback_metadata(video_path, transcript=transcript)
 
     @staticmethod
-    def _parse(text: str, video_path: str) -> VideoMetadata:
+    def _parse(text: str, video_path: str, transcript: str = "") -> VideoMetadata:
         try:
             cleaned = _FENCE_RE.sub("", text.strip()).strip()
             # Tolerate trailing prose after the JSON object.
@@ -69,10 +75,10 @@ class GeminiMetadataGenerator(MetadataGenerationPort):
             metadata = VideoMetadata(
                 title=str(payload.get("title") or "")[:100],
                 description=str(payload.get("description") or "")[:5000],
-                tags=[str(t)[:100] for t in payload.get("tags") or []][:30],
+                tags=[str(t).lstrip("#")[:100] for t in payload.get("tags") or []][:30],
             )
             if metadata.title.strip():
                 return metadata
         except (ValueError, AttributeError) as exc:
             logger.warning("Publish: unparseable metadata response (%s); fallback.", exc)
-        return fallback_metadata(video_path)
+        return fallback_metadata(video_path, transcript=transcript)

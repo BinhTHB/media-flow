@@ -12,6 +12,7 @@ from src.core.models.detection import Detection
 from src.features.visual.text_classifier import (
     TextClassifyingDetector,
     classify_generic_text_detections,
+    demote_upper_credits_labeled_subtitle,
     promote_subtitle_rows_labeled_watermark,
 )
 
@@ -84,6 +85,23 @@ def test_two_long_captions_in_the_same_place_stay_separate_tracks():
     dets += [_det(frame, 705, 810, 1214, 896, class_name="subtitle") for frame in range(70, 120)]
     tracks = [t for t in ClassAwareTracker().track(dets) if t.class_name == "subtitle"]
     assert len(tracks) == 2
+
+
+def test_narrow_bottom_line_labeled_watermark_becomes_subtitle():
+    # 大将们 at 19.8s is ~155px wide, so the 18% width gate rejects it.
+    # It shares the bottom row with the subtitle class 0.7s later.
+    early = _det(594, 881, 986, 1036, 1047, class_name="watermark")
+    later = _det(615, 881, 986, 1036, 1047, class_name="subtitle")
+    out = promote_subtitle_rows_labeled_watermark([early, later])
+    assert out[0].class_name == "subtitle"
+
+
+def test_face_credit_labeled_subtitle_becomes_watermark():
+    # 西瓜君AI制作 sits on the chin: thin, narrow, above the caption band.
+    credit = _det(594, 675, 481, 836, 518, class_name="subtitle")
+    name = _det(655, 888, 860, 1064, 946, class_name="subtitle")
+    out = demote_upper_credits_labeled_subtitle([credit, name])
+    assert [d.class_name for d in out] == ["watermark", "subtitle"]
 
 
 def test_watermark_more_than_a_second_before_a_subtitle_stays_watermark():

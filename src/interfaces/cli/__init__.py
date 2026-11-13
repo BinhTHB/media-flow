@@ -25,6 +25,10 @@ from src.interfaces.jobs.runner import (
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "cli"
 
 
+def _flag_present(tokens: list[str], name: str) -> bool:
+    return any(token == name or token.startswith(f"{name}=") for token in tokens)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m src.interfaces.cli",
@@ -39,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preset",
         default="yolo-4class",
-        help="Detection flow: yolo-4class | yolo-text (legacy feature presets also resolve)",
+        help="Detection flow: yolo-4class | yolo-text | reup. Reup runs the visual and audio options you pass.",
     )
     parser.add_argument(
         "--subtitle-action",
@@ -51,7 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--dub-audio",
         dest="dub_audio",
         action="store_true",
-        help="Dub the audio pipeline over the video",
+        help="Dub the audio pipeline over the video. Preset reup dubs unless --no-dub-audio is set.",
+    )
+    parser.add_argument(
+        "--no-dub-audio",
+        dest="no_dub_audio",
+        action="store_true",
+        help="Keep the original speech bed. Turns off the reup dub default.",
     )
     parser.add_argument(
         "--extra-text-action",
@@ -76,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--profile", default="balanced")
     parser.add_argument(
+        "--variation",
+        default="balanced",
+        choices=["off", "light", "balanced", "aggressive"],
+        help="Bake speed, crop, mirror, and pitch into the finished file (default: balanced)",
+    )
+    parser.add_argument(
         "--hide-source-subtitle",
         dest="hide_source_subtitle",
         action="store_true",
@@ -94,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Overwrite the output file if it exists",
     )
     parser.add_argument(
+        "--no-speech-captions",
+        action="store_true",
+        help="Reup: do not create captions from speech. Only translate text the detector read.",
+    )
+    parser.add_argument(
         "--no-visual-cache",
         dest="no_visual_cache",
         action="store_true",
@@ -104,6 +125,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_job_options(argv: Sequence[str] | None = None) -> JobOptions:
     args = build_parser().parse_args(argv)
+    tokens = list(argv if argv is not None else sys.argv[1:])
+    subtitle_action = args.subtitle_action
+    extra_text_action = args.extra_text_action
+    dub_audio = bool(args.dub_audio)
+    if args.preset.removesuffix("-generic") == "reup":
+        if not _flag_present(tokens, "--subtitle-action"):
+            subtitle_action = "translate"
+        if not _flag_present(tokens, "--extra-text-action"):
+            extra_text_action = "blur"
+        dub_audio = False if args.no_dub_audio else True
     output_path = args.output
     if output_path is None:
         stem = Path(args.input).stem or "video"
@@ -112,9 +143,9 @@ def build_job_options(argv: Sequence[str] | None = None) -> JobOptions:
         input_path=args.input,
         output_path=output_path,
         preset=args.preset,
-        subtitle_action=args.subtitle_action,
-        dub_audio=args.dub_audio,
-        extra_text_action=args.extra_text_action,
+        subtitle_action=subtitle_action,
+        dub_audio=dub_audio,
+        extra_text_action=extra_text_action,
         device=args.device,
         overwrite=args.overwrite,
         profile=args.profile,
@@ -124,6 +155,8 @@ def build_job_options(argv: Sequence[str] | None = None) -> JobOptions:
         subtitle_layout=args.subtitle_layout,
         hide_source_subtitle=args.hide_source_subtitle,
         no_visual_cache=args.no_visual_cache,
+        variation_level=args.variation,
+        create_missing_subtitles=not args.no_speech_captions,
     )
 
 

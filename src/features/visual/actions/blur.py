@@ -28,6 +28,8 @@ class BlurAction:
 
         if x2 <= x1 or y2 <= y1:
             return frame
+        if getattr(frame, "ndim", 0) < 2:
+            return frame
 
         fh = bbox.frame_height or frame.shape[0]
         # Adaptive blur strength: ensure text strokes are completely dissolved
@@ -38,9 +40,26 @@ class BlurAction:
         ksize = max(15, ksize)
 
         roi = frame[y1:y2, x1:x2]
-        if roi.size > 0:
-            b1 = cv2.GaussianBlur(roi, (ksize, ksize), 0)
-            blurred_roi = cv2.GaussianBlur(b1, (ksize, ksize), 0)
-            frame[y1:y2, x1:x2] = blurred_roi
+        if roi.size == 0:
+            return frame
+
+        height, width = roi.shape[:2]
+        # Full-resolution 40px+ kernels on 1080p watermark/subtitle plates
+        # dominate visual render time. Blur a downscaled copy then scale back:
+        # glyphs stay unreadable, CPU drops sharply.
+        scale = 4 if min(height, width) >= 32 else 2 if min(height, width) >= 16 else 1
+        if scale > 1:
+            small_w = max(2, width // scale)
+            small_h = max(2, height // scale)
+            small = cv2.resize(roi, (small_w, small_h), interpolation=cv2.INTER_AREA)
+            small_k = max(5, ksize // scale)
+            if small_k % 2 == 0:
+                small_k += 1
+            blurred = cv2.GaussianBlur(small, (small_k, small_k), 0)
+            blurred = cv2.GaussianBlur(blurred, (small_k, small_k), 0)
+            frame[y1:y2, x1:x2] = cv2.resize(blurred, (width, height), interpolation=cv2.INTER_LINEAR)
+        else:
+            first = cv2.GaussianBlur(roi, (ksize, ksize), 0)
+            frame[y1:y2, x1:x2] = cv2.GaussianBlur(first, (ksize, ksize), 0)
 
         return frame

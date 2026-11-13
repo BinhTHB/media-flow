@@ -26,7 +26,9 @@ from src.features.visual.subtitle.renderer import SubtitleRenderer
 from src.features.translation.text_quality import (
     is_already_target_language,
     is_caption_worthy,
+    is_dangling_fragment,
     is_effectively_identical,
+    is_production_credit,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,11 +82,13 @@ class SubtitleProcessor:
         if not all_events:
             return []
 
+        stage_t0 = time.monotonic()
         # Refine coarse YOLO first/last timestamps using neighboring video frames.
         # This only extends an event while adjacent frames visually match the same
         # subtitle; it deliberately avoids fixed +N ms padding.
         if video_path and self.boundary_refiner is not None:
             all_events = self.boundary_refiner.refine(all_events, video_path)
+        refine_s = time.monotonic() - stage_t0
 
         # Bilingual burned-in subtitles are commonly emitted by YOLO as two
         # vertically stacked tracks (e.g. Chinese + English) for the same semantic
@@ -99,10 +103,13 @@ class SubtitleProcessor:
         # the stable bottom band and requiring repeated OCR evidence before creating
         # a synthetic event. This avoids leaving raw source subtitles exposed while
         # still refusing to invent captions in genuine no-text gaps.
+        stage_t0 = time.monotonic()
         if video_path and self.ocr_provider is not None:
             all_events = self._recover_bottom_lane_gap_events(all_events, video_path)
+        gap_s = time.monotonic() - stage_t0
 
         # 2. OCR Stage (Multi-candidate crop selection & consensus)
+        stage_t0 = time.monotonic()
         if self.ocr_provider is not None and video_path:
             import cv2
 
@@ -169,8 +176,10 @@ class SubtitleProcessor:
         # merge (their tracks only overlap after OCR/dedup). Pair them here so
         # translation sees one caption and render draws one line at the band.
         all_events = self._merge_stacked_caption_rows(all_events)
+        ocr_s = time.monotonic() - stage_t0
 
         # 3. Translation Stage
+        stage_t0 = time.monotonic()
         # Skip events whose source is already the target language: translating
         # Vietnamese into Vietnamese produced diacritic shuffles ("Kì lạ" ->
         # "Kỳ lạ") or invented text, and re-rendering it over the original
@@ -192,28 +201,49 @@ class SubtitleProcessor:
                 len(already_target), len([e for e in all_events if e.source_text]), target_language,
             )
 
+        for event in all_events:
+            if event.source_text and is_production_credit(event.source_text):
+                event.replacement_status = "CREDIT"
+                event.translated_text = ""
+                event.blur_applied = True
+                event.overlay_applied = False
+
         events_needing_translation = [
             e for e in all_events
-            if e.source_text and e.replacement_status != "SOURCE_IS_TARGET"
+            if e.source_text and e.replacement_status not in {"SOURCE_IS_TARGET", "CREDIT"}
         ]
 
         if self.translation_service is not None and events_needing_translation:
             self._translate_events(events_needing_translation, target_language)
             self._collapse_duplicate_translation_lines(events_needing_translation)
             all_events = self._merge_stacked_caption_rows(all_events, use_translation=True)
+        translate_s = time.monotonic() - stage_t0
+        logger.info(
+            "Subtitle: refine %.1fs, gap-recovery %.1fs, ocr %.1fs, translate %.1fs (%d events)",
+            refine_s, gap_s, ocr_s, translate_s, len(all_events),
+        )
 
         # 4. Fail-Safe Replacement Status Assignment
         for event in all_events:
-            if event.replacement_status == "SOURCE_IS_TARGET":
-                # The caption is already in the target language. Rendering it
-                # again would paint the same words over themselves (losing the
-                # source styling) and translating produced diacritic shuffles.
-                # Leave the original pixels untouched.
+            if event.replacement_status == "CREDIT":
                 event.translated_text = ""
-                event.blur_applied = False
+                event.blur_applied = True
                 event.overlay_applied = False
                 logger.info(
-                    "SubtitleEvent %s already in target language; original pixels preserved.",
+                    "SubtitleEvent %s is a production credit; glyphs covered, no caption drawn.",
+                    event.event_id,
+                )
+                continue
+            if event.replacement_status == "SOURCE_IS_TARGET":
+                # The words are already Vietnamese, so they are not sent to a
+                # translator. The burned-in glyphs are still covered and the
+                # same words are drawn in the reup caption style.
+                event.translated_text = event.source_text
+                event.replacement_status = "READY"
+                event.blur_applied = True
+                event.overlay_applied = True
+                logger.info(
+                    "SubtitleEvent %s already in target language; source glyphs covered and caption redrawn.",
                     event.event_id,
                 )
                 continue
@@ -227,6 +257,22 @@ class SubtitleProcessor:
                     event.overlay_applied = False
                     logger.info(
                         "SubtitleEvent %s translation equals source; keeping original pixels.",
+                        event.event_id,
+                    )
+                    continue
+                if is_dangling_fragment(
+                    event.source_text,
+                    box_width=event.anchor_bbox.width,
+                    frame_width=event.anchor_bbox.frame_width,
+                    duration=event.end_time - event.start_time,
+                ):
+                    # Cover the two glyphs and do not print a stub translation.
+                    event.replacement_status = "FRAGMENT"
+                    event.translated_text = ""
+                    event.blur_applied = True
+                    event.overlay_applied = False
+                    logger.info(
+                        "SubtitleEvent %s is a dangling fragment; source glyphs covered, no caption drawn.",
                         event.event_id,
                     )
                     continue
@@ -734,6 +780,10 @@ class SubtitleProcessor:
         for i, left in enumerate(ordered):
             if i in used:
                 continue
+            if is_production_credit(left.source_text):
+                merged.append(left)
+                used.add(i)
+                continue
             best_j = None
             best_score = -1.0
             left_dur = max(0.05, left.end_time - left.start_time)
@@ -746,6 +796,8 @@ class SubtitleProcessor:
                 if j in used:
                     continue
                 right = ordered[j]
+                if is_production_credit(right.source_text):
+                    continue
                 if right.start_time > left.end_time + 0.12:
                     break
                 overlap = min(left.end_time, right.end_time) - max(left.start_time, right.start_time)

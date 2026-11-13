@@ -12,6 +12,7 @@ import logging
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -64,9 +65,32 @@ class ProcessVideoUseCase:
             "created_at": time.time(),
         })
 
-        # 2. Execute Visual Pipeline
         visual_result = None
-        if request.visual.enabled:
+        audio_result = None
+        speech_first = (
+            request.visual.enabled
+            and request.audio.enabled
+            and request.visual.use_speech_subtitles
+            and not request.visual.segments
+        )
+
+        def run_audio() -> None:
+            nonlocal audio_result
+            t0 = time.monotonic()
+            request.audio.audio_path = str(input_path)
+            logger.info("Audio pipeline: starting (job %s)...", job_id)
+            audio_result = self.audio_pipeline.process(
+                request=request.audio,
+                job_workspace_dir=str(job_dir),
+            )
+            timings["audio_pipeline"] = round(time.monotonic() - t0, 3)
+            logger.info(
+                "Audio pipeline: done in %.1fs (status=%s)",
+                timings["audio_pipeline"], audio_result.status,
+            )
+
+        def run_visual() -> None:
+            nonlocal visual_result
             t0 = time.monotonic()
             request.visual.video_path = str(input_path)
             rendered_temp_path = str(job_dir / "visual_rendered.mp4")
@@ -82,21 +106,27 @@ class ProcessVideoUseCase:
                 timings["visual_pipeline"], visual_result.status,
             )
 
-        # 3. Execute Audio Pipeline
-        audio_result = None
-        if request.audio.enabled:
-            t0 = time.monotonic()
-            request.audio.audio_path = str(input_path)
-            logger.info("Audio pipeline: starting (job %s)...", job_id)
-            audio_result = self.audio_pipeline.process(
-                request=request.audio,
-                job_workspace_dir=str(job_dir),
-            )
-            timings["audio_pipeline"] = round(time.monotonic() - t0, 3)
-            logger.info(
-                "Audio pipeline: done in %.1fs (status=%s)",
-                timings["audio_pipeline"], audio_result.status,
-            )
+        # Speech captions need the transcript before the visual pass.
+        # Otherwise AudioPipeline and VisualPipeline share no data and run together.
+        if speech_first:
+            run_audio()
+            request.visual.segments = [
+                segment.to_dict() if hasattr(segment, "to_dict") else segment
+                for segment in (audio_result.segments or [])
+            ]
+            run_visual()
+        elif request.visual.enabled and request.audio.enabled:
+            logger.info("Running audio and visual pipelines in parallel (job %s).", job_id)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                visual_future = pool.submit(run_visual)
+                audio_future = pool.submit(run_audio)
+                visual_future.result()
+                audio_future.result()
+        else:
+            if request.visual.enabled:
+                run_visual()
+            if request.audio.enabled:
+                run_audio()
 
         # 4. Stream Muxing & Output Assembly
         t0 = time.monotonic()

@@ -141,20 +141,26 @@ body {
 }
 
 .yup-nav {
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 0 20px 12px;
   display: flex;
   align-items: center;
   gap: 6px;
+  overflow-x: auto;
 }
 
 .yup-nav-link {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   padding: 6px 14px;
   border-radius: var(--radius-sm);
   cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
   transition: all 0.15s ease;
 }
 
@@ -351,6 +357,9 @@ body {
   font-size: 11px;
   color: var(--text-muted);
   font-family: 'JetBrains Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .banner-badge {
@@ -398,9 +407,35 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+.input-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.8fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.input-picker-main,
+.input-picker-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-filter {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .video-preview-screen {
   width: 100%;
-  height: 280px;
+  height: 148px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -411,7 +446,7 @@ body {
 .video-preview-screen video {
   width: 100%;
   height: 100%;
-  max-height: 280px;
+  max-height: 148px;
   object-fit: contain;
   background-color: #000000;
   outline: none;
@@ -570,8 +605,21 @@ body {
   border-color: #ef4444;
 }
 
+.yup-dropzone-slim {
+  min-height: 52px;
+  padding: 8px 12px;
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.yup-dropzone-primary {
+  min-height: 92px;
+  border-width: 1.5px;
+  border-color: var(--border-strong);
+}
+
 .yup-files-scroll {
-  max-height: 180px;
+  max-height: 240px;
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -613,12 +661,30 @@ body {
   gap: 2px;
 }
 
-.source-name {
-  font-size: 12px;
-  color: var(--text);
+.source-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.source-name,
+.source-details {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.source-name {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.source-details {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .source-meta-row {
@@ -1004,6 +1070,115 @@ body {
 }
 
 /* --------------------------------------------------------------------------
+   Live job dock — stays at the top of the video tab while a job runs
+   -------------------------------------------------------------------------- */
+.live-dock {
+  position: sticky;
+  top: 12px;
+  z-index: 30;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow);
+}
+
+.live-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.live-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.live-dock.is-live .live-dot {
+  background-color: var(--text);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+
+.live-copy {
+  min-width: 0;
+}
+
+.live-kicker {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.live-kicker span:last-child:empty {
+  display: none;
+}
+
+.live-stage {
+  margin-top: 2px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-percent {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.live-dock .progress-bar-track {
+  height: 10px;
+}
+
+.live-dock.is-live .progress-bar-fill {
+  background-image: linear-gradient(
+    90deg,
+    var(--text) 0%,
+    var(--text) 40%,
+    var(--text-muted) 50%,
+    var(--text) 60%,
+    var(--text) 100%
+  );
+  background-size: 200% 100%;
+  animation: live-bar 1.4s linear infinite;
+}
+
+.live-dock .metrics-grid {
+  margin-top: 2px;
+}
+
+.live-dock .terminal-content {
+  max-height: 112px;
+}
+
+@keyframes live-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.72); opacity: 0.45; }
+}
+
+@keyframes live-bar {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+/* --------------------------------------------------------------------------
    Step 5: Progress & Terminal Logs
    -------------------------------------------------------------------------- */
 .progress-container {
@@ -1322,7 +1497,18 @@ body {
   }
 
   .yup-nav {
-    display: none;
+    display: flex;
+    padding: 0 16px 12px;
+  }
+
+  .input-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .video-preview-screen,
+  .video-preview-screen video {
+    height: 120px;
+    max-height: 120px;
   }
 
   .yup-hero {

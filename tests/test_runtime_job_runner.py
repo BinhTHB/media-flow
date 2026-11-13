@@ -11,7 +11,7 @@ from src.application.result import ProcessingResult
 from src.core.errors import ConfigurationError, ValidationError
 from src.features.audio.models import AudioRequest
 from src.features.visual.pipeline import VisualRequest
-from src.interfaces.jobs.runner import JobError, JobOptions, JobRunner
+from src.interfaces.jobs.runner import JobError, JobOptions, JobRunner, _normalize_preset
 from src.interfaces.web.server import build_job_options
 
 
@@ -38,6 +38,7 @@ def _options(tmp_path: Path, profile: str = "balanced") -> JobOptions:
         overwrite=True,
         profile=profile,
         no_visual_cache=True,
+        variation_level="off",
     )
 
 
@@ -227,8 +228,106 @@ def test_runner_disables_visual_for_preserve_only_job(tmp_path, monkeypatch) -> 
     assert request.audio.dubbing_enabled is True
 
 
+def test_reup_preset_runs_only_the_selected_visual_and_audio() -> None:
+    visual_only = JobOptions(
+        input_path="in.mp4",
+        output_path="out.mp4",
+        preset="reup",
+        subtitle_action="translate",
+        dub_audio=False,
+        extra_text_action="blur",
+        preserve_ambience=True,
+        mix_original_volume=0.20,
+        max_tts_speedup=1.30,
+    )
+    _normalize_preset(visual_only)
+    assert visual_only.preset == "yolo-4class"
+    assert visual_only.subtitle_action == "translate"
+    assert visual_only.extra_text_action == "blur"
+    assert visual_only.dub_audio is False
+    assert visual_only.preserve_ambience is True
+    assert visual_only.reup_contract is True
+    assert JobRunner._visual_request(visual_only).use_speech_subtitles is False
+    dubbed = JobOptions(
+        input_path="in.mp4",
+        output_path="out.mp4",
+        preset="reup",
+        subtitle_action="translate",
+        dub_audio=True,
+        extra_text_action="blur",
+    )
+    _normalize_preset(dubbed)
+    assert dubbed.preserve_ambience is False
+    assert dubbed.mix_original_volume == 0.0
+    assert dubbed.max_tts_speedup == 1.8
+    visual = JobRunner._visual_request(dubbed)
+    assert visual.enabled is True
+    assert visual.subtitle_mode == "translate_replace"
+    assert visual.watermark_action == "blur"
+    assert visual.use_speech_subtitles is True
+    assert visual.detection_stride == 2
+    dubbed.create_missing_subtitles = False
+    quiet = JobRunner._visual_request(dubbed)
+    assert quiet.use_speech_subtitles is False
+    assert quiet.detection_stride == 1
+
+    audio_only = JobOptions(
+        input_path="in.mp4",
+        output_path="out.mp4",
+        preset="reup",
+        subtitle_action="preserve",
+        dub_audio=True,
+        extra_text_action="preserve",
+        preserve_ambience=True,
+        mix_original_volume=0.20,
+        max_tts_speedup=1.30,
+    )
+    _normalize_preset(audio_only)
+    assert audio_only.subtitle_action == "preserve"
+    assert audio_only.extra_text_action == "preserve"
+    assert audio_only.dub_audio is True
+    assert audio_only.preserve_ambience is False
+    assert audio_only.mix_original_volume == 0.0
+    assert audio_only.max_tts_speedup == 1.8
+
+
 def test_runner_rejects_unknown_preset(tmp_path) -> None:
     options = _options(tmp_path)
     options.preset = "nonsense"
     with pytest.raises(Exception, match="Unsupported preset"):
         JobRunner().prepare(options)
+
+
+def test_runner_bakes_variation_into_the_finished_file(tmp_path, monkeypatch) -> None:
+    import json
+
+    options = _options(tmp_path)
+    options.variation_level = "balanced"
+    options.job_id = "delivery-job"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "job.json").write_text('{"job_id": "delivery-job"}', encoding="utf-8")
+
+    class _Port:
+        def apply(self, video_path, profile, output_path):
+            assert Path(video_path).read_bytes() == b"output"
+            assert profile.crop_ratio > 0
+            Path(output_path).write_bytes(b"VARIED")
+            return output_path
+
+    def factory(opts, request):
+        result = _result(opts)
+        result.job_id = request.job_id
+        result.workspace_dir = str(workspace)
+        return FakeUseCase(result), {}
+
+    monkeypatch.setattr(JobRunner, "_preflight", lambda self, value: "cpu")
+    runner = JobRunner(use_case_factory=factory, variation_port=_Port())
+
+    result = runner.run(options, lambda _event: None)
+
+    assert Path(result.output_video_path).read_bytes() == b"VARIED"
+    profile = json.loads(Path(result.output_video_path).with_name("output.variation.json").read_text(encoding="utf-8"))
+    record = json.loads((workspace / "job.json").read_text(encoding="utf-8"))
+    assert profile["crop_ratio"] > 0
+    assert record["variation"] == profile

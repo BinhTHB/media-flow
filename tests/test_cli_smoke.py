@@ -44,6 +44,25 @@ def test_defaults_and_derived_output_path():
     assert options.output_path.replace("\\", "/").endswith("outputs/cli/clip-yolo-4class.mp4")
 
 
+def test_reup_defaults_to_picture_speech_and_can_turn_speech_off():
+    options = build_job_options(["--input", "clip.mp4", "--preset", "reup"])
+
+    assert options.subtitle_action == "translate"
+    assert options.extra_text_action == "blur"
+    assert options.dub_audio is True
+
+    quiet = build_job_options(["--input", "clip.mp4", "--preset", "reup", "--no-dub-audio"])
+    assert quiet.dub_audio is False
+    kept = build_job_options([
+        "--input", "clip.mp4", "--preset", "reup", "--subtitle-action", "preserve",
+    ])
+    assert kept.subtitle_action == "preserve"
+    assert kept.dub_audio is True
+    assert options.create_missing_subtitles is True
+    off = build_job_options(["--input", "clip.mp4", "--preset", "reup", "--no-speech-captions"])
+    assert off.create_missing_subtitles is False
+
+
 def test_show_source_subtitle_overrides_default():
     options = build_job_options(["--input", "v.mp4", "--show-source-subtitle"])
     assert options.hide_source_subtitle is False

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 from src.core.models.speech_segment import SpeechSegment
 from src.infrastructure.speech.router import FallbackASRAdapter
@@ -295,6 +297,62 @@ class _GoodTTS:
         return output_path
 
 
+def test_tts_router_stops_calling_a_provider_only_after_zero_credits(tmp_path):
+    state = {"left": 69}
+    calls = []
+
+    class Eleven:
+        def synthesize(self, text, output_path, voice=""):
+            calls.append("eleven")
+            left = state["left"]
+            state["left"] = 0
+            if left == 0:
+                raise RuntimeError("quota_exceeded You have 0 credits remaining")
+            raise RuntimeError(
+                "quota_exceeded You have 69 credits remaining, while 98 credits are required"
+            )
+
+    class Edge:
+        def synthesize(self, text, output_path, voice=""):
+            calls.append("edge")
+            Path(output_path).write_bytes(b"ok")
+            return output_path
+
+    router = FallbackTTSAdapter([("elevenlabs-v3", Eleven()), ("edge-tts", Edge())])
+    for name in ("a", "b", "c"):
+        router.synthesize("xin chào", str(tmp_path / f"{name}.mp3"), voice="elevenlabs:brian")
+    assert calls == ["eleven", "edge", "eleven", "edge", "edge"]
+
+
+def test_edge_tts_retries_when_the_service_returns_no_audio(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from src.infrastructure.tts.edge_tts import EdgeTTSAdapter
+
+    calls = {"n": 0}
+
+    class Communicate:
+        def __init__(self, text, voice, rate, volume, pitch, **_kwargs):
+            self.text = text
+
+        async def save(self, path):
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise RuntimeError(
+                    "No audio was received. Please verify that your parameters are correct."
+                )
+            Path(path).write_bytes(b"ID3audio")
+
+    fake = types.ModuleType("edge_tts")
+    fake.Communicate = Communicate
+    monkeypatch.setitem(sys.modules, "edge_tts", fake)
+    output = tmp_path / "line.mp3"
+    assert EdgeTTSAdapter().synthesize("Rắc muối trắng xóa lên từng nửa quả.", str(output)) == str(output)
+    assert calls["n"] == 2
+    assert output.stat().st_size > 0
+
+
 def test_tts_router_uses_edge_like_fallback(tmp_path):
     router = FallbackTTSAdapter([("fish", _FailTTS()), ("edge", _GoodTTS())])
     output = tmp_path / "tts.mp3"
@@ -400,6 +458,133 @@ def test_audio_pipeline_does_not_import_visual_features():
     source = (Path(__file__).parents[1] / "src" / "features" / "audio" / "pipeline.py").read_text(encoding="utf-8")
     assert "features.visual" not in source
     assert "Yolo" not in source
+
+
+_COLLAPSED_ASR = (
+    "b n Ngay gi c v h l b d k nh t b tr d t t r mu tr x l t n qu "
+    "Mu r s n gi cho c kh th M tu sau t tr cao nh xu c c th m t th"
+)
+_READABLE_REPAIR = "Ông mang cà chua ra phơi nắng đến khi đỏ rực, mười cân tươi chỉ còn một cân."
+
+
+def test_collapsed_asr_is_replaced_from_secondary_without_a_language_model():
+    class Secondary:
+        def transcribe(self, audio_path, language="auto"):
+            return [SpeechSegment("ALT", 64.8, 81.0, _READABLE_REPAIR, "vi")]
+
+    class AlsoCollapsed:
+        def transcribe(self, audio_path, language="auto"):
+            return [SpeechSegment("ALT", 64.8, 81.0, _COLLAPSED_ASR, "vi")]
+
+    segments = [SpeechSegment("S00014", 64.8, 81.07, _COLLAPSED_ASR, "Vietnamese")]
+    repaired = OpenRouterASRCorrector(
+        api_keys=[], models=[], secondary_provider=Secondary()
+    ).correct_segments(segments, language="vi", audio_path="x.wav")
+    assert repaired[0].source_text == _READABLE_REPAIR
+    assert repaired[0].segment_id == "S00014"
+    assert repaired[0].start_time == 64.8
+    assert repaired[0].end_time == 81.07
+
+    untouched = [SpeechSegment("S00014", 64.8, 81.07, _COLLAPSED_ASR, "Vietnamese")]
+    kept = OpenRouterASRCorrector(
+        api_keys=[], models=[], secondary_provider=AlsoCollapsed()
+    ).correct_segments(untouched, language="vi", audio_path="x.wav")
+    assert kept[0].source_text == _COLLAPSED_ASR
+
+
+def test_collapsed_window_keeps_each_secondary_line_on_its_own_time():
+    class Secondary:
+        def transcribe(self, audio_path, language="auto"):
+            return [
+                SpeechSegment("A", 64.9, 70.0, "Ông bán ánh nắng.", "vi"),
+                SpeechSegment("B", 70.2, 76.0, "Cà vừa hái là bổ đôi.", "vi"),
+                SpeechSegment("C", 76.2, 81.0, "Cánh đồng thành một tấm thảm đỏ rực.", "vi"),
+            ]
+
+    segments = [
+        SpeechSegment("S00013", 58.98, 64.8, "Vụ thứ hai, ông không bán cà chua nữa,", "vi"),
+        SpeechSegment("S00014", 64.8, 81.07, _COLLAPSED_ASR, "Vietnamese"),
+    ]
+    repaired = OpenRouterASRCorrector(
+        api_keys=[], models=[], secondary_provider=Secondary()
+    ).correct_segments(segments, language="vi", audio_path="x.wav")
+    texts = [segment.source_text for segment in repaired]
+    assert texts[0] == "Vụ thứ hai, ông không bán cà chua nữa,"
+    assert texts[1:] == [
+        "Ông bán ánh nắng.",
+        "Cà vừa hái là bổ đôi.",
+        "Cánh đồng thành một tấm thảm đỏ rực.",
+    ]
+    assert repaired[1].start_time == pytest.approx(64.9)
+    assert repaired[2].start_time == pytest.approx(70.2)
+    assert repaired[-1].end_time == pytest.approx(81.0)
+
+
+def test_defective_line_is_replaced_and_a_shared_name_is_kept():
+    class Secondary:
+        def transcribe(self, audio_path, language="auto"):
+            return [
+                SpeechSegment("A", 123.0, 125.4, "bánh pizza ở Ý", "vi"),
+                SpeechSegment("B", 10.9, 14.1, "Ông tên Mehmet, một nông dân nghèo.", "vi"),
+            ]
+
+    segments = [
+        SpeechSegment("S00030", 123.1, 125.3, "bánh tisa ở Ý", "Vietnamese"),
+        SpeechSegment("S00003", 10.9, 14.1, "Ông tên Mehmet, một nông dân nghèo.", "Vietnamese"),
+    ]
+    repaired = OpenRouterASRCorrector(
+        api_keys=[], models=[], secondary_provider=Secondary()
+    ).correct_segments(segments, language="vi", audio_path="x.wav")
+    assert repaired[0].source_text == "bánh pizza ở Ý"
+    assert repaired[0].start_time == 123.1
+    assert repaired[1].source_text == "Ông tên Mehmet, một nông dân nghèo."
+
+
+def test_second_read_fixes_a_loanword_without_pasting_the_paragraph():
+    class Secondary:
+        def transcribe(self, audio_path, language="auto"):
+            return [
+                SpeechSegment("A", 120.0, 122.5, "có mặt trên bánh pizza ở Ý.", "vi"),
+                SpeechSegment("B", 123.2, 127.2, "Trong lọ dầu ô liu ở Đức, trong chiếc bơ gờ ở Mỹ.", "vi"),
+                SpeechSegment("C", 10.9, 14.1, "Ông tên mê mét, một nông dân nghèo.", "vi"),
+            ]
+
+    segments = [
+        SpeechSegment("S00036", 123.1, 125.3, "bánh tisa ở Ý trong lọ dầu", "Vietnamese"),
+        SpeechSegment("S00037", 125.3, 127.1, "trong chiếc burger ở Mỹ.", "Vietnamese"),
+        SpeechSegment("S00003", 10.9, 14.1, "Ông tên Mehmet, một nông dân nghèo.", "Vietnamese"),
+    ]
+    repaired = OpenRouterASRCorrector(
+        api_keys=[], models=[], secondary_provider=Secondary()
+    ).correct_segments(segments, language="vi", audio_path="x.wav")
+    assert repaired[0].source_text == "có mặt trên bánh pizza ở Ý."
+    assert repaired[0].start_time == 123.1
+    assert repaired[0].end_time == 125.3
+    assert repaired[1].source_text == "trong chiếc burger ở Mỹ."
+    assert repaired[2].source_text == "Ông tên Mehmet, một nông dân nghèo."
+
+
+def test_defective_line_stays_when_the_second_read_fails():
+    class Secondary:
+        def transcribe(self, audio_path, language="auto"):
+            raise RuntimeError("gemini down")
+
+    segments = [SpeechSegment("S00030", 123.1, 125.3, "bánh tisa ở Ý", "Vietnamese")]
+    kept = OpenRouterASRCorrector(
+        api_keys=[], models=[], secondary_provider=Secondary()
+    ).correct_segments(segments, language="vi", audio_path="x.wav")
+    assert kept[0].source_text == "bánh tisa ở Ý"
+
+
+def test_mock_speech_label_still_attaches_gemini_repair(monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini")
+    from src.interfaces.composition.providers import build_asr_corrector
+
+    corrector = build_asr_corrector("auto", "mock")
+    assert corrector is not None
+    assert corrector.secondary_provider is not None
+    assert corrector.secondary_provider.model == "gemini-3.5-flash-lite"
 
 
 def test_asr_corrector_skips_secondary_when_primary_is_not_suspicious():
@@ -518,3 +703,119 @@ def test_router_fails_only_unresolved_lines_not_the_whole_chunk():
     router = FallbackTranslationAdapter([("gemini", PoisonedMiddle())])
     result = router.translate_texts(["một", "hai", "ba"], target_language="vi")
     assert result == ["Đã dịch: một", "", "Đã dịch: ba"]
+
+
+def test_ocr_wiring_is_local_rapidocr(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "not-used-for-ocr")
+    monkeypatch.setenv("MEDIAFLOW_OCR_PROVIDER", "gemini")
+    from src.interfaces.composition.providers import build_ocr_provider
+
+    provider = build_ocr_provider("gemini")
+    assert provider.model == "rapidocr"
+
+
+def test_mirrored_caption_box_stays_inside_the_frame():
+    from src.core.models.bbox import BBox
+    from src.features.visual.pipeline import mirror_bbox
+
+    box = BBox(10, 20, 40, 50, frame_width=100, frame_height=80)
+    flipped = mirror_bbox(box)
+    assert (flipped.x1, flipped.y1, flipped.x2, flipped.y2) == (60, 20, 90, 50)
+
+
+def test_rapid_ocr_reads_txts_from_the_engine():
+    import numpy as np
+
+    from src.infrastructure.ocr.rapid_ocr import RapidOCRAdapter
+
+    class Engine:
+        def __call__(self, crop, **_kwargs):
+            class Out:
+                txts = ("你好",)
+
+            return Out()
+
+    crop = np.zeros((8, 8, 3), dtype=np.uint8)
+    assert RapidOCRAdapter(engine=Engine()).read_crops([crop, None]) == ["你好", ""]
+
+
+def test_rapid_ocr_retries_an_empty_crop_with_the_detector():
+    import numpy as np
+
+    from src.infrastructure.ocr.rapid_ocr import RapidOCRAdapter
+
+    calls = []
+
+    class Engine:
+        def __call__(self, crop, use_det=False, **_kwargs):
+            calls.append(use_det)
+
+            class Out:
+                txts = ("从港口可以看见",) if use_det else ()
+
+            return Out()
+
+    crop = np.zeros((8, 32, 3), dtype=np.uint8)
+    assert RapidOCRAdapter(engine=Engine()).read_crops([crop]) == ["从港口可以看见"]
+    assert calls == [False, True]
+
+
+def test_fallback_ocr_only_sends_empty_crops_to_gemini():
+    from src.infrastructure.ocr.router import FallbackOCRAdapter
+
+    class Local:
+        model = "rapidocr"
+
+        def read_crops(self, crops):
+            return ["已读", ""]
+
+    class Cloud:
+        model = "gemini"
+
+        def __init__(self):
+            self.seen = 0
+
+        def read_crops(self, crops):
+            self.seen = len(crops)
+            return ["云端"]
+
+    cloud = Cloud()
+    texts = FallbackOCRAdapter(Local(), cloud).read_crops(["a", "b"])
+    assert texts == ["已读", "云端"]
+    assert cloud.seen == 1
+
+
+def test_fallback_ocr_caps_how_many_empty_crops_go_to_gemini():
+    from src.infrastructure.ocr.router import FallbackOCRAdapter
+
+    class Local:
+        model = "rapidocr"
+
+        def read_crops(self, crops):
+            return [""] * len(crops)
+
+    class Cloud:
+        model = "gemini"
+
+        def __init__(self):
+            self.seen = 0
+
+        def read_crops(self, crops):
+            self.seen = len(crops)
+            return ["x"] * len(crops)
+
+    cloud = Cloud()
+    texts = FallbackOCRAdapter(Local(), cloud, max_fallback=2).read_crops(["a", "b", "c"])
+    assert cloud.seen == 2
+    assert texts == ["x", "x", ""]
+
+
+def test_rapid_ocr_downscales_wide_1080p_plates():
+    import numpy as np
+
+    from src.infrastructure.ocr.rapid_ocr import RapidOCRAdapter
+
+    crop = np.zeros((200, 1920, 3), dtype=np.uint8)
+    fitted = RapidOCRAdapter._fit_crop(crop, max_edge=960)
+    assert fitted.shape[1] == 960
+    assert fitted.shape[0] == 100
